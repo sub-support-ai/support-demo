@@ -30,12 +30,12 @@ import { getStatusLabel } from "../lib/ticketLabels";
 
 function formatConversationDate(value?: string | null) {
   if (!value) {
-    return "Дата неизвестна";
+    return "Старый диалог";
   }
 
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
-    return "Дата неизвестна";
+    return "Старый диалог";
   }
 
   return new Intl.DateTimeFormat("ru-RU", {
@@ -44,6 +44,16 @@ function formatConversationDate(value?: string | null) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date);
+}
+
+function getConversationDate(conversation: Conversation, tickets?: Ticket[]) {
+  const ticket = tickets?.find((item) => item.conversation_id === conversation.id);
+  return formatConversationDate(
+    conversation.created_at ??
+      conversation.updated_at ??
+      ticket?.created_at ??
+      ticket?.updated_at,
+  );
 }
 
 function getConversationTitle(conversation: Conversation, tickets?: Ticket[]) {
@@ -236,7 +246,6 @@ export function ChatPage() {
           </ScrollArea>
           <Composer
             loading={sendMessage.isPending || createConversation.isPending}
-            disabled={activeConversation?.status === "escalated"}
             onSend={handleSend}
           />
         </div>
@@ -270,7 +279,7 @@ export function ChatPage() {
                       {getStatusLabel(conversation.status)}
                     </Badge>
                     <Text size="xs" c="dimmed">
-                      {formatConversationDate(conversation.created_at)}
+                      {getConversationDate(conversation, tickets.data)}
                     </Text>
                   </Group>
                 </button>

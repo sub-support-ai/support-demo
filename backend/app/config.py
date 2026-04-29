@@ -22,6 +22,9 @@ class Settings:
     POSTGRES_PORT: str = os.getenv("POSTGRES_PORT", "5432")
 
     AI_SERVICE_URL: str = os.getenv("AI_SERVICE_URL", "http://ai-service:8001")
+    AI_SERVICE_TIMEOUT_SECONDS: float = float(
+        os.getenv("AI_SERVICE_TIMEOUT_SECONDS", "180")
+    )
     # Версия модели по умолчанию — fallback для AILog.model_version, когда
     # AI Service по какой-то причине не вернул это поле. Раньше использовался
     # литерал "unknown", но он отравлял датасет для дообучения: разные версии

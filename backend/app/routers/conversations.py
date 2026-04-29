@@ -530,7 +530,7 @@ async def _get_ai_answer(
     }
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=settings.AI_SERVICE_TIMEOUT_SECONDS) as client:
             response = await client.post(
                 f"{settings.AI_SERVICE_URL}/ai/answer",
                 json={

@@ -104,7 +104,7 @@ async def classify_ticket(ticket_id: int, title: str, body: str) -> dict:
     """
     started = time.perf_counter()
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=settings.AI_SERVICE_TIMEOUT_SECONDS) as client:
             response = await client.post(
                 f"{AI_SERVICE_URL}/ai/classify",
                 json={

@@ -4,6 +4,9 @@ import type { ApiErrorPayload } from "./types";
 
 export const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api/v1";
+export const API_TIMEOUT_MS = Number(
+  import.meta.env.VITE_API_TIMEOUT_MS ?? 180000,
+);
 
 const TOKEN_KEY = "tp_access_token";
 
@@ -15,7 +18,7 @@ export const tokenStorage = {
 
 export const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 15000,
+  timeout: API_TIMEOUT_MS,
 });
 
 api.interceptors.request.use((config) => {
@@ -39,6 +42,9 @@ api.interceptors.response.use(
 
 export function getApiError(error: unknown): string {
   if (axios.isAxiosError<ApiErrorPayload>(error)) {
+    if (error.code === "ECONNABORTED") {
+      return "AI отвечает дольше обычного. Запрос не потерян, но локальная модель может отвечать 30-120 секунд. Проверьте, что Mistral прогрет и backend запущен с AI_SERVICE_TIMEOUT_SECONDS.";
+    }
     if (!error.response) {
       return `Не удалось подключиться к API (${API_BASE_URL}). Проверьте, что RestAPI запущен и CORS_ORIGINS разрешает http://localhost:5173.`;
     }
