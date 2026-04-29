@@ -132,6 +132,39 @@ body {
   gap: 16px;
 }
 
+.conversation-list {
+  max-height: 260px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.conversation-item {
+  width: 100%;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #dce5e2;
+  border-radius: 8px;
+  background: #ffffff;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.conversation-item:hover {
+  border-color: #9dcfc1;
+  background: #f8fbfa;
+}
+
+.conversation-item.active {
+  border-color: #1f7a63;
+  background: #e8f7f3;
+}
+
+.conversation-item-title {
+  font-weight: 600;
+}
+
 .empty-state {
   display: grid;
   min-height: 220px;

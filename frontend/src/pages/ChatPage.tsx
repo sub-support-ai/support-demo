@@ -1,5 +1,6 @@
 import {
   Alert,
+  Badge,
   Button,
   Group,
   LoadingOverlay,
@@ -21,11 +22,42 @@ import {
 } from "../api/conversations";
 import { getApiError } from "../api/client";
 import { useConfirmTicket, useTickets } from "../api/tickets";
-import type { Ticket } from "../api/types";
+import type { Conversation, Ticket } from "../api/types";
 import { Composer } from "../components/chat/Composer";
 import { MessageBubble } from "../components/chat/MessageBubble";
 import { PrefilledTicketPanel } from "../components/tickets/PrefilledTicketPanel";
 import { getStatusLabel } from "../lib/ticketLabels";
+
+function formatConversationDate(value?: string | null) {
+  if (!value) {
+    return "Дата неизвестна";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "Дата неизвестна";
+  }
+
+  return new Intl.DateTimeFormat("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function getConversationTitle(conversation: Conversation, tickets?: Ticket[]) {
+  const ticket = tickets?.find((item) => item.conversation_id === conversation.id);
+  if (ticket?.title) {
+    return ticket.title;
+  }
+
+  if (conversation.status === "active") {
+    return "Диалог без тикета";
+  }
+
+  return getStatusLabel(conversation.status);
+}
 
 export function ChatPage() {
   const conversations = useConversations();
@@ -194,6 +226,46 @@ export function ChatPage() {
       </Paper>
 
       <div className="side-panel">
+        <Paper withBorder p="md" className="quiet-panel">
+          <Group justify="space-between" mb="sm">
+            <Title order={4}>Диалоги</Title>
+            <Badge variant="light">{conversations.data?.length ?? 0}</Badge>
+          </Group>
+          <Stack gap="xs" className="conversation-list">
+            {conversations.data?.length ? (
+              conversations.data.map((conversation) => (
+                <button
+                  key={conversation.id}
+                  type="button"
+                  className={`conversation-item${
+                    conversation.id === activeConversationId ? " active" : ""
+                  }`}
+                  onClick={() => {
+                    setDraftTicket(null);
+                    setActiveConversationId(conversation.id);
+                  }}
+                >
+                  <Text className="conversation-item-title" lineClamp={2}>
+                    {getConversationTitle(conversation, tickets.data)}
+                  </Text>
+                  <Group justify="space-between" gap="xs" wrap="nowrap">
+                    <Badge size="sm" variant="light">
+                      {getStatusLabel(conversation.status)}
+                    </Badge>
+                    <Text size="xs" c="dimmed">
+                      {formatConversationDate(conversation.created_at)}
+                    </Text>
+                  </Group>
+                </button>
+              ))
+            ) : (
+              <Text size="sm" c="dimmed">
+                Диалогов пока нет.
+              </Text>
+            )}
+          </Stack>
+        </Paper>
+
         {activeTicket ? (
           <PrefilledTicketPanel
             ticket={activeTicket}

@@ -57,7 +57,10 @@ async def test_post_message_ai_unavailable_marks_red_zone(client: AsyncClient):
     # Создаём диалог
     conv_resp = await client.post("/api/v1/conversations/", headers=headers)
     assert conv_resp.status_code == 201
-    conv_id = conv_resp.json()["id"]
+    conversation = conv_resp.json()
+    assert conversation["created_at"]
+    assert "updated_at" in conversation
+    conv_id = conversation["id"]
 
     # Шлём сообщение
     msg_resp = await client.post(

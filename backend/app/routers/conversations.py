@@ -24,6 +24,7 @@
 """
 
 import logging
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -73,6 +74,8 @@ class ConversationRead(BaseModel):
     id: int
     user_id: int
     status: str
+    created_at: datetime
+    updated_at: datetime | None = None
 
 
 class MessageCreate(BaseModel):
