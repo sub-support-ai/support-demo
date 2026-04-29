@@ -1,0 +1,58 @@
+import axios, { AxiosError } from "axios";
+
+import type { ApiErrorPayload } from "./types";
+
+export const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api/v1";
+
+const TOKEN_KEY = "tp_access_token";
+
+export const tokenStorage = {
+  get: () => localStorage.getItem(TOKEN_KEY),
+  set: (token: string) => localStorage.setItem(TOKEN_KEY, token),
+  clear: () => localStorage.removeItem(TOKEN_KEY),
+};
+
+export const api = axios.create({
+  baseURL: API_BASE_URL,
+  timeout: 15000,
+});
+
+api.interceptors.request.use((config) => {
+  const token = tokenStorage.get();
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+api.interceptors.response.use(
+  (response) => response,
+  (error: AxiosError<ApiErrorPayload>) => {
+    if (error.response?.status === 401) {
+      tokenStorage.clear();
+      window.dispatchEvent(new Event("tp-auth-expired"));
+    }
+    return Promise.reject(error);
+  },
+);
+
+export function getApiError(error: unknown): string {
+  if (axios.isAxiosError<ApiErrorPayload>(error)) {
+    if (!error.response) {
+      return `Не удалось подключиться к API (${API_BASE_URL}). Проверьте, что RestAPI запущен и CORS_ORIGINS разрешает http://localhost:5173.`;
+    }
+    const detail = error.response?.data?.detail;
+    if (Array.isArray(detail)) {
+      return detail
+        .map((item) => item.msg)
+        .filter(Boolean)
+        .join("; ");
+    }
+    return detail ?? error.message;
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return "Неизвестная ошибка";
+}

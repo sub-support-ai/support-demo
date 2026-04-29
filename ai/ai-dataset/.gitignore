@@ -1,0 +1,15 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# API-generated runs (большие, в репо не нужны)
+data/raw/*
+data/processed/*
+data/splits/*
+
+# Ручные/seed-данные оставляем в репо
+!data/raw/manual_*/
+!data/processed/manual_*/
+!data/splits/manual_*/

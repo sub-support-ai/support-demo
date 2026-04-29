@@ -1,0 +1,10 @@
+{
+  "run_id": "manual_v1",
+  "model": "claude-opus-4-7",
+  "method": "inline_generation",
+  "note": "Hand-curated by Claude Opus 4.7 directly in conversation, bypassing API. 5 samples per category x 12 categories = 60 samples.",
+  "samples_per_combo": 1,
+  "grid_size": 60,
+  "concurrency": null,
+  "started_at": "2026-04-27"
+}

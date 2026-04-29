@@ -1,0 +1,173 @@
+:root {
+  color: #18211f;
+  background: #f4f7f6;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  background: #f4f7f6;
+}
+
+.app-header {
+  border-bottom: 1px solid #dce5e2;
+}
+
+.login-container {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+}
+
+.login-panel,
+.chat-panel,
+.tickets-panel,
+.quiet-panel,
+.ticket-card {
+  border-radius: 8px;
+}
+
+.page-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+  gap: 16px;
+  padding: 16px;
+  min-height: calc(100vh - 58px);
+}
+
+.content-page {
+  padding: 16px;
+}
+
+.chat-panel,
+.tickets-panel {
+  position: relative;
+  padding: 16px;
+  background: #ffffff;
+}
+
+.chat-surface {
+  display: grid;
+  grid-template-rows: minmax(320px, calc(100vh - 230px)) auto;
+  border: 1px solid #dce5e2;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #f8fbfa;
+}
+
+.messages-scroll {
+  min-height: 320px;
+}
+
+.message-row {
+  display: flex;
+}
+
+.message-row.user {
+  justify-content: flex-end;
+}
+
+.message-row.ai {
+  justify-content: flex-start;
+}
+
+.message-bubble {
+  max-width: min(680px, 78%);
+  padding: 10px 12px;
+}
+
+.message-bubble.user {
+  background: #e8f7f3;
+  border-color: #c4e7dd;
+}
+
+.message-bubble.ai {
+  background: #ffffff;
+}
+
+.message-text {
+  white-space: pre-wrap;
+}
+
+.escalation-card {
+  max-width: min(720px, 90%);
+  border-radius: 8px;
+}
+
+.sources {
+  margin-top: 8px;
+}
+
+.sources-toggle {
+  color: #51615d;
+}
+
+.sources-list {
+  display: grid;
+  gap: 6px;
+  padding-top: 6px;
+}
+
+.composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 42px;
+  gap: 8px;
+  padding: 10px;
+  border-top: 1px solid #dce5e2;
+  background: #ffffff;
+}
+
+.side-panel {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+}
+
+.empty-state {
+  display: grid;
+  min-height: 220px;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  color: #66736f;
+}
+
+.empty-state.tickets {
+  min-height: 260px;
+}
+
+.ticket-card {
+  padding: 14px;
+  background: #ffffff;
+}
+
+@media (max-width: 960px) {
+  .page-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .message-bubble {
+    max-width: 92%;
+  }
+}
+
+@media (max-width: 720px) {
+  .page-grid,
+  .content-page {
+    padding: 10px;
+  }
+
+  .chat-panel,
+  .tickets-panel {
+    padding: 12px;
+  }
+}

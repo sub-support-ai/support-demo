@@ -1,0 +1,26 @@
+{
+  "run_id": "manual_v2",
+  "model": "claude-opus-4-7",
+  "method": "inline_generation",
+  "note": "Hand-curated by Claude Opus 4.7 directly in conversation, bypassing API. New 14-category taxonomy (split it_access, it_software). Distribution skewed toward IT (75%) per real-world traffic.",
+  "samples_per_combo": 1,
+  "grid_size": 101,
+  "concurrency": null,
+  "started_at": "2026-04-27",
+  "target_distribution": {
+    "it_access_reset": 20,
+    "it_access_grant": 15,
+    "it_software_error": 15,
+    "it_software_install": 12,
+    "it_hardware": 8,
+    "it_network": 5,
+    "hr_payroll": 3,
+    "hr_leave": 3,
+    "hr_policy": 3,
+    "hr_onboarding": 3,
+    "finance_invoice": 3,
+    "finance_expense": 2,
+    "finance_report": 2,
+    "other": 6
+  }
+}

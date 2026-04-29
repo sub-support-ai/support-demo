@@ -1,0 +1,68 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+      # ai-service подключается той же сетью, имя сервиса = DNS-имя для
+      # контейнеров. Backend достучится на http://ai-service:8001 (см. .env).
+      # Пока AI-часть разрабатывается, зависимость НЕ обязательная:
+      # если AI Service не поднят, classify/answer отвечают fallback'ом
+      # (confidence=0.0 → тикет уходит к живому агенту, см. ai_classifier.py).
+    volumes:
+      - .:/app
+    # Сначала прогоняем миграции БД (alembic upgrade head), потом запускаем uvicorn.
+    # Так на каждом старте контейнера схема автоматически синхронизируется с кодом.
+    # Идемпотентно: если миграций нет — alembic ничего не делает.
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+
+  # ── ai-service ─────────────────────────────────────────────────────────────
+  # Локальный AI-сервис с Mistral (через Ollama / llama.cpp). По требованию
+  # заказчика (СИБИНТЕК-СОФТ / Роснефть) данные не покидают периметр —
+  # поэтому сервис крутится в соседнем контейнере, а не в облаке.
+  #
+  # Этот блок намеренно закомментирован: образ и runtime-настройки собирает
+  # AI-команда (отдельный репозиторий). Backend общается с сервисом только
+  # через HTTP-контракт:
+  #   POST /ai/classify   { ticket_id, title, body } → { category, priority, confidence, draft_response }
+  #   POST /ai/answer     { conversation_id, message }    → { answer, confidence, should_escalate }
+  #
+  # Когда AI lead опубликует образ, раскомментируем и поставим конкретный
+  # image tag. Зависимость от GPU — тоже его решение (CPU для dev, GPU в prod).
+  #
+  # ai-service:
+  #   image: <registry>/<ai-service>:<tag>
+  #   ports:
+  #     - "8001:8001"
+  #   # volumes: монтируем модель, чтобы не скачивать её на каждом старте контейнера
+  #   # - ./models:/models
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:8001/healthcheck"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+  #     start_period: 60s   # Mistral прогревается дольше, чем обычный HTTP-сервис
+
+  db:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-app_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:

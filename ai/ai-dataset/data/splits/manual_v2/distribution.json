@@ -1,0 +1,81 @@
+{
+  "train": {
+    "total": 80,
+    "by_department": {
+      "IT": 59,
+      "HR": 9,
+      "other": 6,
+      "finance": 6
+    },
+    "by_category": {
+      "it_software_error": 14,
+      "it_access_grant": 10,
+      "it_hardware": 7,
+      "it_access_reset": 14,
+      "hr_onboarding": 3,
+      "hr_leave": 3,
+      "hr_policy": 2,
+      "it_network": 5,
+      "other": 6,
+      "it_software_install": 9,
+      "finance_expense": 2,
+      "hr_payroll": 1,
+      "finance_invoice": 2,
+      "finance_report": 2
+    },
+    "by_priority": {
+      "высокий": 20,
+      "низкий": 23,
+      "средний": 35,
+      "критический": 2
+    }
+  },
+  "val": {
+    "total": 7,
+    "by_department": {
+      "IT": 7
+    },
+    "by_category": {
+      "it_access_grant": 1,
+      "it_access_reset": 4,
+      "it_software_install": 1,
+      "it_software_error": 1
+    },
+    "by_priority": {
+      "средний": 3,
+      "низкий": 2,
+      "высокий": 2
+    }
+  },
+  "test": {
+    "total": 14,
+    "by_department": {
+      "finance": 1,
+      "IT": 9,
+      "HR": 3,
+      "other": 1
+    },
+    "by_category": {
+      "finance_invoice": 1,
+      "it_access_grant": 4,
+      "it_access_reset": 2,
+      "it_software_install": 2,
+      "hr_policy": 1,
+      "hr_payroll": 2,
+      "it_hardware": 1,
+      "other": 1
+    },
+    "by_priority": {
+      "средний": 6,
+      "низкий": 4,
+      "высокий": 3,
+      "критический": 1
+    }
+  },
+  "seed": 42,
+  "ratios": {
+    "train": 0.8,
+    "val": 0.1,
+    "test": 0.1
+  }
+}
