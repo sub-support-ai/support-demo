@@ -347,6 +347,7 @@ async def escalate_conversation(
         )
 
     title = user_msgs[0].content[:255]  # Ticket.title VARCHAR(255)
+    classify_body = "\n\n".join(m.content for m in user_msgs)
     body_parts = []
     for m in messages:
         prefix = "Пользователь" if m.role == "user" else "AI"
@@ -357,7 +358,7 @@ async def escalate_conversation(
     ai_result = await classify_ticket(
         ticket_id=0,  # ещё не создан
         title=title,
-        body=body,
+        body=classify_body,
     )
 
     department = ai_result.get("department") or "IT"

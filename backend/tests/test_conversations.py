@@ -208,6 +208,28 @@ async def test_escalate_creates_prefilled_ticket(client: AsyncClient):
     assert convs[conv_id]["status"] == "escalated"
 
 
+@pytest.mark.asyncio
+async def test_escalate_software_update_request_gets_low_priority(client: AsyncClient):
+    """AI fallback text must not make routine how-to requests high priority."""
+    _, token = await register_user(client, "updatevscode")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    conv_id = (await client.post("/api/v1/conversations/", headers=headers)).json()["id"]
+    await client.post(
+        f"/api/v1/conversations/{conv_id}/messages",
+        json={"content": "я хочу обновить программу VS Code, как это сделать?"},
+        headers=headers,
+    )
+
+    resp = await client.post(
+        f"/api/v1/conversations/{conv_id}/escalate",
+        headers=headers,
+    )
+
+    assert resp.status_code == 201
+    assert resp.json()["ticket"]["ai_priority"] == "низкий"
+
+
 # ── POST /escalate: пустой диалог → 400 ─────────────────────────────────────
 
 @pytest.mark.asyncio

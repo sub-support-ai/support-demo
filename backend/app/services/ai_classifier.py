@@ -54,6 +54,18 @@ _HIGH_TERMS = (
     "надо заменить",
     "нужно заменить",
 )
+_LOW_TERMS = (
+    "как сделать",
+    "как обновить",
+    "хочу обновить",
+    "обновить программу",
+    "обновить приложение",
+    "как установить",
+    "как настроить",
+    "инструкция",
+    "подскажите",
+    "где скачать",
+)
 
 
 def _infer_priority_from_text(title: str, body: str) -> str | None:
@@ -62,15 +74,19 @@ def _infer_priority_from_text(title: str, body: str) -> str | None:
         return "критический"
     if any(term in text for term in _HIGH_TERMS):
         return "высокий"
+    if any(term in text for term in _LOW_TERMS):
+        return "низкий"
     return None
 
 
-def _max_priority(current: object, inferred: str | None) -> str:
+def _choose_priority(current: object, inferred: str | None) -> str:
     current_priority = current if isinstance(current, str) else None
     if current_priority not in _PRIORITY_RANK:
         current_priority = _CLASSIFICATION_FALLBACK["priority"]
     if inferred is None:
         return current_priority
+    if inferred == "низкий":
+        return inferred
     return (
         inferred
         if _PRIORITY_RANK[inferred] > _PRIORITY_RANK[current_priority]
@@ -134,7 +150,7 @@ async def classify_ticket(ticket_id: int, title: str, body: str) -> dict:
     if department not in _VALID_DEPARTMENTS:
         department = _CLASSIFICATION_FALLBACK["department"]
     data["department"] = department
-    data["priority"] = _max_priority(
+    data["priority"] = _choose_priority(
         data.get("priority"),
         _infer_priority_from_text(title, body),
     )

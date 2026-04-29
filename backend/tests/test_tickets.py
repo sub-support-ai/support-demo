@@ -1,6 +1,18 @@
 import pytest
 from httpx import AsyncClient
 
+from app.services.ai_classifier import _choose_priority, _infer_priority_from_text
+
+
+def test_how_to_priority_heuristic_can_downgrade_ai_priority():
+    inferred = _infer_priority_from_text(
+        "я хочу обновить программу VS Code, как это сделать?",
+        "нужна инструкция по обновлению приложения",
+    )
+
+    assert inferred == "низкий"
+    assert _choose_priority("высокий", inferred) == "низкий"
+
 
 # Регистрируем пользователя через /auth/register и возвращаем
 # (user_id, access_token) — нужны для тикета и для заголовка Authorization.
@@ -73,6 +85,25 @@ async def test_urgent_broken_hardware_gets_high_priority(client: AsyncClient):
 
     assert response.status_code == 201
     assert response.json()["ai_priority"] == "высокий"
+
+
+@pytest.mark.asyncio
+async def test_how_to_update_software_gets_low_priority(client: AsyncClient):
+    """How-to software requests should not be routed as urgent incidents."""
+    _, token = await register_user(client, suffix="updatesoftware")
+
+    response = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "я хочу обновить программу VS Code, как это сделать?",
+            "body": "нужна инструкция по обновлению приложения",
+            "user_priority": 3,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["ai_priority"] == "низкий"
 
 
 @pytest.mark.asyncio

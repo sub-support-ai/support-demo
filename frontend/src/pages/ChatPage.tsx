@@ -25,6 +25,7 @@ import type { Ticket } from "../api/types";
 import { Composer } from "../components/chat/Composer";
 import { MessageBubble } from "../components/chat/MessageBubble";
 import { PrefilledTicketPanel } from "../components/tickets/PrefilledTicketPanel";
+import { getStatusLabel } from "../lib/ticketLabels";
 
 export function ChatPage() {
   const conversations = useConversations();
@@ -143,7 +144,7 @@ export function ChatPage() {
             <Title order={2}>Чат поддержки</Title>
             <Text size="sm" c="dimmed">
               {activeConversation
-                ? `Диалог #${activeConversation.id} · ${activeConversation.status}`
+                ? getStatusLabel(activeConversation.status)
                 : "Новый диалог"}
             </Text>
           </div>

@@ -2,6 +2,10 @@ import { Alert, Badge, Button, Group, Stack, Text, Title } from "@mantine/core";
 import { IconCheck, IconTicket } from "@tabler/icons-react";
 
 import type { Ticket } from "../../api/types";
+import {
+  getStatusLabel,
+  getTicketPriorityLabel,
+} from "../../lib/ticketLabels";
 
 export function PrefilledTicketPanel({
   ticket,
@@ -18,9 +22,6 @@ export function PrefilledTicketPanel({
         <Group justify="space-between" align="start">
           <div>
             <Title order={4}>Готов черновик тикета</Title>
-            <Text size="sm" c="dimmed">
-              #{ticket.id}
-            </Text>
           </div>
           <Badge>{ticket.department}</Badge>
         </Group>
@@ -31,8 +32,8 @@ export function PrefilledTicketPanel({
           <Text size="sm">{ticket.title}</Text>
         </div>
         <Group gap="xs">
-          <Badge variant="light">Статус: {ticket.status}</Badge>
-          {ticket.ai_priority && <Badge variant="light">{ticket.ai_priority}</Badge>}
+          <Badge variant="light">{getStatusLabel(ticket.status)}</Badge>
+          <Badge variant="light">{getTicketPriorityLabel(ticket)}</Badge>
         </Group>
         {ticket.steps_tried && (
           <div>
