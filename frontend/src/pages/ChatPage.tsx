@@ -21,8 +21,8 @@ import {
   useSendMessage,
 } from "../api/conversations";
 import { getApiError } from "../api/client";
-import { useConfirmTicket, useTickets } from "../api/tickets";
-import type { Conversation, Ticket } from "../api/types";
+import { useConfirmTicket, useTickets, useUpdateTicketDraft } from "../api/tickets";
+import type { Conversation, Ticket, TicketDraftUpdate } from "../api/types";
 import { Composer } from "../components/chat/Composer";
 import { MessageBubble } from "../components/chat/MessageBubble";
 import { PrefilledTicketPanel } from "../components/tickets/PrefilledTicketPanel";
@@ -65,6 +65,7 @@ export function ChatPage() {
   const sendMessage = useSendMessage();
   const escalate = useEscalateConversation();
   const confirmTicket = useConfirmTicket();
+  const updateTicketDraft = useUpdateTicketDraft();
   const tickets = useTickets();
   const [activeConversationId, setActiveConversationId] = useState<number>();
   const [draftTicket, setDraftTicket] = useState<Ticket | null>(null);
@@ -159,12 +160,28 @@ export function ChatPage() {
     }
   }
 
+  async function handleSaveDraft(payload: TicketDraftUpdate) {
+    if (!activeTicket) {
+      return;
+    }
+    try {
+      const ticket = await updateTicketDraft.mutateAsync({
+        ticketId: activeTicket.id,
+        payload,
+      });
+      setDraftTicket(ticket);
+    } catch {
+      // Ошибка уже хранится в mutation/query state и показывается в Alert.
+    }
+  }
+
   const error =
     conversations.error ||
     messages.error ||
     sendMessage.error ||
     escalate.error ||
     confirmTicket.error ||
+    updateTicketDraft.error ||
     createConversation.error ||
     tickets.error;
 
@@ -270,7 +287,9 @@ export function ChatPage() {
           <PrefilledTicketPanel
             ticket={activeTicket}
             confirmLoading={confirmTicket.isPending}
+            saveLoading={updateTicketDraft.isPending}
             onConfirm={handleConfirm}
+            onSave={handleSaveDraft}
           />
         ) : (
           <Paper withBorder p="md" className="quiet-panel">

@@ -15,6 +15,7 @@ TicketStatusLiteral = Literal[
 ]
 
 DepartmentLiteral = Literal["IT", "HR", "finance"]
+TicketPriorityLiteral = Literal["критический", "высокий", "средний", "низкий"]
 
 
 class TicketBase(BaseModel):
@@ -33,6 +34,14 @@ class TicketCreate(TicketBase):
 
 class TicketStatusUpdate(BaseModel):
     status: TicketStatusLiteral
+
+
+class TicketDraftUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+    body: str | None = Field(default=None, min_length=1)
+    department: DepartmentLiteral | None = None
+    ai_priority: TicketPriorityLiteral | None = None
+    steps_tried: str | None = None
 
 
 class TicketRead(TicketBase):

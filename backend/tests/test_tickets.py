@@ -107,6 +107,72 @@ async def test_how_to_update_software_gets_low_priority(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_pending_ticket_draft_can_be_edited_before_confirm(client: AsyncClient):
+    _, token = await register_user(client, suffix="editdraft")
+    headers = {"Authorization": f"Bearer {token}"}
+    low_priority = "\u043d\u0438\u0437\u043a\u0438\u0439"
+
+    create_resp = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "РЅРµ СЂР°Р±РѕС‚Р°РµС‚ РїСЂРёРЅС‚РµСЂ",
+            "body": "РїРµС‡Р°С‚СЊ РЅРµ РёРґРµС‚",
+            "user_priority": 3,
+        },
+        headers=headers,
+    )
+    assert create_resp.status_code == 201
+    ticket_id = create_resp.json()["id"]
+
+    update_resp = await client.patch(
+        f"/api/v1/tickets/{ticket_id}/draft",
+        json={
+            "title": "РќРµ РїРµС‡Р°С‚Р°РµС‚ РїСЂРёРЅС‚РµСЂ РІ Р±СѓС…РіР°Р»С‚РµСЂРёРё",
+            "body": "РќСѓР¶РЅР° РїСЂРѕРІРµСЂРєР° РїСЂРёРЅС‚РµСЂР° Рё РґСЂР°Р№РІРµСЂР°.",
+            "department": "IT",
+            "ai_priority": low_priority,
+            "steps_tried": "РџРµСЂРµР·Р°РїСѓСЃРєР°Р»Рё РїСЂРёРЅС‚РµСЂ Рё РЅРѕСѓС‚Р±СѓРє.",
+        },
+        headers=headers,
+    )
+
+    assert update_resp.status_code == 200
+    updated = update_resp.json()
+    assert updated["title"] == "РќРµ РїРµС‡Р°С‚Р°РµС‚ РїСЂРёРЅС‚РµСЂ РІ Р±СѓС…РіР°Р»С‚РµСЂРёРё"
+    assert updated["body"] == "РќСѓР¶РЅР° РїСЂРѕРІРµСЂРєР° РїСЂРёРЅС‚РµСЂР° Рё РґСЂР°Р№РІРµСЂР°."
+    assert updated["department"] == "IT"
+    assert updated["ai_priority"] == low_priority
+    assert updated["steps_tried"] == "РџРµСЂРµР·Р°РїСѓСЃРєР°Р»Рё РїСЂРёРЅС‚РµСЂ Рё РЅРѕСѓС‚Р±СѓРє."
+
+
+@pytest.mark.asyncio
+async def test_confirmed_ticket_draft_cannot_be_edited(client: AsyncClient):
+    _, token = await register_user(client, suffix="lockedraft")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    create_resp = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "РЅРµ РѕС‚РєСЂС‹РІР°РµС‚СЃСЏ VPN",
+            "body": "РѕС€РёР±РєР° РїРѕРґРєР»СЋС‡РµРЅРёСЏ",
+            "user_priority": 3,
+        },
+        headers=headers,
+    )
+    ticket_id = create_resp.json()["id"]
+
+    confirm_resp = await client.patch(f"/api/v1/tickets/{ticket_id}/confirm", headers=headers)
+    assert confirm_resp.status_code == 200
+
+    update_resp = await client.patch(
+        f"/api/v1/tickets/{ticket_id}/draft",
+        json={"title": "РЅРѕРІР°СЏ С‚РµРјР°"},
+        headers=headers,
+    )
+    assert update_resp.status_code == 409
+
+
+@pytest.mark.asyncio
 async def test_list_tickets(client: AsyncClient):
     user_id, token = await register_user(client, suffix="list")
     headers = {"Authorization": f"Bearer {token}"}

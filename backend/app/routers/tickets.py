@@ -21,7 +21,7 @@ from app.dependencies import get_current_user, require_role
 from app.models.ai_log import AILog
 from app.models.ticket import Ticket
 from app.models.user import User
-from app.schemas.ticket import TicketCreate, TicketRead, TicketStatusUpdate
+from app.schemas.ticket import TicketCreate, TicketDraftUpdate, TicketRead, TicketStatusUpdate
 from app.services.audit import log_event
 from app.services.routing import assign_agent, unassign_agent
 
@@ -245,6 +245,62 @@ async def update_ticket_status(
     if payload.status in closing_statuses and old_status not in closing_statuses:
         await unassign_agent(db, ticket)
         ticket.resolved_at = datetime.now(timezone.utc)
+
+    await db.flush()
+    await db.refresh(ticket)
+    return ticket
+
+
+# ── PATCH /tickets/{id}/draft — пользователь правит AI-черновик до отправки ──
+
+@router.patch(
+    "/{ticket_id}/draft",
+    response_model=TicketRead,
+    summary="Обновить черновик тикета перед отправкой",
+    description=(
+        "Позволяет владельцу тикета изменить pre-filled черновик до подтверждения: "
+        "тему, описание, отдел, приоритет и поле 'что уже пробовали'."
+    ),
+)
+async def update_ticket_draft(
+    ticket_id: int,
+    payload: TicketDraftUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    ticket = await get_ticket_for_user(ticket_id, db, current_user)
+
+    if ticket.status != "pending_user" or ticket.confirmed_by_user:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Редактировать можно только неподтвержденный черновик тикета",
+        )
+
+    update_data = payload.model_dump(exclude_unset=True)
+    old_department = ticket.department
+
+    if "title" in update_data and update_data["title"] is not None:
+        ticket.title = update_data["title"].strip()
+    if "body" in update_data and update_data["body"] is not None:
+        ticket.body = update_data["body"].strip()
+    if "department" in update_data and update_data["department"] is not None:
+        ticket.department = update_data["department"]
+    if "ai_priority" in update_data and update_data["ai_priority"] is not None:
+        ticket.ai_priority = update_data["ai_priority"]
+    if "steps_tried" in update_data:
+        steps_tried = update_data["steps_tried"]
+        ticket.steps_tried = steps_tried.strip() if steps_tried else None
+
+    if not ticket.title or not ticket.body:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Тема и описание черновика не должны быть пустыми",
+        )
+
+    if ticket.department != old_department:
+        await unassign_agent(db, ticket)
+        ticket.agent_id = None
+        await assign_agent(db, ticket)
 
     await db.flush()
     await db.refresh(ticket)

@@ -59,6 +59,14 @@ export interface Ticket {
   resolved_at?: string | null;
 }
 
+export interface TicketDraftUpdate {
+  title?: string;
+  body?: string;
+  department?: "IT" | "HR" | "finance";
+  ai_priority?: "низкий" | "средний" | "высокий" | "критический";
+  steps_tried?: string | null;
+}
+
 export interface EscalateResponse {
   ticket: Ticket;
   conversation_id: number;

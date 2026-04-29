@@ -26,6 +26,10 @@ export function Composer({
   return (
     <form className="composer" onSubmit={submit}>
       <Textarea
+        classNames={{
+          root: "composer-input-root",
+          input: "composer-input",
+        }}
         autosize
         minRows={1}
         maxRows={5}
@@ -40,6 +44,7 @@ export function Composer({
         }}
       />
       <ActionIcon
+        className="composer-send"
         type="submit"
         size={42}
         radius="sm"
