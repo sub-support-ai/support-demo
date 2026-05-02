@@ -43,14 +43,14 @@ async def test_register_user(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_register_rejects_invalid_username(client: AsyncClient):
-    """Логин ограничен длиной и безопасным набором символов."""
+async def test_register_accepts_simple_username(client: AsyncClient):
+    """Логин не ограничен набором символов; уникальность проверяется отдельно."""
     response = await client.post("/api/v1/auth/register", json={
-        "email": "badlogin@example.com",
+        "email": "simplelogin@example.com",
         "username": "юзер",
         "password": "Secret123!",
     })
-    assert response.status_code == 422
+    assert response.status_code == 201
 
 
 @pytest.mark.asyncio
@@ -175,6 +175,24 @@ async def test_register_duplicate_username(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_register_duplicate_username_after_trim(client: AsyncClient):
+    await client.post("/api/v1/auth/register", json={
+        "email": "trimuser1@example.com",
+        "username": "trimmed",
+        "password": "Secret123!",
+    })
+
+    response = await client.post("/api/v1/auth/register", json={
+        "email": "trimuser2@example.com",
+        "username": "  trimmed  ",
+        "password": "Secret123!",
+    })
+
+    assert response.status_code == 409
+    assert "Username" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
 async def test_get_self(client: AsyncClient):
     """GET /users/{id} доступен владельцу — /users/<свой_id> возвращает 200."""
     reg = await client.post("/api/v1/auth/register", json={
@@ -187,6 +205,11 @@ async def test_get_self(client: AsyncClient):
 
     me = await client.get("/api/v1/auth/me", headers=headers)
     user_id = me.json()["id"]
+    request_context = me.json()["request_context"]
+    assert request_context["requester_name"] == "getmeuser"
+    assert request_context["requester_email"] == "getme@example.com"
+    assert "Главный офис" in request_context["office_options"]
+    assert "VPN" in request_context["affected_item_options"]
 
     response = await client.get(f"/api/v1/users/{user_id}", headers=headers)
     assert response.status_code == 200

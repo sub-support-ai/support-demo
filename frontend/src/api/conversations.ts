@@ -1,7 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "./client";
-import type { Conversation, EscalateResponse, Message } from "./types";
+import type {
+  Conversation,
+  EscalateResponse,
+  EscalationContext,
+  Message,
+} from "./types";
 
 export function useConversations() {
   return useQuery({
@@ -68,9 +73,16 @@ export function useSendMessage() {
 export function useEscalateConversation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (conversationId: number) => {
+    mutationFn: async ({
+      conversationId,
+      context,
+    }: {
+      conversationId: number;
+      context: EscalationContext;
+    }) => {
       const { data } = await api.post<EscalateResponse>(
         `/conversations/${conversationId}/escalate`,
+        { context },
       );
       return data;
     },

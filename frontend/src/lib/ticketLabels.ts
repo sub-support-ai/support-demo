@@ -14,7 +14,6 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 const USER_PRIORITY_LABELS: Record<number, string> = {
-  1: "Критический",
   2: "Высокий",
   3: "Средний",
   4: "Низкий",

@@ -1,6 +1,11 @@
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.agent import Agent
+from app.models.ticket import Ticket
+from app.security import hash_password
 from app.services.ai_classifier import _choose_priority, _infer_priority_from_text
 
 
@@ -55,6 +60,8 @@ async def test_create_ticket(client: AsyncClient):
     assert data["title"] == "не могу войти в систему"
     assert data["user_id"] == user_id
     assert data["user_priority"] == 4
+    assert data["requester_name"] == "ticketusercreate"
+    assert data["requester_email"] == "ticketusercreate@example.com"
 
     assert "id" in data
     assert data["id"] is not None
@@ -85,6 +92,43 @@ async def test_urgent_broken_hardware_gets_high_priority(client: AsyncClient):
 
     assert response.status_code == 201
     assert response.json()["ai_priority"] == "высокий"
+
+
+@pytest.mark.asyncio
+async def test_mass_outage_gets_critical_priority(client: AsyncClient):
+    """Критический приоритет выдаётся системно для массовых сбоев."""
+    _, token = await register_user(client, suffix="criticaloutage")
+
+    response = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "У всех не работает 1С",
+            "body": "Весь отдел не может оформить заказы, простой продаж.",
+            "user_priority": 3,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["ai_priority"] == "критический"
+
+
+@pytest.mark.asyncio
+async def test_manual_ticket_cannot_use_critical_user_priority(client: AsyncClient):
+    _, token = await register_user(client, suffix="manualusercritical")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    response = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "Не работает ноутбук",
+            "body": "Пользователь просит проверить устройство",
+            "user_priority": 1,
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 422
 
 
 @pytest.mark.asyncio
@@ -131,6 +175,10 @@ async def test_pending_ticket_draft_can_be_edited_before_confirm(client: AsyncCl
             "body": "РќСѓР¶РЅР° РїСЂРѕРІРµСЂРєР° РїСЂРёРЅС‚РµСЂР° Рё РґСЂР°Р№РІРµСЂР°.",
             "department": "IT",
             "ai_priority": low_priority,
+            "requester_name": "Анна Иванова",
+            "requester_email": "anna.ivanova@example.com",
+            "office": "Главный офис",
+            "affected_item": "Принтер/МФУ",
             "steps_tried": "РџРµСЂРµР·Р°РїСѓСЃРєР°Р»Рё РїСЂРёРЅС‚РµСЂ Рё РЅРѕСѓС‚Р±СѓРє.",
         },
         headers=headers,
@@ -142,7 +190,162 @@ async def test_pending_ticket_draft_can_be_edited_before_confirm(client: AsyncCl
     assert updated["body"] == "РќСѓР¶РЅР° РїСЂРѕРІРµСЂРєР° РїСЂРёРЅС‚РµСЂР° Рё РґСЂР°Р№РІРµСЂР°."
     assert updated["department"] == "IT"
     assert updated["ai_priority"] == low_priority
+    assert updated["requester_name"] == "Анна Иванова"
+    assert updated["requester_email"] == "anna.ivanova@example.com"
+    assert updated["office"] == "Главный офис"
+    assert updated["affected_item"] == "Принтер/МФУ"
     assert updated["steps_tried"] == "РџРµСЂРµР·Р°РїСѓСЃРєР°Р»Рё РїСЂРёРЅС‚РµСЂ Рё РЅРѕСѓС‚Р±СѓРє."
+
+
+@pytest.mark.asyncio
+async def test_draft_context_fields_refresh_context_block(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    user_id, token = await register_user(client, suffix="contextblock")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    ticket = Ticket(
+        user_id=user_id,
+        title="Не работает VPN",
+        body=(
+            "Контекст обращения:\n"
+            "Автор: Старый Автор <old@example.com>\n"
+            "Создал: ticketusercontextblock <ticketusercontextblock@example.com>\n"
+            "Офис: Старый офис\n"
+            "Объект: Старый объект\n\n"
+            "Пользователь: Не работает VPN"
+        ),
+        user_priority=3,
+        department="IT",
+        status="pending_user",
+        confirmed_by_user=False,
+        ai_priority="средний",
+        ai_confidence=0.95,
+        requester_name="Старый Автор",
+        requester_email="old@example.com",
+        office="Старый офис",
+        affected_item="Старый объект",
+    )
+    db_session.add(ticket)
+    await db_session.flush()
+
+    update_resp = await client.patch(
+        f"/api/v1/tickets/{ticket.id}/draft",
+        json={
+            "requester_name": "Новый Автор",
+            "requester_email": "new@example.com",
+            "office": "Главный офис",
+            "affected_item": "VPN",
+        },
+        headers=headers,
+    )
+
+    assert update_resp.status_code == 200
+    body = update_resp.json()["body"]
+    assert "Автор: Новый Автор <new@example.com>" in body
+    assert "Создал: ticketusercontextblock <ticketusercontextblock@example.com>" in body
+    assert "Офис: Главный офис" in body
+    assert "Объект: VPN" in body
+    assert "Старый Автор" not in body
+    assert "Старый офис" not in body
+    assert "Пользователь: Не работает VPN" in body
+
+
+@pytest.mark.asyncio
+async def test_draft_priority_change_reroutes_ticket(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    user_id, token = await register_user(client, suffix="reroutepriority")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    free_agent = Agent(
+        email="free-reroute@example.com",
+        username="free-reroute",
+        hashed_password=hash_password("Secret123!"),
+        department="IT",
+        active_ticket_count=2,
+        ai_routing_score=0.1,
+        is_active=True,
+    )
+    senior_agent = Agent(
+        email="senior-reroute@example.com",
+        username="senior-reroute",
+        hashed_password=hash_password("Secret123!"),
+        department="IT",
+        active_ticket_count=0,
+        ai_routing_score=0.9,
+        is_active=True,
+    )
+    db_session.add_all([free_agent, senior_agent])
+    await db_session.flush()
+
+    ticket = Ticket(
+        user_id=user_id,
+        title="Нужно обновить приложение",
+        body="Плановый запрос",
+        user_priority=3,
+        department="IT",
+        status="pending_user",
+        confirmed_by_user=False,
+        ai_priority="низкий",
+        ai_confidence=0.95,
+        agent_id=free_agent.id,
+    )
+    db_session.add(ticket)
+    await db_session.flush()
+
+    update_resp = await client.patch(
+        f"/api/v1/tickets/{ticket.id}/draft",
+        json={"ai_priority": "высокий"},
+        headers=headers,
+    )
+
+    assert update_resp.status_code == 200
+    assert update_resp.json()["agent_id"] == senior_agent.id
+
+    await db_session.refresh(free_agent)
+    await db_session.refresh(senior_agent)
+    assert free_agent.active_ticket_count == 1
+    assert senior_agent.active_ticket_count == 1
+
+    refreshed = await db_session.execute(select(Ticket).where(Ticket.id == ticket.id))
+    assert refreshed.scalar_one().agent_id == senior_agent.id
+
+
+@pytest.mark.asyncio
+async def test_draft_priority_cannot_be_set_to_critical(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    user_id, token = await register_user(client, suffix="manualcritical")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    ticket = Ticket(
+        user_id=user_id,
+        title="Не работает ноутбук",
+        body="Пользователь просит проверить устройство",
+        user_priority=3,
+        department="IT",
+        status="pending_user",
+        confirmed_by_user=False,
+        ai_priority="средний",
+        ai_confidence=0.95,
+    )
+    db_session.add(ticket)
+    await db_session.flush()
+
+    update_resp = await client.patch(
+        f"/api/v1/tickets/{ticket.id}/draft",
+        json={"ai_priority": "критический"},
+        headers=headers,
+    )
+
+    assert update_resp.status_code == 422
+
+    await db_session.refresh(ticket)
+    assert ticket.ai_priority == "средний"
 
 
 @pytest.mark.asyncio

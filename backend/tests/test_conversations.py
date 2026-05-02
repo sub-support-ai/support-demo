@@ -41,6 +41,22 @@ async def register_user(client: AsyncClient, suffix: str) -> tuple[int, str]:
     return me.json()["id"], token
 
 
+def escalation_payload(
+    requester_name: str = "Иван Петров",
+    requester_email: str = "ivan.petrov@example.com",
+    office: str = "Главный офис",
+    affected_item: str = "VPN",
+) -> dict:
+    return {
+        "context": {
+            "requester_name": requester_name,
+            "requester_email": requester_email,
+            "office": office,
+            "affected_item": affected_item,
+        },
+    }
+
+
 # ── POST /messages: AI fallback должен дать requires_escalation=True ─────────
 
 @pytest.mark.asyncio
@@ -145,6 +161,51 @@ async def test_post_message_to_other_user_conversation_returns_404(client: Async
     assert resp.status_code == 404
 
 
+@pytest.mark.asyncio
+async def test_create_draft_intent_forces_escalation_card(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Даже уверенный AI-ответ не должен скрывать явный запрос на черновик."""
+    from app.routers import conversations
+
+    async def confident_answer(conversation_id: int, messages: list[dict[str, str]]):
+        return {
+            "answer": "Обратитесь в техническую поддержку.",
+            "confidence": 0.95,
+            "escalate": False,
+            "sources": [],
+            "model_version": "test",
+        }
+
+    monkeypatch.setattr(conversations, "_get_ai_answer", confident_answer)
+
+    _, token = await register_user(client, "draftintent")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    conv_id = (await client.post("/api/v1/conversations/", headers=headers)).json()["id"]
+    first_resp = await client.post(
+        f"/api/v1/conversations/{conv_id}/messages",
+        json={"content": "порвался провод, срочно"},
+        headers=headers,
+    )
+    assert first_resp.status_code == 201
+    assert first_resp.json()[1]["requires_escalation"] is True
+
+    second_resp = await client.post(
+        f"/api/v1/conversations/{conv_id}/messages",
+        json={"content": "давай создадим черновик для запроса к тех поддержке"},
+        headers=headers,
+    )
+    assert second_resp.status_code == 201
+
+    ai_msg = second_resp.json()[1]
+    assert ai_msg["ai_confidence"] == 0.5
+    assert ai_msg["ai_escalate"] is True
+    assert ai_msg["requires_escalation"] is True
+    assert "Соберу данные для черновика" in ai_msg["content"]
+
+
 # ── POST /escalate: 1-click autofill создаёт тикет ──────────────────────────
 
 @pytest.mark.asyncio
@@ -172,6 +233,14 @@ async def test_escalate_creates_prefilled_ticket(client: AsyncClient):
     # 1-click эскалация
     resp = await client.post(
         f"/api/v1/conversations/{conv_id}/escalate",
+        json={
+            "context": {
+                "requester_name": "Иван Петров",
+                "requester_email": "ivan.petrov@example.com",
+                "office": "Главный офис",
+                "affected_item": "VPN",
+            },
+        },
         headers=headers,
     )
     assert resp.status_code == 201
@@ -193,8 +262,17 @@ async def test_escalate_creates_prefilled_ticket(client: AsyncClient):
     assert ticket["title"] == "Не работает VPN, я уже перезагружал ноут"
 
     # Body — сборка истории "Пользователь: ... \n\n AI: ..."
+    assert "Контекст обращения:" in ticket["body"]
+    assert "Автор: Иван Петров <ivan.petrov@example.com>" in ticket["body"]
+    assert "Создал: convuserescalate <convuserescalate@example.com>" in ticket["body"]
+    assert "Офис: Главный офис" in ticket["body"]
+    assert "Объект: VPN" in ticket["body"]
     assert "Пользователь:" in ticket["body"]
     assert "AI:" in ticket["body"]
+    assert ticket["requester_name"] == "Иван Петров"
+    assert ticket["requester_email"] == "ivan.petrov@example.com"
+    assert ticket["office"] == "Главный офис"
+    assert ticket["affected_item"] == "VPN"
 
     # steps_tried должен подхватить "перезагружал" — наша эвристика
     assert ticket["steps_tried"] is not None
@@ -212,6 +290,111 @@ async def test_escalate_creates_prefilled_ticket(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_escalate_blank_requester_name_returns_422(
+    client: AsyncClient,
+):
+    _, token = await register_user(client, "blankrequester")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    conv_id = (await client.post("/api/v1/conversations/", headers=headers)).json()["id"]
+    await client.post(
+        f"/api/v1/conversations/{conv_id}/messages",
+        json={"content": "Не работает VPN"},
+        headers=headers,
+    )
+
+    resp = await client.post(
+        f"/api/v1/conversations/{conv_id}/escalate",
+        json={
+            "context": {
+                "requester_name": "   ",
+                "requester_email": "blank.requester@example.com",
+                "office": "Главный офис",
+                "affected_item": "VPN",
+            },
+        },
+        headers=headers,
+    )
+
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_escalate_without_context_returns_422(client: AsyncClient):
+    _, token = await register_user(client, "nocontext")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    conv_id = (await client.post("/api/v1/conversations/", headers=headers)).json()["id"]
+    await client.post(
+        f"/api/v1/conversations/{conv_id}/messages",
+        json={"content": "Не работает VPN"},
+        headers=headers,
+    )
+
+    resp = await client.post(
+        f"/api/v1/conversations/{conv_id}/escalate",
+        headers=headers,
+    )
+
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_post_message_to_escalated_conversation_returns_409(
+    client: AsyncClient,
+):
+    _, token = await register_user(client, "lockedafterescalate")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    conv_id = (await client.post("/api/v1/conversations/", headers=headers)).json()["id"]
+    await client.post(
+        f"/api/v1/conversations/{conv_id}/messages",
+        json={"content": "Не работает VPN"},
+        headers=headers,
+    )
+    escalate_resp = await client.post(
+        f"/api/v1/conversations/{conv_id}/escalate",
+        json=escalation_payload(),
+        headers=headers,
+    )
+    assert escalate_resp.status_code == 201
+
+    message_resp = await client.post(
+        f"/api/v1/conversations/{conv_id}/messages",
+        json={"content": "Еще важная деталь для агента"},
+        headers=headers,
+    )
+
+    assert message_resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_repeated_escalate_returns_409(client: AsyncClient):
+    _, token = await register_user(client, "doubleescalate")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    conv_id = (await client.post("/api/v1/conversations/", headers=headers)).json()["id"]
+    await client.post(
+        f"/api/v1/conversations/{conv_id}/messages",
+        json={"content": "Не работает VPN"},
+        headers=headers,
+    )
+    first_resp = await client.post(
+        f"/api/v1/conversations/{conv_id}/escalate",
+        json=escalation_payload(),
+        headers=headers,
+    )
+    assert first_resp.status_code == 201
+
+    second_resp = await client.post(
+        f"/api/v1/conversations/{conv_id}/escalate",
+        json=escalation_payload(),
+        headers=headers,
+    )
+    assert second_resp.status_code == 409
+
+
+@pytest.mark.asyncio
 async def test_escalate_software_update_request_gets_low_priority(client: AsyncClient):
     """AI fallback text must not make routine how-to requests high priority."""
     _, token = await register_user(client, "updatevscode")
@@ -226,6 +409,7 @@ async def test_escalate_software_update_request_gets_low_priority(client: AsyncC
 
     resp = await client.post(
         f"/api/v1/conversations/{conv_id}/escalate",
+        json=escalation_payload(affected_item="VS Code"),
         headers=headers,
     )
 
@@ -245,6 +429,7 @@ async def test_escalate_empty_conversation_returns_400(client: AsyncClient):
 
     resp = await client.post(
         f"/api/v1/conversations/{conv_id}/escalate",
+        json=escalation_payload(),
         headers=headers,
     )
     assert resp.status_code == 400
@@ -273,6 +458,7 @@ async def test_escalate_other_user_conversation_returns_404(client: AsyncClient)
     # Bob пытается эскалировать
     resp = await client.post(
         f"/api/v1/conversations/{conv_id}/escalate",
+        json=escalation_payload(),
         headers={"Authorization": f"Bearer {bob_token}"},
     )
     assert resp.status_code == 404
@@ -368,3 +554,22 @@ def test_extract_steps_tried_returns_none_when_nothing_found():
         Message(role="user", content="Ничего особенного"),
     ]
     assert _extract_steps_tried(msgs) is None
+
+
+def test_support_draft_detection_handles_draft_request_and_urgent_wire():
+    from app.routers.conversations import _should_offer_support_draft
+
+    assert _should_offer_support_draft([
+        {"role": "user", "content": "порвался провод, срочно"},
+    ])
+    assert _should_offer_support_draft([
+        {"role": "user", "content": "порвался провод, срочно"},
+        {"role": "assistant", "content": "Потребуется специалист."},
+        {
+            "role": "user",
+            "content": "давай создадим черновик для запроса к тех поддержке",
+        },
+    ])
+    assert not _should_offer_support_draft([
+        {"role": "user", "content": "как обновить VS Code?"},
+    ])

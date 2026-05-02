@@ -21,7 +21,7 @@ class Settings:
     POSTGRES_HOST: str = os.getenv("POSTGRES_HOST", "localhost")
     POSTGRES_PORT: str = os.getenv("POSTGRES_PORT", "5432")
 
-    AI_SERVICE_URL: str = os.getenv("AI_SERVICE_URL", "http://ai-service:8001")
+    AI_SERVICE_URL: str = os.getenv("AI_SERVICE_URL", "http://localhost:8001")
     AI_SERVICE_TIMEOUT_SECONDS: float = float(
         os.getenv("AI_SERVICE_TIMEOUT_SECONDS", "180")
     )

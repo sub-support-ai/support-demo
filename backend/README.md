@@ -21,8 +21,8 @@ tests/           pytest
 
 1) Создайте файл `.env` на основе примера:
 
-```bash
-copy .env.example .env
+```powershell
+powershell -ExecutionPolicy Bypass -File .\start.ps1
 ```
 
 2) Поднимите Postgres и приложение:
@@ -149,7 +149,7 @@ py -m pytest -q
 ## Переменные окружения
 
 Смотрите `.env.example`:
-- `POSTGRES_HOST=db` — для запуска в Docker Compose (приложение обращается к сервису `db`)
+- `POSTGRES_HOST=localhost` — для локального запуска; Docker Compose переопределяет его в `db`
 - `AI_SERVICE_URL` — адрес локального AI-сервиса (Mistral через Ollama/llama.cpp). По требованию заказчика данные не покидают периметр предприятия, облачные API не используются.
 - `JWT_SECRET_KEY` — длинная случайная строка. Генерация: `python -c "import secrets; print(secrets.token_urlsafe(64))"`. В `APP_ENV=production` дефолт запрещён — приложение упадёт на старте.
 - `CORS_ORIGINS` — список источников фронта через запятую. Пусто — CORS выключен.

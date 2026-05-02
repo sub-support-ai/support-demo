@@ -11,6 +11,16 @@ export interface UserMe {
   username: string;
   role: UserRole;
   is_active: boolean;
+  request_context?: RequestContextDefaults | null;
+}
+
+export interface RequestContextDefaults {
+  requester_name: string;
+  requester_email: string;
+  office?: string | null;
+  office_source?: string | null;
+  office_options: string[];
+  affected_item_options: string[];
 }
 
 export interface Conversation {
@@ -48,6 +58,10 @@ export interface Ticket {
   status: string;
   department: string;
   ticket_source: string;
+  requester_name?: string | null;
+  requester_email?: string | null;
+  office?: string | null;
+  affected_item?: string | null;
   steps_tried?: string | null;
   confirmed_by_user: boolean;
   ai_category?: string | null;
@@ -63,8 +77,19 @@ export interface TicketDraftUpdate {
   title?: string;
   body?: string;
   department?: "IT" | "HR" | "finance";
-  ai_priority?: "низкий" | "средний" | "высокий" | "критический";
+  ai_priority?: "низкий" | "средний" | "высокий";
+  requester_name?: string | null;
+  requester_email?: string | null;
   steps_tried?: string | null;
+  office?: string | null;
+  affected_item?: string | null;
+}
+
+export interface EscalationContext {
+  requester_name: string;
+  requester_email: string;
+  office: string;
+  affected_item: string;
 }
 
 export interface EscalateResponse {

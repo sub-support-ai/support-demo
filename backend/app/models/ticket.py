@@ -36,7 +36,7 @@ class Ticket(Base):
       Помогает агенту не предлагать то что уже не помогло.
 
     AI-поля заполняются после классификации диалога локальным Mistral
-    (через AI Service, self-hosted):
+    (через AI Service,   self-hosted):
       ai_category     — категория проблемы
       ai_priority     — приоритет: "критический"|"высокий"|"средний"|"низкий"
       ai_confidence   — уверенность модели (0.0–1.0)
@@ -61,6 +61,11 @@ class Ticket(Base):
 
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
+
+    requester_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    requester_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    office: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    affected_item: Mapped[Optional[str]] = mapped_column(String(150), nullable=True)
 
     # Что пользователь уже пробовал — AI извлекает из диалога
     steps_tried: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

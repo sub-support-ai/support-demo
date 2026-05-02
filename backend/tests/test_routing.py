@@ -177,7 +177,7 @@ async def test_create_ticket_without_token_returns_401(client: AsyncClient):
             "title": "тест без токена",
             "body": "не должно создаться",
             "user_id": 1,
-            "user_priority": 1,
+            "user_priority": 3,
         },
     )
     assert response.status_code == 401

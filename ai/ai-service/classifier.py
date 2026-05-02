@@ -7,6 +7,9 @@ load_dotenv()
 
 # Версия модели — берём из .env
 MODEL_VERSION = os.getenv("AI_MODEL_VERSION", "mistral-7b-instruct-q4_K_M-2026-04")
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", os.getenv("OLLAMA_URL", "http://localhost:11434")).rstrip("/")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
+OLLAMA_TIMEOUT_SECONDS = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "180"))
 
 # Маппинг категории в департамент — источник истины здесь
 CATEGORY_TO_DEPARTMENT = {
@@ -89,13 +92,14 @@ def classify_ticket(ticket_id: int, title: str, body: str) -> dict:
     prompt = PROMPT.replace("{title}", title).replace("{body}", body)
 
     r = requests.post(
-        "http://localhost:11434/api/chat",
+        f"{OLLAMA_BASE_URL}/api/chat",
         json={
-            "model": "mistral",
+            "model": OLLAMA_MODEL,
             "messages": [{"role": "user", "content": prompt}],
             "stream": False,
             "options": {"temperature": 0}
-        }
+        },
+        timeout=OLLAMA_TIMEOUT_SECONDS,
     )
     r.raise_for_status()
     result = json.loads(r.json()["message"]["content"])

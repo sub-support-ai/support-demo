@@ -21,9 +21,15 @@ from app.dependencies import get_current_user, require_role
 from app.models.ai_log import AILog
 from app.models.ticket import Ticket
 from app.models.user import User
-from app.schemas.ticket import TicketCreate, TicketDraftUpdate, TicketRead, TicketStatusUpdate
+from app.schemas.ticket import (
+    TicketCreate,
+    TicketDraftUpdate,
+    TicketRead,
+    TicketStatusUpdate,
+)
 from app.services.audit import log_event
 from app.services.routing import assign_agent, unassign_agent
+from app.services.ticket_body import clean_optional_text, replace_context_block_if_present
 
 router = APIRouter(prefix="/tickets", tags=["tickets"])
 
@@ -127,6 +133,10 @@ async def create_ticket(
         body=payload.body,
         user_priority=payload.user_priority,
         department=department,
+        requester_name=current_user.username,
+        requester_email=current_user.email,
+        office=payload.office.strip() if payload.office else None,
+        affected_item=payload.affected_item.strip() if payload.affected_item else None,
         ai_category=ai_result.get("category"),
         ai_priority=ai_result.get("priority"),
         ai_confidence=ai_result.get("confidence"),
@@ -278,6 +288,7 @@ async def update_ticket_draft(
 
     update_data = payload.model_dump(exclude_unset=True)
     old_department = ticket.department
+    old_ai_priority = ticket.ai_priority
 
     if "title" in update_data and update_data["title"] is not None:
         ticket.title = update_data["title"].strip()
@@ -286,18 +297,52 @@ async def update_ticket_draft(
     if "department" in update_data and update_data["department"] is not None:
         ticket.department = update_data["department"]
     if "ai_priority" in update_data and update_data["ai_priority"] is not None:
+        if update_data["ai_priority"] == "критический":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Критический приоритет назначается только системой",
+            )
         ticket.ai_priority = update_data["ai_priority"]
+    if "requester_name" in update_data:
+        ticket.requester_name = (
+            clean_optional_text(update_data["requester_name"])
+            or ticket.requester_name
+            or current_user.username
+        )
+    if "requester_email" in update_data:
+        ticket.requester_email = (
+            clean_optional_text(update_data["requester_email"])
+            or ticket.requester_email
+            or current_user.email
+        )
     if "steps_tried" in update_data:
         steps_tried = update_data["steps_tried"]
         ticket.steps_tried = steps_tried.strip() if steps_tried else None
+    if "office" in update_data:
+        ticket.office = clean_optional_text(update_data["office"])
+    if "affected_item" in update_data:
+        ticket.affected_item = clean_optional_text(update_data["affected_item"])
 
     if not ticket.title or not ticket.body:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Тема и описание черновика не должны быть пустыми",
         )
+    ticket.body = replace_context_block_if_present(
+        ticket.body,
+        requester_name=ticket.requester_name or current_user.username,
+        requester_email=ticket.requester_email or current_user.email,
+        office=ticket.office,
+        affected_item=ticket.affected_item,
+        creator_name=current_user.username,
+        creator_email=current_user.email,
+    )
 
-    if ticket.department != old_department:
+    routing_changed = (
+        ticket.department != old_department
+        or ticket.ai_priority != old_ai_priority
+    )
+    if routing_changed:
         await unassign_agent(db, ticket)
         ticket.agent_id = None
         await assign_agent(db, ticket)

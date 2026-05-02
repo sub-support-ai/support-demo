@@ -20,6 +20,13 @@ export function TicketCard({ ticket }: { ticket: Ticket }) {
         <Text size="sm" lineClamp={3}>
           {ticket.body}
         </Text>
+        {(ticket.requester_name || ticket.office || ticket.affected_item) && (
+          <Text size="xs" c="dimmed">
+            {[ticket.requester_name, ticket.office, ticket.affected_item]
+              .filter(Boolean)
+              .join(" · ")}
+          </Text>
+        )}
         <Group gap="xs">
           <Badge variant="light">{ticket.department}</Badge>
           <Badge variant="light">{getTicketPriorityLabel(ticket)}</Badge>

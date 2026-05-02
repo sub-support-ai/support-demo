@@ -94,12 +94,22 @@ body {
   background: #ffffff;
 }
 
+.escalation-stack {
+  display: grid;
+  gap: 10px;
+  width: min(720px, 90%);
+}
+
+.escalation-stack .message-bubble {
+  max-width: 100%;
+}
+
 .message-text {
   white-space: pre-wrap;
 }
 
 .escalation-card {
-  max-width: min(720px, 90%);
+  max-width: 100%;
   border-radius: 8px;
 }
 

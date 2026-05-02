@@ -29,11 +29,19 @@ const PRIORITY_OPTIONS = [
   { value: "низкий", label: "Низкий" },
   { value: "средний", label: "Средний" },
   { value: "высокий", label: "Высокий" },
-  { value: "критический", label: "Критический" },
 ];
+
+const CRITICAL_PRIORITY_OPTION = {
+  value: "критический",
+  label: "Критический (системно)",
+  disabled: true,
+};
 
 function normalizePriority(value?: string | null) {
   const normalized = value?.toLowerCase();
+  if (normalized === CRITICAL_PRIORITY_OPTION.value) {
+    return CRITICAL_PRIORITY_OPTION.value;
+  }
   return PRIORITY_OPTIONS.some((option) => option.value === normalized)
     ? normalized
     : "средний";
@@ -50,35 +58,66 @@ export function PrefilledTicketPanel({
   confirmLoading?: boolean;
   saveLoading?: boolean;
   onConfirm: () => void;
-  onSave: (payload: TicketDraftUpdate) => Promise<void> | void;
+  onSave: (payload: TicketDraftUpdate) => Promise<void>;
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [title, setTitle] = useState(ticket.title);
   const [body, setBody] = useState(ticket.body);
   const [department, setDepartment] = useState(ticket.department);
   const [priority, setPriority] = useState(normalizePriority(ticket.ai_priority));
+  const [requesterName, setRequesterName] = useState(ticket.requester_name ?? "");
+  const [requesterEmail, setRequesterEmail] = useState(ticket.requester_email ?? "");
+  const [office, setOffice] = useState(ticket.office ?? "");
+  const [affectedItem, setAffectedItem] = useState(ticket.affected_item ?? "");
   const [stepsTried, setStepsTried] = useState(ticket.steps_tried ?? "");
 
   const canEdit = !ticket.confirmed_by_user && ticket.status === "pending_user";
-  const canSubmit = title.trim().length > 0 && body.trim().length > 0;
+  const canSubmit =
+    title.trim().length > 0 &&
+    body.trim().length > 0 &&
+    requesterName.trim().length > 0 &&
+    requesterEmail.trim().length > 0;
+  const isCriticalPriority = priority === CRITICAL_PRIORITY_OPTION.value;
 
   useEffect(() => {
     setTitle(ticket.title);
     setBody(ticket.body);
     setDepartment(ticket.department);
     setPriority(normalizePriority(ticket.ai_priority));
+    setRequesterName(ticket.requester_name ?? "");
+    setRequesterEmail(ticket.requester_email ?? "");
+    setOffice(ticket.office ?? "");
+    setAffectedItem(ticket.affected_item ?? "");
     setStepsTried(ticket.steps_tried ?? "");
     setIsEditing(false);
-  }, [ticket.id, ticket.title, ticket.body, ticket.department, ticket.ai_priority, ticket.steps_tried]);
+  }, [
+    ticket.id,
+    ticket.title,
+    ticket.body,
+    ticket.department,
+    ticket.ai_priority,
+    ticket.requester_name,
+    ticket.requester_email,
+    ticket.office,
+    ticket.affected_item,
+    ticket.steps_tried,
+  ]);
 
   async function handleSave() {
-    await onSave({
+    const payload: TicketDraftUpdate = {
       title: title.trim(),
       body: body.trim(),
       department: department as "IT" | "HR" | "finance",
-      ai_priority: priority as "низкий" | "средний" | "высокий" | "критический",
+      requester_name: requesterName.trim(),
+      requester_email: requesterEmail.trim(),
+      office: office.trim() || null,
+      affected_item: affectedItem.trim() || null,
       steps_tried: stepsTried.trim() || null,
-    });
+    };
+    if (!isCriticalPriority) {
+      payload.ai_priority = priority as "низкий" | "средний" | "высокий";
+    }
+    await onSave(payload);
     setIsEditing(false);
   }
 
@@ -119,6 +158,22 @@ export function PrefilledTicketPanel({
               onChange={(event) => setBody(event.currentTarget.value)}
             />
             <Group grow align="start">
+              <TextInput
+                label="Заявитель"
+                value={requesterName}
+                maxLength={100}
+                required
+                onChange={(event) => setRequesterName(event.currentTarget.value)}
+              />
+              <TextInput
+                label="Email заявителя"
+                value={requesterEmail}
+                maxLength={255}
+                required
+                onChange={(event) => setRequesterEmail(event.currentTarget.value)}
+              />
+            </Group>
+            <Group grow align="start">
               <Select
                 label="Отдел поддержки"
                 data={DEPARTMENT_OPTIONS}
@@ -126,12 +181,34 @@ export function PrefilledTicketPanel({
                 allowDeselect={false}
                 onChange={(value) => value && setDepartment(value)}
               />
-              <Select
-                label="Приоритет"
-                data={PRIORITY_OPTIONS}
-                value={priority}
-                allowDeselect={false}
-                onChange={(value) => value && setPriority(value)}
+              {isCriticalPriority ? (
+                <TextInput
+                  label="Приоритет"
+                  value={CRITICAL_PRIORITY_OPTION.label}
+                  disabled
+                />
+              ) : (
+                <Select
+                  label="Приоритет"
+                  data={PRIORITY_OPTIONS}
+                  value={priority}
+                  allowDeselect={false}
+                  onChange={(value) => value && setPriority(value)}
+                />
+              )}
+            </Group>
+            <Group grow align="start">
+              <TextInput
+                label="Офис"
+                value={office}
+                maxLength={100}
+                onChange={(event) => setOffice(event.currentTarget.value)}
+              />
+              <TextInput
+                label="Что затронуто"
+                value={affectedItem}
+                maxLength={150}
+                onChange={(event) => setAffectedItem(event.currentTarget.value)}
               />
             </Group>
             <Textarea
@@ -169,6 +246,16 @@ export function PrefilledTicketPanel({
                 Тема
               </Text>
               <Text size="sm">{ticket.title}</Text>
+            </div>
+            <div>
+              <Text size="xs" c="dimmed" fw={600}>
+                Контекст
+              </Text>
+              <Text size="sm">
+                {ticket.requester_name || ticket.requester_email || "Автор не указан"}
+                {ticket.office ? ` · ${ticket.office}` : ""}
+                {ticket.affected_item ? ` · ${ticket.affected_item}` : ""}
+              </Text>
             </div>
             <div>
               <Text size="xs" c="dimmed" fw={600}>

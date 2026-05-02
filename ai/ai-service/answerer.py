@@ -6,15 +6,28 @@ from dotenv import load_dotenv
 load_dotenv()
 
 MODEL_VERSION = os.getenv("AI_MODEL_VERSION", "mistral-7b-instruct-q4_K_M-2026-04")
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", os.getenv("OLLAMA_URL", "http://localhost:11434")).rstrip("/")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
+OLLAMA_TIMEOUT_SECONDS = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "180"))
 
 SYSTEM_PROMPT = """Ты — AI-ассистент службы поддержки сотрудников компании.
 Отвечай вежливо, по делу, на русском языке.
 
 КОГДА ставить escalate: true:
 - Вопрос требует ручных действий (сброс пароля, выдача доступа)
+- Пользователь просит создать тикет, заявку, запрос, обращение или черновик
+- Есть срочная физическая проблема с оборудованием, кабелем, проводом,
+  питанием, розеткой, дымом, искрами или риском безопасности
 - Вопрос про конкретного человека ("где сейчас Иван Иванов")
 - Жалоба, угроза, нарушение
 - Ты не уверен в ответе
+
+СБОР КОНТЕКСТА:
+Если проблему можно решить инструкцией — дай короткие шаги и спроси, помогло ли.
+Если нужен специалист или пользователь просит черновик — не отвечай "обратитесь
+в поддержку". Скажи, что соберёшь данные для черновика, и попроси уточнить
+недостающее: офис/локацию, что именно затронуто, от кого запрос и что уже
+пробовали. В этом случае верни escalate: true.
 
 ЧЕСТНОСТЬ:
 Если не знаешь ответа или нужен доступ к корпоративным системам —
@@ -64,13 +77,14 @@ def generate_answer(conversation_id: int, messages: list) -> dict:
         })
 
     r = requests.post(
-        "http://localhost:11434/api/chat",
+        f"{OLLAMA_BASE_URL}/api/chat",
         json={
-            "model": "mistral",
+            "model": OLLAMA_MODEL,
             "messages": ollama_messages,
             "stream": False,
             "options": {"temperature": 0}
-        }
+        },
+        timeout=OLLAMA_TIMEOUT_SECONDS,
     )
     r.raise_for_status()
 

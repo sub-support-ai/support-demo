@@ -12,6 +12,7 @@ from app.schemas.auth import TokenResponse, UserMe
 from app.schemas.user import UserCreate
 from app.security import create_access_token, hash_password, verify_password
 from app.services.audit import log_event
+from app.services.request_context import build_request_context
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -155,4 +156,11 @@ async def register(
 @router.get("/me", response_model=UserMe)
 async def get_me(current_user: User = Depends(get_current_user)):
     """Вернуть данные текущего авторизованного пользователя."""
-    return current_user
+    return UserMe(
+        id=current_user.id,
+        email=current_user.email,
+        username=current_user.username,
+        role=current_user.role,
+        is_active=current_user.is_active,
+        request_context=build_request_context(current_user),
+    )

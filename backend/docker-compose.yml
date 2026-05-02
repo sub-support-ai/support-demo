@@ -5,6 +5,11 @@ services:
       - "8000:8000"
     env_file:
       - .env
+    environment:
+      # Compose network should always use the db service name.
+      POSTGRES_HOST: db
+      # AI service runs on the host machine when started from the root launcher.
+      AI_SERVICE_URL: http://host.docker.internal:8001
     depends_on:
       db:
         condition: service_healthy

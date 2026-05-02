@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 TicketStatusLiteral = Literal[
     "new",
@@ -15,13 +15,13 @@ TicketStatusLiteral = Literal[
 ]
 
 DepartmentLiteral = Literal["IT", "HR", "finance"]
-TicketPriorityLiteral = Literal["критический", "высокий", "средний", "низкий"]
+EditableTicketPriorityLiteral = Literal["высокий", "средний", "низкий"]
 
 
 class TicketBase(BaseModel):
     title: str = Field(min_length=1, max_length=255)
     body: str = Field(min_length=1)
-    user_priority: int = Field(default=3, ge=1, le=5)
+    user_priority: int = Field(default=3, ge=2, le=5)
 
 
 class TicketCreate(TicketBase):
@@ -30,6 +30,8 @@ class TicketCreate(TicketBase):
     # Пользователь может явно указать отдел; иначе AI классифицирует и
     # подставит через ai_result. При отсутствии подставляем "IT" по умолчанию.
     department: DepartmentLiteral | None = None
+    office: str | None = Field(default=None, max_length=100)
+    affected_item: str | None = Field(default=None, max_length=150)
 
 
 class TicketStatusUpdate(BaseModel):
@@ -40,8 +42,12 @@ class TicketDraftUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=255)
     body: str | None = Field(default=None, min_length=1)
     department: DepartmentLiteral | None = None
-    ai_priority: TicketPriorityLiteral | None = None
+    ai_priority: EditableTicketPriorityLiteral | None = None
+    requester_name: str | None = Field(default=None, max_length=100)
+    requester_email: EmailStr | None = None
     steps_tried: str | None = None
+    office: str | None = Field(default=None, max_length=100)
+    affected_item: str | None = Field(default=None, max_length=150)
 
 
 class TicketRead(TicketBase):
@@ -54,6 +60,10 @@ class TicketRead(TicketBase):
     status: str
     department: str
     ticket_source: str
+    requester_name: str | None = None
+    requester_email: str | None = None
+    office: str | None = None
+    affected_item: str | None = None
     steps_tried: str | None = None
     confirmed_by_user: bool
 

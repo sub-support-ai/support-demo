@@ -1,10 +1,16 @@
+import os
+
+import requests
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel
 from typing import Literal
 from classifier import classify_ticket
 from answerer import generate_answer
 
 app = FastAPI()
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", os.getenv("OLLAMA_URL", "http://localhost:11434")).rstrip("/")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
+OLLAMA_HEALTH_TIMEOUT_SECONDS = float(os.getenv("OLLAMA_HEALTH_TIMEOUT_SECONDS", "3"))
 
 # ========================
 # Схемы для /ai/classify
@@ -80,4 +86,47 @@ async def answer(request: AnswerRequest):
 
 @app.get("/healthcheck")
 def healthcheck():
-    return {"status": "ok"}
+    try:
+        response = requests.get(
+            f"{OLLAMA_BASE_URL}/api/tags",
+            timeout=OLLAMA_HEALTH_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        tags = response.json().get("models", [])
+    except requests.RequestException as e:
+        return {
+            "status": "degraded",
+            "ollama": "unavailable",
+            "ollama_url": OLLAMA_BASE_URL,
+            "model": OLLAMA_MODEL,
+            "detail": str(e),
+        }
+    except ValueError as e:
+        return {
+            "status": "degraded",
+            "ollama": "invalid_response",
+            "ollama_url": OLLAMA_BASE_URL,
+            "model": OLLAMA_MODEL,
+            "detail": str(e),
+        }
+
+    model_names = {item.get("name") for item in tags if isinstance(item, dict)}
+    model_available = any(
+        name == OLLAMA_MODEL or str(name).startswith(f"{OLLAMA_MODEL}:")
+        for name in model_names
+    )
+    if not model_available:
+        return {
+            "status": "degraded",
+            "ollama": "ok",
+            "ollama_url": OLLAMA_BASE_URL,
+            "model": OLLAMA_MODEL,
+            "detail": "model_not_found",
+        }
+
+    return {
+        "status": "ok",
+        "ollama": "ok",
+        "ollama_url": OLLAMA_BASE_URL,
+        "model": OLLAMA_MODEL,
+    }
