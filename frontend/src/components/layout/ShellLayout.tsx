@@ -7,7 +7,12 @@ import {
   Text,
   Title,
 } from "@mantine/core";
-import { IconLogout, IconMessageCircle, IconTicket } from "@tabler/icons-react";
+import {
+  IconChartBar,
+  IconLogout,
+  IconMessageCircle,
+  IconTicket,
+} from "@tabler/icons-react";
 import { NavLink as RouterNavLink, Outlet, useLocation } from "react-router-dom";
 
 import { useMe } from "../../api/auth";
@@ -45,6 +50,13 @@ export function ShellLayout() {
       </AppShell.Header>
 
       <AppShell.Navbar p="sm">
+        <NavLink
+          component={RouterNavLink}
+          to="/dashboard"
+          label="Обзор"
+          leftSection={<IconChartBar size={18} />}
+          active={location.pathname.startsWith("/dashboard")}
+        />
         <NavLink
           component={RouterNavLink}
           to="/chat"

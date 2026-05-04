@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 
 import { ShellLayout } from "./components/layout/ShellLayout";
 import { ChatPage } from "./pages/ChatPage";
+import { DashboardPage } from "./pages/DashboardPage";
 import { LoginPage } from "./pages/LoginPage";
 import { TicketsPage } from "./pages/TicketsPage";
 import { useAuth } from "./stores/auth";
@@ -26,7 +27,8 @@ export function App() {
           </ProtectedRoute>
         }
       >
-        <Route index element={<Navigate to="/chat" replace />} />
+        <Route index element={<Navigate to="/dashboard" replace />} />
+        <Route path="dashboard" element={<DashboardPage />} />
         <Route path="chat" element={<ChatPage />} />
         <Route path="tickets" element={<TicketsPage />} />
       </Route>

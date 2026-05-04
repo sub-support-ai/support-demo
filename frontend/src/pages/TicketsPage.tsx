@@ -1,10 +1,21 @@
-import { Alert, LoadingOverlay, Paper, SimpleGrid, Text, Title } from "@mantine/core";
+import {
+  Alert,
+  LoadingOverlay,
+  Paper,
+  SimpleGrid,
+  Text,
+  Title,
+} from "@mantine/core";
 
+import { useMe } from "../api/auth";
 import { getApiError } from "../api/client";
 import { useTickets } from "../api/tickets";
 import { TicketCard } from "../components/tickets/TicketCard";
+import { useAuth } from "../stores/auth";
 
 export function TicketsPage() {
+  const { token } = useAuth();
+  const me = useMe(Boolean(token));
   const tickets = useTickets();
 
   return (
@@ -29,7 +40,11 @@ export function TicketsPage() {
         ) : (
           <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
             {tickets.data?.map((ticket) => (
-              <TicketCard key={ticket.id} ticket={ticket} />
+              <TicketCard
+                key={ticket.id}
+                ticket={ticket}
+                currentUserRole={me.data?.role}
+              />
             ))}
           </SimpleGrid>
         )}

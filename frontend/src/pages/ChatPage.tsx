@@ -247,7 +247,7 @@ export function ChatPage() {
           </Alert>
         )}
 
-        <div className="chat-surface">
+        <div className={`chat-surface${activeTicket ? " has-draft" : ""}`}>
           <LoadingOverlay visible={messages.isFetching && !messages.data} />
           <ScrollArea className="messages-scroll" type="auto">
             <Stack gap="sm" p="md">

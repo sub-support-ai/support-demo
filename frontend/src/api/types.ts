@@ -1,4 +1,24 @@
 export type UserRole = "user" | "agent" | "admin";
+export type TicketStatus =
+  | "new"
+  | "pending_user"
+  | "confirmed"
+  | "in_progress"
+  | "resolved"
+  | "closed"
+  | "ai_processing"
+  | "declined"
+  | "escalated"
+  | "active";
+export type TicketMutableStatus =
+  | "new"
+  | "pending_user"
+  | "confirmed"
+  | "in_progress"
+  | "resolved"
+  | "closed"
+  | "ai_processing"
+  | "declined";
 
 export interface TokenResponse {
   access_token: string;
@@ -55,7 +75,7 @@ export interface Ticket {
   title: string;
   body: string;
   user_priority: number;
-  status: string;
+  status: TicketStatus | string;
   department: string;
   ticket_source: string;
   requester_name?: string | null;
@@ -85,6 +105,15 @@ export interface TicketDraftUpdate {
   affected_item?: string | null;
 }
 
+export interface TicketStatusUpdate {
+  status: TicketMutableStatus;
+}
+
+export interface ResolveTicketPayload {
+  agent_accepted_ai_response: boolean;
+  correction_lag_seconds?: number | null;
+}
+
 export interface EscalationContext {
   requester_name: string;
   requester_email: string;
@@ -99,4 +128,29 @@ export interface EscalateResponse {
 
 export interface ApiErrorPayload {
   detail?: string | Array<{ loc?: Array<string | number>; msg?: string; type?: string }>;
+}
+
+export interface TicketStats {
+  total: number;
+  by_status: Record<string, number>;
+  by_department: Record<string, number>;
+  by_source: Record<string, number>;
+}
+
+export interface AiStats {
+  total_processed: number;
+  avg_confidence: number;
+  low_confidence_count: number;
+  routing_correct_count: number;
+  routing_incorrect_count: number;
+  routing_accuracy_pct: number;
+  resolved_by_ai_count: number;
+  escalated_count: number;
+  user_feedback_helped: number;
+  user_feedback_not_helped: number;
+}
+
+export interface StatsResponse {
+  tickets: TicketStats;
+  ai: AiStats;
 }

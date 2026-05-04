@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies import get_current_user
+from app.models.agent import Agent
 from app.models.ticket import Ticket
 from app.models.ai_log import AILog
 from app.models.user import User
@@ -26,6 +27,46 @@ from app.schemas.stats import StatsResponse, TicketStats, AIStats
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/stats", tags=["stats"])
+
+
+def _empty_stats() -> StatsResponse:
+    return StatsResponse(
+        tickets=TicketStats(
+            total=0,
+            by_status={},
+            by_department={},
+            by_source={},
+        ),
+        ai=AIStats(
+            total_processed=0,
+            avg_confidence=0.0,
+            low_confidence_count=0,
+            routing_correct_count=0,
+            routing_incorrect_count=0,
+            routing_accuracy_pct=0.0,
+            resolved_by_ai_count=0,
+            escalated_count=0,
+            user_feedback_helped=0,
+            user_feedback_not_helped=0,
+        ),
+    )
+
+
+async def _ticket_scope_filters(db: AsyncSession, user: User):
+    if user.role == "admin":
+        return []
+    if user.role == "agent":
+        agent_result = await db.execute(
+            select(Agent)
+            .where((Agent.email == user.email) | (Agent.username == user.username))
+            .where(Agent.is_active == True)
+            .limit(1)
+        )
+        agent = agent_result.scalar_one_or_none()
+        if agent is None:
+            return None
+        return [Ticket.agent_id == agent.id]
+    return [Ticket.user_id == user.id]
 
 
 @router.get("/", response_model=StatsResponse)
@@ -43,12 +84,19 @@ async def get_stats(
     # ── Статистика тикетов ────────────────────────────────────────────────────
 
     # Всего тикетов
-    total_result = await db.execute(select(func.count()).select_from(Ticket))
+    ticket_filters = await _ticket_scope_filters(db, current_user)
+    if ticket_filters is None:
+        return _empty_stats()
+
+    total_result = await db.execute(
+        select(func.count()).select_from(Ticket).where(*ticket_filters)
+    )
     total_tickets = total_result.scalar() or 0
 
     # По статусам: {"new": 5, "in_progress": 12, "resolved": 30, ...}
     status_result = await db.execute(
         select(Ticket.status, func.count().label("cnt"))
+        .where(*ticket_filters)
         .group_by(Ticket.status)
     )
     by_status = {row.status: row.cnt for row in status_result}
@@ -56,6 +104,7 @@ async def get_stats(
     # По отделам: {"IT": 20, "HR": 5, "finance": 8}
     dept_result = await db.execute(
         select(Ticket.department, func.count().label("cnt"))
+        .where(*ticket_filters)
         .group_by(Ticket.department)
     )
     by_department = {row.department: row.cnt for row in dept_result}
@@ -63,6 +112,7 @@ async def get_stats(
     # По источнику: {"ai_generated": 25, "user_written": 8, "ai_assisted": 3}
     source_result = await db.execute(
         select(Ticket.ticket_source, func.count().label("cnt"))
+        .where(*ticket_filters)
         .group_by(Ticket.ticket_source)
     )
     by_source = {row.ticket_source: row.cnt for row in source_result}
@@ -77,8 +127,7 @@ async def get_stats(
     # ── Статистика AI ─────────────────────────────────────────────────────────
 
     # Общие метрики из ai_logs одним запросом
-    ai_result = await db.execute(
-        select(
+    ai_stats_query = select(
             func.count().label("total"),
             func.avg(AILog.confidence_score).label("avg_confidence"),
             # Тикеты с низкой уверенностью (< 0.8) — нужна проверка агентом
@@ -111,7 +160,14 @@ async def get_stats(
                 case((AILog.user_feedback == "not_helped", 1), else_=0)
             ).label("feedback_not_helped"),
         )
-    )
+    if current_user.role != "admin":
+        ai_stats_query = (
+            ai_stats_query
+            .select_from(AILog)
+            .join(Ticket, Ticket.id == AILog.ticket_id)
+            .where(*ticket_filters)
+        )
+    ai_result = await db.execute(ai_stats_query)
     ai_row = ai_result.one()
 
     total_processed = ai_row.total or 0
