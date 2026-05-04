@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.database import get_db
 from app.dependencies import get_current_user, require_role
+from app.models.agent import Agent
 from app.models.ai_log import AILog
 from app.models.ticket import Ticket
 from app.models.user import User
@@ -72,6 +73,10 @@ async def get_ticket_for_user(
         return ticket
 
     if ticket.user_id != current_user.id:
+        if current_user.role == "agent" and await _user_is_assigned_agent(
+            db, current_user, ticket
+        ):
+            return ticket
         # НЕ 403 — см. комментарий выше про "don't leak resource existence"
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -79,6 +84,84 @@ async def get_ticket_for_user(
         )
 
     return ticket
+
+
+async def get_ticket_for_owner(
+    ticket_id: int,
+    db: AsyncSession,
+    current_user: User,
+) -> Ticket:
+    ticket = await get_ticket_for_user(ticket_id, db, current_user)
+    if current_user.role != "admin" and ticket.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Ticket not found",
+        )
+    return ticket
+
+
+async def _get_agent_for_user(db: AsyncSession, user: User) -> Agent | None:
+    result = await db.execute(
+        select(Agent)
+        .where((Agent.email == user.email) | (Agent.username == user.username))
+        .where(Agent.is_active == True)
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def _user_is_assigned_agent(
+    db: AsyncSession,
+    user: User,
+    ticket: Ticket,
+) -> bool:
+    if ticket.agent_id is None:
+        return False
+    agent = await _get_agent_for_user(db, user)
+    return bool(agent and agent.id == ticket.agent_id)
+
+
+async def _require_ticket_operator(
+    db: AsyncSession,
+    user: User,
+    ticket: Ticket,
+) -> None:
+    if user.role == "admin":
+        return
+    if user.role == "agent" and await _user_is_assigned_agent(db, user, ticket):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Недостаточно прав для изменения статуса тикета",
+    )
+
+
+def _require_confirmed_for_operator_action(ticket: Ticket) -> None:
+    if ticket.status == "pending_user" or not ticket.confirmed_by_user:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Сначала пользователь должен подтвердить черновик тикета",
+        )
+
+
+def _require_draft_context(ticket: Ticket) -> None:
+    missing_fields = []
+    if not clean_optional_text(ticket.requester_name):
+        missing_fields.append("requester_name")
+    if not clean_optional_text(ticket.requester_email):
+        missing_fields.append("requester_email")
+    if not clean_optional_text(ticket.office):
+        missing_fields.append("office")
+    if not clean_optional_text(ticket.affected_item):
+        missing_fields.append("affected_item")
+    if missing_fields:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                "Перед подтверждением укажите заявителя, email, офис "
+                "и затронутый объект"
+            ),
+        )
 
 
 # ── Схема для resolve ─────────────────────────────────────────────────────────
@@ -207,7 +290,12 @@ async def list_tickets(
     # Обычный пользователь видит ТОЛЬКО свои тикеты.
     # Админ — все (в т.ч. с фильтром по department).
     # Когда появится роль "agent" — добавим ветку Ticket.agent_id == ...
-    if current_user.role != "admin":
+    if current_user.role == "agent":
+        agent = await _get_agent_for_user(db, current_user)
+        if agent is None:
+            return []
+        query = query.where(Ticket.agent_id == agent.id)
+    elif current_user.role != "admin":
         query = query.where(Ticket.user_id == current_user.id)
 
     if department:
@@ -247,6 +335,17 @@ async def update_ticket_status(
     current_user: User = Depends(get_current_user),
 ):
     ticket = await get_ticket_for_user(ticket_id, db, current_user)
+    await _require_ticket_operator(db, current_user, ticket)
+    _require_confirmed_for_operator_action(ticket)
+    if current_user.role == "agent" and payload.status not in {
+        "in_progress",
+        "resolved",
+        "closed",
+    }:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Агент может переводить тикет только в работу или закрытие",
+        )
 
     old_status = ticket.status
     ticket.status = payload.status
@@ -278,7 +377,7 @@ async def update_ticket_draft(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    ticket = await get_ticket_for_user(ticket_id, db, current_user)
+    ticket = await get_ticket_for_owner(ticket_id, db, current_user)
 
     if ticket.status != "pending_user" or ticket.confirmed_by_user:
         raise HTTPException(
@@ -299,7 +398,7 @@ async def update_ticket_draft(
     if "ai_priority" in update_data and update_data["ai_priority"] is not None:
         if update_data["ai_priority"] == "критический":
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="Критический приоритет назначается только системой",
             )
         ticket.ai_priority = update_data["ai_priority"]
@@ -325,7 +424,7 @@ async def update_ticket_draft(
 
     if not ticket.title or not ticket.body:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Тема и описание черновика не должны быть пустыми",
         )
     ticket.body = replace_context_block_if_present(
@@ -369,13 +468,15 @@ async def confirm_ticket(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    ticket = await get_ticket_for_user(ticket_id, db, current_user)
+    ticket = await get_ticket_for_owner(ticket_id, db, current_user)
 
     if ticket.status != "pending_user" or ticket.confirmed_by_user:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Подтвердить можно только неподтверждённый черновик тикета",
         )
+
+    _require_draft_context(ticket)
 
     ticket.confirmed_by_user = True
     ticket.status = "confirmed"
@@ -406,6 +507,8 @@ async def resolve_ticket(
     current_user: User = Depends(get_current_user),
 ):
     ticket = await get_ticket_for_user(ticket_id, db, current_user)
+    await _require_ticket_operator(db, current_user, ticket)
+    _require_confirmed_for_operator_action(ticket)
 
     old_status = ticket.status
     ticket.status = "closed"

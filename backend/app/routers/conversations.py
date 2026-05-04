@@ -47,6 +47,7 @@ from app.services.ticket_body import (
     clean_optional_text,
     clean_text_with_fallback,
 )
+from app.services.conversation_intent import detect_conversation_state
 
 logger = logging.getLogger(__name__)
 
@@ -68,22 +69,6 @@ RED_ZONE_THRESHOLD = 0.6
 # деньги, ухудшение качества (модель путается). 20 — компромисс между
 # сохранением темы и стоимостью.
 MAX_HISTORY_MESSAGES = 20
-
-SUPPORT_DRAFT_INTENT_TERMS = (
-    "тикет", "заявк", "черновик", "обращен", "запрос", "техподдерж", "тех поддерж",
-    "специалист", "саппорт", "support",
-)
-SUPPORT_DRAFT_ACTION_TERMS = (
-    "созда", "сформир", "оформ", "заведи", "завести", "отправ", "эскал",
-)
-URGENT_TERMS = (
-    "срочно", "авар", "критич", "опасн", "горит", "дым", "искр",
-)
-PHYSICAL_INCIDENT_TERMS = (
-    "провод", "кабел", "розетк", "удлинител", "электр", "питани", "сломал",
-    "сломался", "порвал", "порвался", "оторвал", "поврежд",
-)
-
 
 # ── Схемы запросов/ответов (определены здесь чтобы не плодить файлы) ──────────
 
@@ -284,10 +269,13 @@ async def add_message(
     # Клиент использует этот флаг, чтобы показать кнопку "Создать тикет".
     confidence = ai_payload.get("confidence")
     escalate = bool(ai_payload.get("escalate"))
-    if _should_offer_support_draft(history):
-        ai_payload["answer"] = _build_intake_answer()
+    conversation_state = detect_conversation_state(history)
+    if conversation_state.requires_draft:
+        ai_payload["answer"] = conversation_state.answer_override or ai_payload.get("answer", "")
         ai_payload["escalate"] = True
-        confidence = min(float(confidence or 1.0), 0.5)
+        confidence_cap = conversation_state.confidence_cap
+        if confidence_cap is not None:
+            confidence = min(float(confidence or 1.0), confidence_cap)
         ai_payload["confidence"] = confidence
         escalate = True
 
@@ -673,40 +661,6 @@ async def _get_ai_answer(
     data.setdefault("sources", [])
     data.setdefault("model_version", settings.AI_MODEL_VERSION_FALLBACK)
     return data
-
-
-def _should_offer_support_draft(messages: list[dict[str, str]]) -> bool:
-    """Определяет, нужно ли показывать сбор контекста и создание черновика."""
-    user_messages = [
-        message.get("content", "").strip().lower()
-        for message in messages
-        if message.get("role") == "user" and message.get("content", "").strip()
-    ]
-    if not user_messages:
-        return False
-
-    latest = user_messages[-1]
-    combined = "\n".join(user_messages)
-
-    has_draft_action = any(term in latest for term in SUPPORT_DRAFT_ACTION_TERMS)
-    has_draft_object = any(term in latest for term in SUPPORT_DRAFT_INTENT_TERMS)
-    if has_draft_action and has_draft_object:
-        return True
-
-    has_urgent_context = any(term in combined for term in URGENT_TERMS)
-    has_physical_incident = any(term in combined for term in PHYSICAL_INCIDENT_TERMS)
-    if has_urgent_context and has_physical_incident:
-        return True
-
-    return False
-
-
-def _build_intake_answer() -> str:
-    return (
-        "Соберу данные для черновика обращения. Из истории возьму описание проблемы "
-        "и уже упомянутые действия. Уточните заявителя, офис и затронутый объект; "
-        "после этого сформирую черновик для специалиста."
-    )
 
 
 def _extract_steps_tried(messages: list[Message]) -> str | None:

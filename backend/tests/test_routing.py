@@ -17,7 +17,7 @@ from sqlalchemy import select
 
 from app.models.agent import Agent
 from app.models.user import User
-from app.security import hash_password
+from app.security import create_access_token, hash_password
 
 
 # ── Вспомогательные функции ────────────────────────────────────────────────────
@@ -57,6 +57,19 @@ async def create_test_agent(
     await db.flush()
     await db.refresh(agent)
     return agent
+
+
+async def create_agent_user_for_agent(db: AsyncSession, agent: Agent) -> str:
+    user = User(
+        email=agent.email,
+        username=agent.username,
+        hashed_password=hash_password("Secret123!"),
+        role="agent",
+    )
+    db.add(user)
+    await db.flush()
+    await db.refresh(user)
+    return create_access_token(user_id=user.id, role=user.role)
 
 
 async def get_tokens(client: AsyncClient, suffix: str = "") -> str:
@@ -140,14 +153,22 @@ async def test_active_ticket_count_decreases_on_resolve(
             "title": "тест resolve",
             "body": "проверяем что счётчик падает",
             "user_priority": 2,
+            "office": "HQ",
+            "affected_item": "VPN",
         },
         headers={"Authorization": f"Bearer {token}"},
     )
     assert create_resp.status_code == 201
     ticket_id = create_resp.json()["id"]
+    confirm_resp = await client.patch(
+        f"/api/v1/tickets/{ticket_id}/confirm",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert confirm_resp.status_code == 200
 
     await db_session.refresh(agent)
     count_before = agent.active_ticket_count  # должно быть 1
+    agent_token = await create_agent_user_for_agent(db_session, agent)
 
     # Закрываем тикет через resolve
     resolve_resp = await client.patch(
@@ -156,7 +177,7 @@ async def test_active_ticket_count_decreases_on_resolve(
             "agent_accepted_ai_response": True,
             "correction_lag_seconds": 120,
         },
-        headers={"Authorization": f"Bearer {token}"},
+        headers={"Authorization": f"Bearer {agent_token}"},
     )
     assert resolve_resp.status_code == 200
     assert resolve_resp.json()["status"] == "closed"

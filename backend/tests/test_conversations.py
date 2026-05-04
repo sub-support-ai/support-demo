@@ -557,19 +557,19 @@ def test_extract_steps_tried_returns_none_when_nothing_found():
 
 
 def test_support_draft_detection_handles_draft_request_and_urgent_wire():
-    from app.routers.conversations import _should_offer_support_draft
+    from app.services.conversation_intent import detect_conversation_state
 
-    assert _should_offer_support_draft([
+    assert detect_conversation_state([
         {"role": "user", "content": "порвался провод, срочно"},
-    ])
-    assert _should_offer_support_draft([
+    ]).requires_draft
+    assert detect_conversation_state([
         {"role": "user", "content": "порвался провод, срочно"},
         {"role": "assistant", "content": "Потребуется специалист."},
         {
             "role": "user",
             "content": "давай создадим черновик для запроса к тех поддержке",
         },
-    ])
-    assert not _should_offer_support_draft([
+    ]).requires_draft
+    assert not detect_conversation_state([
         {"role": "user", "content": "как обновить VS Code?"},
-    ])
+    ]).requires_draft

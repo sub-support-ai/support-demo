@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent import Agent
 from app.models.ticket import Ticket
-from app.security import hash_password
+from app.security import create_access_token, hash_password
 from app.services.ai_classifier import _choose_priority, _infer_priority_from_text
 
 
@@ -37,6 +37,21 @@ async def register_user(client: AsyncClient, suffix: str = "") -> tuple[int, str
     )
     assert me.status_code == 200
     return me.json()["id"], token
+
+
+async def create_agent_token(db: AsyncSession, agent: Agent) -> str:
+    from app.models.user import User
+
+    user = User(
+        email=agent.email,
+        username=agent.username,
+        hashed_password=hash_password("Secret123!"),
+        role="agent",
+    )
+    db.add(user)
+    await db.flush()
+    await db.refresh(user)
+    return create_access_token(user_id=user.id, role=user.role)
 
 
 @pytest.mark.asyncio
@@ -359,6 +374,8 @@ async def test_confirmed_ticket_draft_cannot_be_edited(client: AsyncClient):
             "title": "РЅРµ РѕС‚РєСЂС‹РІР°РµС‚СЃСЏ VPN",
             "body": "РѕС€РёР±РєР° РїРѕРґРєР»СЋС‡РµРЅРёСЏ",
             "user_priority": 3,
+            "office": "HQ",
+            "affected_item": "VPN",
         },
         headers=headers,
     )
@@ -490,6 +507,191 @@ async def test_cannot_resolve_other_user_ticket(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_user_cannot_resolve_own_ticket(client: AsyncClient):
+    _, token = await register_user(client, suffix="ownresolve")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    create = await client.post(
+        "/api/v1/tickets/",
+        json={"title": "мой тикет", "body": "нельзя закрыть самому", "user_priority": 3},
+        headers=headers,
+    )
+    assert create.status_code == 201
+
+    resp = await client.patch(
+        f"/api/v1/tickets/{create.json()['id']}/resolve",
+        json={"agent_accepted_ai_response": True},
+        headers=headers,
+    )
+
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_user_cannot_move_ticket_to_in_progress(client: AsyncClient):
+    _, token = await register_user(client, suffix="statusdeny")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    create = await client.post(
+        "/api/v1/tickets/",
+        json={"title": "мой тикет", "body": "нельзя взять в работу", "user_priority": 3},
+        headers=headers,
+    )
+    assert create.status_code == 201
+
+    resp = await client.patch(
+        f"/api/v1/tickets/{create.json()['id']}",
+        json={"status": "in_progress"},
+        headers=headers,
+    )
+
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_assigned_agent_cannot_edit_or_confirm_user_draft(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    agent = Agent(
+        email="draft-agent@example.com",
+        username="draft-agent",
+        hashed_password=hash_password("Secret123!"),
+        department="IT",
+        active_ticket_count=0,
+        ai_routing_score=1.0,
+        is_active=True,
+    )
+    db_session.add(agent)
+    await db_session.flush()
+
+    _, owner_token = await register_user(client, suffix="agentdraftowner")
+    create = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "черновик владельца",
+            "body": "агент не должен менять",
+            "user_priority": 3,
+            "office": "HQ",
+            "affected_item": "VPN",
+        },
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert create.status_code == 201
+    assert create.json()["agent_id"] == agent.id
+
+    agent_token = await create_agent_token(db_session, agent)
+    edit_resp = await client.patch(
+        f"/api/v1/tickets/{create.json()['id']}/draft",
+        json={"title": "agent edit"},
+        headers={"Authorization": f"Bearer {agent_token}"},
+    )
+    confirm_resp = await client.patch(
+        f"/api/v1/tickets/{create.json()['id']}/confirm",
+        headers={"Authorization": f"Bearer {agent_token}"},
+    )
+
+    assert edit_resp.status_code == 404
+    assert confirm_resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_assigned_agent_cannot_process_pending_draft(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    agent = Agent(
+        email="pending-agent@example.com",
+        username="pending-agent",
+        hashed_password=hash_password("Secret123!"),
+        department="IT",
+        active_ticket_count=0,
+        ai_routing_score=1.0,
+        is_active=True,
+    )
+    db_session.add(agent)
+    await db_session.flush()
+
+    _, owner_token = await register_user(client, suffix="pendingdraftowner")
+    create = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "ожидает подтверждения",
+            "body": "агент не должен брать в работу",
+            "user_priority": 3,
+            "office": "HQ",
+            "affected_item": "VPN",
+        },
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert create.status_code == 201
+    assert create.json()["agent_id"] == agent.id
+
+    agent_token = await create_agent_token(db_session, agent)
+    status_resp = await client.patch(
+        f"/api/v1/tickets/{create.json()['id']}",
+        json={"status": "in_progress"},
+        headers={"Authorization": f"Bearer {agent_token}"},
+    )
+    resolve_resp = await client.patch(
+        f"/api/v1/tickets/{create.json()['id']}/resolve",
+        json={"agent_accepted_ai_response": True},
+        headers={"Authorization": f"Bearer {agent_token}"},
+    )
+
+    assert status_resp.status_code == 409
+    assert resolve_resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_assigned_agent_can_resolve_ticket(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    agent = Agent(
+        email="assigned-agent@example.com",
+        username="assigned-agent",
+        hashed_password=hash_password("Secret123!"),
+        department="IT",
+        active_ticket_count=0,
+        ai_routing_score=1.0,
+        is_active=True,
+    )
+    db_session.add(agent)
+    await db_session.flush()
+
+    _, token = await register_user(client, suffix="agentresolve")
+    create = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "назначенный тикет",
+            "body": "закрывает агент",
+            "user_priority": 3,
+            "office": "HQ",
+            "affected_item": "VPN",
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert create.status_code == 201
+    assert create.json()["agent_id"] == agent.id
+    confirm = await client.patch(
+        f"/api/v1/tickets/{create.json()['id']}/confirm",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert confirm.status_code == 200
+
+    agent_token = await create_agent_token(db_session, agent)
+    resp = await client.patch(
+        f"/api/v1/tickets/{create.json()['id']}/resolve",
+        json={"agent_accepted_ai_response": True},
+        headers={"Authorization": f"Bearer {agent_token}"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "closed"
+
+
+@pytest.mark.asyncio
 async def test_user_id_in_body_is_ignored(client: AsyncClient):
     """
     Даже если клиент подпихнёт user_id в JSON — он должен быть проигнорирован.
@@ -528,6 +730,8 @@ async def test_confirm_ticket_marks_user_confirmation(client: AsyncClient):
             "title": "черновик из AI",
             "body": "нужно отправить в поддержку",
             "user_priority": 3,
+            "office": "HQ",
+            "affected_item": "VPN",
         },
         headers=headers,
     )
@@ -548,7 +752,34 @@ async def test_confirm_ticket_marks_user_confirmation(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_confirm_ticket_rejects_non_pending_draft(client: AsyncClient):
+async def test_confirm_ticket_requires_request_context(client: AsyncClient):
+    _, token = await register_user(client, suffix="confirmcontext")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    create = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "черновик без контекста",
+            "body": "нельзя отправить без офиса и объекта",
+            "user_priority": 3,
+        },
+        headers=headers,
+    )
+    assert create.status_code == 201
+
+    confirm = await client.patch(
+        f"/api/v1/tickets/{create.json()['id']}/confirm",
+        headers=headers,
+    )
+
+    assert confirm.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_confirm_ticket_rejects_non_pending_draft(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
     """Confirm не должен откатывать уже активный тикет в status=confirmed."""
     _, token = await register_user(client, suffix="confirmreject")
     headers = {"Authorization": f"Bearer {token}"}
@@ -565,13 +796,10 @@ async def test_confirm_ticket_rejects_non_pending_draft(client: AsyncClient):
     assert create.status_code == 201
     ticket_id = create.json()["id"]
 
-    update = await client.patch(
-        f"/api/v1/tickets/{ticket_id}",
-        json={"status": "in_progress"},
-        headers=headers,
-    )
-    assert update.status_code == 200
-    assert update.json()["status"] == "in_progress"
+    result = await db_session.execute(select(Ticket).where(Ticket.id == ticket_id))
+    ticket = result.scalar_one()
+    ticket.status = "in_progress"
+    await db_session.flush()
 
     confirm = await client.patch(
         f"/api/v1/tickets/{ticket_id}/confirm",
