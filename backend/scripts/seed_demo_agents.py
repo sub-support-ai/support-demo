@@ -37,13 +37,14 @@ async def seed_demo_agents() -> None:
     demo_password = os.getenv("DEMO_AGENT_PASSWORD", DEFAULT_DEMO_PASSWORD)
 
     async with AsyncSessionLocal() as db:
-        created_agents = 0
-        updated_agents = 0
-        created_users = 0
-        updated_users = 0
+        agents_created = 0
+        agents_updated = 0
+        users_created = 0
+        users_updated = 0
 
         for item in DEMO_AGENTS:
             password_hash = hash_password(demo_password)
+
             result = await db.execute(
                 select(Agent).where(Agent.email == item["email"])
             )
@@ -60,29 +61,21 @@ async def seed_demo_agents() -> None:
                     active_ticket_count=0,
                 )
                 db.add(agent)
-                created_agents += 1
+                agents_created += 1
             else:
                 agent.username = item["username"]
                 agent.hashed_password = password_hash
                 agent.department = item["department"]
                 agent.ai_routing_score = item["ai_routing_score"]
                 agent.is_active = True
-                updated_agents += 1
+                agents_updated += 1
 
-            result = await db.execute(
+            user_result = await db.execute(
                 select(User).where(
-                    (User.email == item["email"])
-                    | (User.username == item["username"])
+                    (User.email == item["email"]) | (User.username == item["username"])
                 )
             )
-            users = list(result.scalars().all())
-            if len(users) > 1:
-                raise RuntimeError(
-                    "Cannot seed demo agent user because email and username "
-                    f"belong to different users: {item['email']}, {item['username']}"
-                )
-
-            user = users[0] if users else None
+            user = user_result.scalar_one_or_none()
             if user is None:
                 user = User(
                     email=item["email"],
@@ -92,21 +85,21 @@ async def seed_demo_agents() -> None:
                     is_active=True,
                 )
                 db.add(user)
-                created_users += 1
+                users_created += 1
             else:
                 user.email = item["email"]
                 user.username = item["username"]
                 user.hashed_password = password_hash
                 user.role = "agent"
                 user.is_active = True
-                updated_users += 1
+                users_updated += 1
 
         await db.commit()
 
     print(
         "Demo agents ready: "
-        f"agents created={created_agents}, agents updated={updated_agents}, "
-        f"users created={created_users}, users updated={updated_users}. "
+        f"agents_created={agents_created}, agents_updated={agents_updated}, "
+        f"users_created={users_created}, users_updated={users_updated}. "
         "Password source: DEMO_AGENT_PASSWORD env or documented demo default."
     )
 

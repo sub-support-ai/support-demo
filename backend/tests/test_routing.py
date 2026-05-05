@@ -17,7 +17,7 @@ from sqlalchemy import select
 
 from app.models.agent import Agent
 from app.models.user import User
-from app.security import create_access_token, hash_password
+from app.security import hash_password
 
 
 # ── Вспомогательные функции ────────────────────────────────────────────────────
@@ -44,32 +44,28 @@ async def create_test_agent(
     routing_score: float = 1.0,
 ) -> Agent:
     """Создаёт агента напрямую в БД."""
+    password_hash = hash_password("Secret123!")
     agent = Agent(
         email=f"agent{suffix}@example.com",
         username=f"agent{suffix}",
-        hashed_password=hash_password("Secret123!"),
+        hashed_password=password_hash,
         department=department,
         active_ticket_count=active_count,
         ai_routing_score=routing_score,
         is_active=True,
     )
+    agent_user = User(
+        email=f"agent{suffix}@example.com",
+        username=f"agent{suffix}",
+        hashed_password=password_hash,
+        role="agent",
+        is_active=True,
+    )
+    db.add(agent_user)
     db.add(agent)
     await db.flush()
     await db.refresh(agent)
     return agent
-
-
-async def create_agent_user_for_agent(db: AsyncSession, agent: Agent) -> str:
-    user = User(
-        email=agent.email,
-        username=agent.username,
-        hashed_password=hash_password("Secret123!"),
-        role="agent",
-    )
-    db.add(user)
-    await db.flush()
-    await db.refresh(user)
-    return create_access_token(user_id=user.id, role=user.role)
 
 
 async def get_tokens(client: AsyncClient, suffix: str = "") -> str:
@@ -80,6 +76,15 @@ async def get_tokens(client: AsyncClient, suffix: str = "") -> str:
         "password": "Secret123!",
     })
     assert response.status_code == 201
+    return response.json()["access_token"]
+
+
+async def login_token(client: AsyncClient, username: str) -> str:
+    response = await client.post(
+        "/api/v1/auth/login",
+        data={"username": username, "password": "Secret123!"},
+    )
+    assert response.status_code == 200
     return response.json()["access_token"]
 
 
@@ -153,13 +158,14 @@ async def test_active_ticket_count_decreases_on_resolve(
             "title": "тест resolve",
             "body": "проверяем что счётчик падает",
             "user_priority": 2,
-            "office": "HQ",
-            "affected_item": "VPN",
+            "office": "Главный офис",
+            "affected_item": "Рабочее место",
         },
         headers={"Authorization": f"Bearer {token}"},
     )
     assert create_resp.status_code == 201
     ticket_id = create_resp.json()["id"]
+
     confirm_resp = await client.patch(
         f"/api/v1/tickets/{ticket_id}/confirm",
         headers={"Authorization": f"Bearer {token}"},
@@ -168,9 +174,9 @@ async def test_active_ticket_count_decreases_on_resolve(
 
     await db_session.refresh(agent)
     count_before = agent.active_ticket_count  # должно быть 1
-    agent_token = await create_agent_user_for_agent(db_session, agent)
 
     # Закрываем тикет через resolve
+    agent_token = await login_token(client, agent.username)
     resolve_resp = await client.patch(
         f"/api/v1/tickets/{ticket_id}/resolve",
         json={

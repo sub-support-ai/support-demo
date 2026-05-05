@@ -15,6 +15,12 @@ export function useConversations() {
       const { data } = await api.get<Conversation[]>("/conversations/");
       return data;
     },
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      return data?.some((conversation) => conversation.status === "ai_processing")
+        ? 2000
+        : false;
+    },
   });
 }
 
@@ -31,7 +37,7 @@ export function useCreateConversation() {
   });
 }
 
-export function useMessages(conversationId?: number) {
+export function useMessages(conversationId?: number, aiProcessing = false) {
   return useQuery({
     queryKey: ["conversations", conversationId, "messages"],
     queryFn: async () => {
@@ -41,7 +47,8 @@ export function useMessages(conversationId?: number) {
       return data;
     },
     enabled: Boolean(conversationId),
-    refetchInterval: document.visibilityState === "visible" ? 5000 : false,
+    refetchInterval:
+      aiProcessing && document.visibilityState === "visible" ? 2000 : false,
   });
 }
 

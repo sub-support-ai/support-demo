@@ -3,6 +3,7 @@ import {
   Badge,
   Button,
   Group,
+  Loader,
   LoadingOverlay,
   Paper,
   ScrollArea,
@@ -122,8 +123,9 @@ export function ChatPage() {
     activeTicket !== null &&
     activeTicket.status === "pending_user" &&
     !activeTicket.confirmed_by_user;
+  const isAiProcessing = activeConversation?.status === "ai_processing";
   const composerDisabled =
-    activeConversation?.status === "escalated" || hasPendingDraft;
+    activeConversation?.status === "escalated" || hasPendingDraft || isAiProcessing;
 
   useEffect(() => {
     if (!activeConversationId && conversations.data?.length) {
@@ -131,11 +133,11 @@ export function ChatPage() {
     }
   }, [activeConversationId, conversations.data]);
 
-  const messages = useMessages(activeConversationId);
+  const messages = useMessages(activeConversationId, isAiProcessing);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.data?.length]);
+  }, [messages.data?.length, isAiProcessing]);
 
   async function ensureConversation() {
     const activeConversationExists =
@@ -247,7 +249,7 @@ export function ChatPage() {
           </Alert>
         )}
 
-        <div className={`chat-surface${activeTicket ? " has-draft" : ""}`}>
+        <div className="chat-surface">
           <LoadingOverlay visible={messages.isFetching && !messages.data} />
           <ScrollArea className="messages-scroll" type="auto">
             <Stack gap="sm" p="md">
@@ -267,6 +269,14 @@ export function ChatPage() {
                   onEscalate={handleEscalate}
                 />
               ))}
+              {isAiProcessing && (
+                <Group className="ai-processing-indicator" gap="xs">
+                  <Loader size="xs" />
+                  <Text size="sm" c="dimmed">
+                    Ответ обрабатывается
+                  </Text>
+                </Group>
+              )}
               <div ref={bottomRef} />
             </Stack>
           </ScrollArea>

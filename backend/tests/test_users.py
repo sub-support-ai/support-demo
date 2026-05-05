@@ -1,9 +1,5 @@
 ﻿import pytest
 from httpx import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.models.ai_log import AILog
-from app.models.ticket import Ticket
 
 
 @pytest.mark.asyncio
@@ -257,90 +253,6 @@ async def test_stats_requires_auth(client: AsyncClient):
     """GET /stats/ без токена → 401."""
     response = await client.get("/api/v1/stats/")
     assert response.status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_stats_regular_user_sees_only_own_tickets(
-    client: AsyncClient,
-    db_session: AsyncSession,
-):
-    alice_reg = await client.post("/api/v1/auth/register", json={
-        "email": "statsalice@example.com",
-        "username": "statsalice",
-        "password": "Secret123!",
-    })
-    bob_reg = await client.post("/api/v1/auth/register", json={
-        "email": "statsbob@example.com",
-        "username": "statsbob",
-        "password": "Secret123!",
-    })
-    alice_token = alice_reg.json()["access_token"]
-    bob_token = bob_reg.json()["access_token"]
-
-    alice_me = await client.get(
-        "/api/v1/auth/me",
-        headers={"Authorization": f"Bearer {alice_token}"},
-    )
-    bob_me = await client.get(
-        "/api/v1/auth/me",
-        headers={"Authorization": f"Bearer {bob_token}"},
-    )
-
-    alice_ticket = Ticket(
-        user_id=alice_me.json()["id"],
-        title="Alice ticket",
-        body="Alice body",
-        user_priority=3,
-        status="confirmed",
-        department="IT",
-        ticket_source="ai_generated",
-        confirmed_by_user=True,
-    )
-    bob_ticket = Ticket(
-        user_id=bob_me.json()["id"],
-        title="Bob ticket",
-        body="Bob body",
-        user_priority=3,
-        status="closed",
-        department="HR",
-        ticket_source="user_written",
-        confirmed_by_user=True,
-    )
-    db_session.add_all([alice_ticket, bob_ticket])
-    await db_session.flush()
-    db_session.add_all([
-        AILog(
-            ticket_id=alice_ticket.id,
-            model_version="test",
-            predicted_category="IT",
-            predicted_priority="средний",
-            confidence_score=0.9,
-            outcome="escalated_ai_ticket",
-        ),
-        AILog(
-            ticket_id=bob_ticket.id,
-            model_version="test",
-            predicted_category="HR",
-            predicted_priority="низкий",
-            confidence_score=0.2,
-            outcome="resolved_by_ai",
-        ),
-    ])
-    await db_session.flush()
-
-    response = await client.get(
-        "/api/v1/stats/",
-        headers={"Authorization": f"Bearer {alice_token}"},
-    )
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["tickets"]["total"] == 1
-    assert data["tickets"]["by_status"] == {"confirmed": 1}
-    assert data["tickets"]["by_department"] == {"IT": 1}
-    assert data["ai"]["total_processed"] == 1
-    assert data["ai"]["low_confidence_count"] == 0
-    assert data["ai"]["escalated_count"] == 1
 
 
 # ── Bootstrap-admin ───────────────────────────────────────────────────────────

@@ -40,6 +40,7 @@ from app.models.message import Message
 from app.models.ticket import Ticket
 from app.models.user import User
 from app.schemas.ticket import TicketRead
+from app.services.ai_jobs import enqueue_ai_response_job
 from app.services.audit import log_event
 from app.services.routing import assign_agent
 from app.services.ticket_body import (
@@ -47,7 +48,6 @@ from app.services.ticket_body import (
     clean_optional_text,
     clean_text_with_fallback,
 )
-from app.services.conversation_intent import detect_conversation_state
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +69,22 @@ RED_ZONE_THRESHOLD = 0.6
 # деньги, ухудшение качества (модель путается). 20 — компромисс между
 # сохранением темы и стоимостью.
 MAX_HISTORY_MESSAGES = 20
+
+SUPPORT_DRAFT_INTENT_TERMS = (
+    "тикет", "заявк", "черновик", "обращен", "запрос", "техподдерж", "тех поддерж",
+    "специалист", "саппорт", "support",
+)
+SUPPORT_DRAFT_ACTION_TERMS = (
+    "созда", "сформир", "оформ", "заведи", "завести", "отправ", "эскал",
+)
+URGENT_TERMS = (
+    "срочно", "авар", "критич", "опасн", "горит", "дым", "искр",
+)
+PHYSICAL_INCIDENT_TERMS = (
+    "провод", "кабел", "розетк", "удлинител", "электр", "питани", "сломал",
+    "сломался", "порвал", "порвался", "оторвал", "поврежд",
+)
+
 
 # ── Схемы запросов/ответов (определены здесь чтобы не плодить файлы) ──────────
 
@@ -246,6 +262,16 @@ async def add_message(
                 "или начните новый диалог."
             ),
         )
+    if conversation.status == "ai_processing":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Дождитесь ответа перед созданием черновика.",
+        )
+    if conversation.status == "ai_processing":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Дождитесь ответа по предыдущему сообщению.",
+        )
 
     # Сохраняем сообщение пользователя
     user_message = Message(
@@ -257,49 +283,11 @@ async def add_message(
     await db.flush()
     await db.refresh(user_message)
 
-    # Собираем историю для AI (вместе со свежим user_message).
-    # Берём ПОСЛЕДНИЕ MAX_HISTORY_MESSAGES сообщений, в хронологическом порядке.
-    history = await _load_history_for_ai(db, conversation_id)
-
-    # Зовём AI: получаем dict с answer/confidence/escalate/sources/model_version
-    ai_payload = await _get_ai_answer(conversation_id, history)
-
-    # Применяем правило "красной зоны": если модель не уверена ИЛИ сама
-    # попросила эскалацию — помечаем сообщение как требующее эскалации.
-    # Клиент использует этот флаг, чтобы показать кнопку "Создать тикет".
-    confidence = ai_payload.get("confidence")
-    escalate = bool(ai_payload.get("escalate"))
-    conversation_state = detect_conversation_state(history)
-    if conversation_state.requires_draft:
-        ai_payload["answer"] = conversation_state.answer_override or ai_payload.get("answer", "")
-        ai_payload["escalate"] = True
-        confidence_cap = conversation_state.confidence_cap
-        if confidence_cap is not None:
-            confidence = min(float(confidence or 1.0), confidence_cap)
-        ai_payload["confidence"] = confidence
-        escalate = True
-
-    requires_escalation = (
-        escalate
-        or (confidence is not None and confidence < RED_ZONE_THRESHOLD)
-    )
-
-    # Сохраняем ответ AI вместе с метаданными — нужно для UI (sources)
-    # и для офлайн-аудита решений модели (confidence/escalate).
-    ai_message = Message(
-        conversation_id=conversation_id,
-        role="ai",
-        content=ai_payload.get("answer", ""),
-        ai_confidence=confidence,
-        ai_escalate=escalate,
-        sources=ai_payload.get("sources") or None,
-        requires_escalation=requires_escalation,
-    )
-    db.add(ai_message)
+    conversation.status = "ai_processing"
+    await enqueue_ai_response_job(db, conversation_id)
     await db.flush()
-    await db.refresh(ai_message)
 
-    return [user_message, ai_message]
+    return [user_message]
 
 
 # ── GET /conversations/{id}/messages — история сообщений ──────────────────────
@@ -320,7 +308,7 @@ async def get_messages(
     result = await db.execute(
         select(Message)
         .where(Message.conversation_id == conversation_id)
-        .order_by(Message.created_at.asc())
+        .order_by(Message.created_at.asc(), Message.id.asc())
     )
     return result.scalars().all()
 
@@ -380,7 +368,7 @@ async def escalate_conversation(
     msg_result = await db.execute(
         select(Message)
         .where(Message.conversation_id == conversation_id)
-        .order_by(Message.created_at.asc())
+        .order_by(Message.created_at.asc(), Message.id.asc())
     )
     messages = list(msg_result.scalars().all())
 
@@ -661,6 +649,40 @@ async def _get_ai_answer(
     data.setdefault("sources", [])
     data.setdefault("model_version", settings.AI_MODEL_VERSION_FALLBACK)
     return data
+
+
+def _should_offer_support_draft(messages: list[dict[str, str]]) -> bool:
+    """Определяет, нужно ли показывать сбор контекста и создание черновика."""
+    user_messages = [
+        message.get("content", "").strip().lower()
+        for message in messages
+        if message.get("role") == "user" and message.get("content", "").strip()
+    ]
+    if not user_messages:
+        return False
+
+    latest = user_messages[-1]
+    combined = "\n".join(user_messages)
+
+    has_draft_action = any(term in latest for term in SUPPORT_DRAFT_ACTION_TERMS)
+    has_draft_object = any(term in latest for term in SUPPORT_DRAFT_INTENT_TERMS)
+    if has_draft_action and has_draft_object:
+        return True
+
+    has_urgent_context = any(term in combined for term in URGENT_TERMS)
+    has_physical_incident = any(term in combined for term in PHYSICAL_INCIDENT_TERMS)
+    if has_urgent_context and has_physical_incident:
+        return True
+
+    return False
+
+
+def _build_intake_answer() -> str:
+    return (
+        "Соберу данные для черновика обращения. Из истории возьму описание проблемы "
+        "и уже упомянутые действия. Уточните заявителя, офис и затронутый объект; "
+        "после этого сформирую черновик для специалиста."
+    )
 
 
 def _extract_steps_tried(messages: list[Message]) -> str | None:

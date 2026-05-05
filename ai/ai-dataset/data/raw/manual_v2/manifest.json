@@ -1,8 +1,8 @@
 {
   "run_id": "manual_v2",
-  "model": "manual-curated-v2",
+  "model": "manual-curation",
   "method": "inline_generation",
-  "note": "Hand-curated training samples. New 14-category taxonomy (split it_access, it_software). Distribution skewed toward IT (75%) per real-world traffic.",
+  "note": "Hand-curated dataset. New 14-category taxonomy (split it_access, it_software). Distribution skewed toward IT (75%) per real-world traffic.",
   "samples_per_combo": 1,
   "grid_size": 101,
   "concurrency": null,

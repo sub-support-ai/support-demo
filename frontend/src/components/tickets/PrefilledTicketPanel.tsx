@@ -209,12 +209,14 @@ export function PrefilledTicketPanel({
                 label="Офис"
                 value={office}
                 maxLength={100}
+                required
                 onChange={(event) => setOffice(event.currentTarget.value)}
               />
               <TextInput
                 label="Что затронуто"
                 value={affectedItem}
                 maxLength={150}
+                required
                 onChange={(event) => setAffectedItem(event.currentTarget.value)}
               />
             </Group>
@@ -250,7 +252,7 @@ export function PrefilledTicketPanel({
           <Stack gap="sm">
             {!hasRequiredContext && canEdit && (
               <Alert color="yellow" variant="light">
-                Перед отправкой укажите заявителя, корректный email, офис и затронутый объект.
+                Заполните заявителя, корректный email, офис и затронутый объект перед отправкой.
               </Alert>
             )}
             <div>

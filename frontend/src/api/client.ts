@@ -55,6 +55,12 @@ export function getApiError(error: unknown): string {
         .filter(Boolean)
         .join("; ");
     }
+    if (detail && typeof detail === "object") {
+      const message = detail.message ?? "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РґР°РЅРЅС‹Рµ";
+      return detail.fields?.length
+        ? `${message}: ${detail.fields.join(", ")}`
+        : message;
+    }
     return detail ?? error.message;
   }
   if (error instanceof Error) {

@@ -1,15 +1,13 @@
 import os
-import logging
 
 import requests
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from typing import Literal
 from classifier import classify_ticket
 from answerer import generate_answer
 
 app = FastAPI()
-logger = logging.getLogger(__name__)
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", os.getenv("OLLAMA_URL", "http://localhost:11434")).rstrip("/")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
 OLLAMA_HEALTH_TIMEOUT_SECONDS = float(os.getenv("OLLAMA_HEALTH_TIMEOUT_SECONDS", "3"))
@@ -54,14 +52,14 @@ class AnswerResponse(BaseModel):
     answer: str
     confidence: float
     escalate: bool
-    sources: list[Source] = Field(default_factory=list)
+    sources: list[Source] = []
     model_version: str
 
 # ========================
 # Эндпоинты
 # ========================
 @app.post("/ai/classify", response_model=ClassifyResponse)
-def classify(request: TicketRequest):
+async def classify(request: TicketRequest):
     try:
         result = classify_ticket(
             ticket_id=request.ticket_id,
@@ -70,11 +68,10 @@ def classify(request: TicketRequest):
         )
         return result
     except Exception as e:
-        logger.exception("AI classify failed")
-        raise HTTPException(status_code=500, detail="ai_classify_failed") from e
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/ai/answer", response_model=AnswerResponse)
-def answer(request: AnswerRequest):
+async def answer(request: AnswerRequest):
     try:
         # Фильтруем system сообщения — защита от prompt injection
         safe_messages = [m for m in request.messages if m.role != "system"]
@@ -85,8 +82,7 @@ def answer(request: AnswerRequest):
         )
         return result
     except Exception as e:
-        logger.exception("AI answer failed")
-        raise HTTPException(status_code=500, detail="ai_answer_failed") from e
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/healthcheck")
 def healthcheck():

@@ -1,8 +1,8 @@
 {
   "run_id": "manual_v1",
-  "model": "manual-curated-v1",
+  "model": "manual-curation",
   "method": "inline_generation",
-  "note": "Hand-curated training samples. 5 samples per category x 12 categories = 60 samples.",
+  "note": "Hand-curated dataset. 5 samples per category x 12 categories = 60 samples.",
   "samples_per_combo": 1,
   "grid_size": 60,
   "concurrency": null,

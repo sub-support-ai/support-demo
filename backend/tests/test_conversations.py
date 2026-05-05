@@ -24,6 +24,35 @@ import pytest
 from httpx import AsyncClient
 
 
+@pytest.fixture(autouse=True)
+def _stub_ai_services(monkeypatch: pytest.MonkeyPatch):
+    from app.services import ai_classifier, conversation_ai
+
+    async def answer_fallback(conversation_id: int, messages: list[dict[str, str]]):
+        return {
+            "answer": "[AI Service временно недоступен. Ваше сообщение сохранено, агент ответит вручную.]",
+            "confidence": 0.0,
+            "escalate": True,
+            "sources": [],
+            "model_version": "test-fallback",
+        }
+
+    async def classify_fallback(ticket_id: int, title: str, body: str):
+        inferred = ai_classifier._infer_priority_from_text(title, body)
+        return {
+            "category": "other",
+            "department": "IT",
+            "priority": ai_classifier._choose_priority("средний", inferred),
+            "confidence": 0.0,
+            "draft_response": "[AI Service недоступен — требует агента]",
+            "model_version": "test-fallback",
+            "response_time_ms": 0,
+        }
+
+    monkeypatch.setattr(conversation_ai, "get_ai_answer", answer_fallback)
+    monkeypatch.setattr(ai_classifier, "classify_ticket", classify_fallback)
+
+
 async def register_user(client: AsyncClient, suffix: str) -> tuple[int, str]:
     """Регистрирует пользователя и возвращает (id, access_token)."""
     response = await client.post("/api/v1/auth/register", json={
@@ -57,10 +86,18 @@ def escalation_payload(
     }
 
 
+async def process_next_ai_job(db_session):
+    from app.services.ai_jobs import claim_next_ai_job, process_ai_job
+
+    job = await claim_next_ai_job(db_session)
+    assert job is not None
+    await process_ai_job(db_session, job)
+
+
 # ── POST /messages: AI fallback должен дать requires_escalation=True ─────────
 
 @pytest.mark.asyncio
-async def test_post_message_ai_unavailable_marks_red_zone(client: AsyncClient):
+async def test_post_message_ai_unavailable_marks_red_zone(client: AsyncClient, db_session):
     """
     AI Service в тестах недоступен → fallback в _get_ai_answer возвращает
     confidence=0.0 + escalate=True. Это ниже RED_ZONE_THRESHOLD=0.6, поэтому
@@ -86,8 +123,17 @@ async def test_post_message_ai_unavailable_marks_red_zone(client: AsyncClient):
     )
     assert msg_resp.status_code == 201
 
+    # HTTP-запрос больше не ждёт модель: сразу возвращается только user message.
     messages = msg_resp.json()
-    # Возвращаются оба сообщения: user + ai
+    assert len(messages) == 1
+    await process_next_ai_job(db_session)
+
+    history_resp = await client.get(
+        f"/api/v1/conversations/{conv_id}/messages",
+        headers=headers,
+    )
+    assert history_resp.status_code == 200
+    messages = history_resp.json()
     assert len(messages) == 2
     user_msg, ai_msg = messages
 
@@ -113,7 +159,7 @@ async def test_post_message_ai_unavailable_marks_red_zone(client: AsyncClient):
 # ── POST /messages: история сохраняется в правильном порядке ────────────────
 
 @pytest.mark.asyncio
-async def test_messages_persisted_in_chronological_order(client: AsyncClient):
+async def test_messages_persisted_in_chronological_order(client: AsyncClient, db_session):
     """Несколько сообщений подряд → GET /messages возвращает их по порядку."""
     _, token = await register_user(client, "history")
     headers = {"Authorization": f"Bearer {token}"}
@@ -121,11 +167,13 @@ async def test_messages_persisted_in_chronological_order(client: AsyncClient):
     conv_id = (await client.post("/api/v1/conversations/", headers=headers)).json()["id"]
 
     for text in ("первое", "второе", "третье"):
-        await client.post(
+        response = await client.post(
             f"/api/v1/conversations/{conv_id}/messages",
             json={"content": text},
             headers=headers,
         )
+        assert response.status_code == 201
+        await process_next_ai_job(db_session)
 
     resp = await client.get(
         f"/api/v1/conversations/{conv_id}/messages",
@@ -164,10 +212,11 @@ async def test_post_message_to_other_user_conversation_returns_404(client: Async
 @pytest.mark.asyncio
 async def test_create_draft_intent_forces_escalation_card(
     client: AsyncClient,
+    db_session,
     monkeypatch: pytest.MonkeyPatch,
 ):
     """Даже уверенный AI-ответ не должен скрывать явный запрос на черновик."""
-    from app.routers import conversations
+    from app.services import conversation_ai
 
     async def confident_answer(conversation_id: int, messages: list[dict[str, str]]):
         return {
@@ -178,7 +227,7 @@ async def test_create_draft_intent_forces_escalation_card(
             "model_version": "test",
         }
 
-    monkeypatch.setattr(conversations, "_get_ai_answer", confident_answer)
+    monkeypatch.setattr(conversation_ai, "get_ai_answer", confident_answer)
 
     _, token = await register_user(client, "draftintent")
     headers = {"Authorization": f"Bearer {token}"}
@@ -190,7 +239,14 @@ async def test_create_draft_intent_forces_escalation_card(
         headers=headers,
     )
     assert first_resp.status_code == 201
-    assert first_resp.json()[1]["requires_escalation"] is True
+    await process_next_ai_job(db_session)
+
+    first_history = await client.get(
+        f"/api/v1/conversations/{conv_id}/messages",
+        headers=headers,
+    )
+    assert first_history.status_code == 200
+    assert first_history.json()[-1]["requires_escalation"] is True
 
     second_resp = await client.post(
         f"/api/v1/conversations/{conv_id}/messages",
@@ -198,8 +254,14 @@ async def test_create_draft_intent_forces_escalation_card(
         headers=headers,
     )
     assert second_resp.status_code == 201
+    await process_next_ai_job(db_session)
 
-    ai_msg = second_resp.json()[1]
+    second_history = await client.get(
+        f"/api/v1/conversations/{conv_id}/messages",
+        headers=headers,
+    )
+    assert second_history.status_code == 200
+    ai_msg = second_history.json()[-1]
     assert ai_msg["ai_confidence"] == 0.5
     assert ai_msg["ai_escalate"] is True
     assert ai_msg["requires_escalation"] is True
@@ -209,7 +271,7 @@ async def test_create_draft_intent_forces_escalation_card(
 # ── POST /escalate: 1-click autofill создаёт тикет ──────────────────────────
 
 @pytest.mark.asyncio
-async def test_escalate_creates_prefilled_ticket(client: AsyncClient):
+async def test_escalate_creates_prefilled_ticket(client: AsyncClient, db_session):
     """
     После пары сообщений в диалоге пользователь жмёт "Эскалировать":
       - создаётся Ticket с conversation_id, ticket_source="ai_generated",
@@ -224,11 +286,13 @@ async def test_escalate_creates_prefilled_ticket(client: AsyncClient):
     # Заводим диалог с парой сообщений (AI fallback нам не мешает —
     # классификатор тоже даёт fallback в тестах).
     conv_id = (await client.post("/api/v1/conversations/", headers=headers)).json()["id"]
-    await client.post(
+    message_resp = await client.post(
         f"/api/v1/conversations/{conv_id}/messages",
         json={"content": "Не работает VPN, я уже перезагружал ноут"},
         headers=headers,
     )
+    assert message_resp.status_code == 201
+    await process_next_ai_job(db_session)
 
     # 1-click эскалация
     resp = await client.post(
@@ -292,16 +356,19 @@ async def test_escalate_creates_prefilled_ticket(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_escalate_blank_requester_name_returns_422(
     client: AsyncClient,
+    db_session,
 ):
     _, token = await register_user(client, "blankrequester")
     headers = {"Authorization": f"Bearer {token}"}
 
     conv_id = (await client.post("/api/v1/conversations/", headers=headers)).json()["id"]
-    await client.post(
+    message_resp = await client.post(
         f"/api/v1/conversations/{conv_id}/messages",
         json={"content": "Не работает VPN"},
         headers=headers,
     )
+    assert message_resp.status_code == 201
+    await process_next_ai_job(db_session)
 
     resp = await client.post(
         f"/api/v1/conversations/{conv_id}/escalate",
@@ -320,16 +387,18 @@ async def test_escalate_blank_requester_name_returns_422(
 
 
 @pytest.mark.asyncio
-async def test_escalate_without_context_returns_422(client: AsyncClient):
+async def test_escalate_without_context_returns_422(client: AsyncClient, db_session):
     _, token = await register_user(client, "nocontext")
     headers = {"Authorization": f"Bearer {token}"}
 
     conv_id = (await client.post("/api/v1/conversations/", headers=headers)).json()["id"]
-    await client.post(
+    message_resp = await client.post(
         f"/api/v1/conversations/{conv_id}/messages",
         json={"content": "Не работает VPN"},
         headers=headers,
     )
+    assert message_resp.status_code == 201
+    await process_next_ai_job(db_session)
 
     resp = await client.post(
         f"/api/v1/conversations/{conv_id}/escalate",
@@ -342,16 +411,19 @@ async def test_escalate_without_context_returns_422(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_post_message_to_escalated_conversation_returns_409(
     client: AsyncClient,
+    db_session,
 ):
     _, token = await register_user(client, "lockedafterescalate")
     headers = {"Authorization": f"Bearer {token}"}
 
     conv_id = (await client.post("/api/v1/conversations/", headers=headers)).json()["id"]
-    await client.post(
+    message_resp = await client.post(
         f"/api/v1/conversations/{conv_id}/messages",
         json={"content": "Не работает VPN"},
         headers=headers,
     )
+    assert message_resp.status_code == 201
+    await process_next_ai_job(db_session)
     escalate_resp = await client.post(
         f"/api/v1/conversations/{conv_id}/escalate",
         json=escalation_payload(),
@@ -369,16 +441,18 @@ async def test_post_message_to_escalated_conversation_returns_409(
 
 
 @pytest.mark.asyncio
-async def test_repeated_escalate_returns_409(client: AsyncClient):
+async def test_repeated_escalate_returns_409(client: AsyncClient, db_session):
     _, token = await register_user(client, "doubleescalate")
     headers = {"Authorization": f"Bearer {token}"}
 
     conv_id = (await client.post("/api/v1/conversations/", headers=headers)).json()["id"]
-    await client.post(
+    message_resp = await client.post(
         f"/api/v1/conversations/{conv_id}/messages",
         json={"content": "Не работает VPN"},
         headers=headers,
     )
+    assert message_resp.status_code == 201
+    await process_next_ai_job(db_session)
     first_resp = await client.post(
         f"/api/v1/conversations/{conv_id}/escalate",
         json=escalation_payload(),
@@ -395,17 +469,19 @@ async def test_repeated_escalate_returns_409(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_escalate_software_update_request_gets_low_priority(client: AsyncClient):
+async def test_escalate_software_update_request_gets_low_priority(client: AsyncClient, db_session):
     """AI fallback text must not make routine how-to requests high priority."""
     _, token = await register_user(client, "updatevscode")
     headers = {"Authorization": f"Bearer {token}"}
 
     conv_id = (await client.post("/api/v1/conversations/", headers=headers)).json()["id"]
-    await client.post(
+    message_resp = await client.post(
         f"/api/v1/conversations/{conv_id}/messages",
         json={"content": "я хочу обновить программу VS Code, как это сделать?"},
         headers=headers,
     )
+    assert message_resp.status_code == 201
+    await process_next_ai_job(db_session)
 
     resp = await client.post(
         f"/api/v1/conversations/{conv_id}/escalate",
@@ -438,7 +514,7 @@ async def test_escalate_empty_conversation_returns_400(client: AsyncClient):
 # ── POST /escalate: чужой диалог → 404 ──────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_escalate_other_user_conversation_returns_404(client: AsyncClient):
+async def test_escalate_other_user_conversation_returns_404(client: AsyncClient, db_session):
     """Bob не может эскалировать диалог Alice → 404, не 403."""
     _, alice_token = await register_user(client, "escA")
     _, bob_token = await register_user(client, "escB")
@@ -449,11 +525,13 @@ async def test_escalate_other_user_conversation_returns_404(client: AsyncClient)
     )).json()["id"]
 
     # Alice пишет сообщение, чтобы диалог был непустым
-    await client.post(
+    message_resp = await client.post(
         f"/api/v1/conversations/{conv_id}/messages",
         json={"content": "что-то приватное"},
         headers={"Authorization": f"Bearer {alice_token}"},
     )
+    assert message_resp.status_code == 201
+    await process_next_ai_job(db_session)
 
     # Bob пытается эскалировать
     resp = await client.post(
@@ -478,9 +556,9 @@ async def test_load_history_maps_roles_and_limits_length(db_session, client: Asy
     from app.models.conversation import Conversation
     from app.models.message import Message
     from app.models.user import User
-    from app.routers.conversations import (
+    from app.services.conversation_ai import (
         MAX_HISTORY_MESSAGES,
-        _load_history_for_ai,
+        load_history_for_ai,
     )
 
     # Создаём в БД пользователя + диалог напрямую (минуя HTTP)
@@ -508,7 +586,7 @@ async def test_load_history_maps_roles_and_limits_length(db_session, client: Asy
         ))
     await db_session.flush()
 
-    history = await _load_history_for_ai(db_session, conv.id)
+    history = await load_history_for_ai(db_session, conv.id)
 
     # Лимит
     assert len(history) == MAX_HISTORY_MESSAGES
@@ -557,19 +635,19 @@ def test_extract_steps_tried_returns_none_when_nothing_found():
 
 
 def test_support_draft_detection_handles_draft_request_and_urgent_wire():
-    from app.services.conversation_intent import detect_conversation_state
+    from app.services.conversation_ai import should_offer_support_draft
 
-    assert detect_conversation_state([
+    assert should_offer_support_draft([
         {"role": "user", "content": "порвался провод, срочно"},
-    ]).requires_draft
-    assert detect_conversation_state([
+    ])
+    assert should_offer_support_draft([
         {"role": "user", "content": "порвался провод, срочно"},
         {"role": "assistant", "content": "Потребуется специалист."},
         {
             "role": "user",
             "content": "давай создадим черновик для запроса к тех поддержке",
         },
-    ]).requires_draft
-    assert not detect_conversation_state([
+    ])
+    assert not should_offer_support_draft([
         {"role": "user", "content": "как обновить VS Code?"},
-    ]).requires_draft
+    ])

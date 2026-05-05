@@ -1,4 +1,4 @@
-services:
+﻿services:
   app:
     build: .
     ports:
@@ -6,51 +6,63 @@ services:
     env_file:
       - .env
     environment:
-      # Compose network should always use the db service name.
       POSTGRES_HOST: db
-      # AI service runs on the host machine when started from the root launcher.
       AI_SERVICE_URL: http://host.docker.internal:8001
     depends_on:
       db:
         condition: service_healthy
-      # ai-service подключается той же сетью, имя сервиса = DNS-имя для
-      # контейнеров. Backend достучится на http://ai-service:8001 (см. .env).
-      # Пока AI-часть разрабатывается, зависимость НЕ обязательная:
-      # если AI Service не поднят, classify/answer отвечают fallback'ом
-      # (confidence=0.0 → тикет уходит к живому агенту, см. ai_classifier.py).
+      # ai-service РїРѕРґРєР»СЋС‡Р°РµС‚СЃСЏ С‚РѕР№ Р¶Рµ СЃРµС‚СЊСЋ, РёРјСЏ СЃРµСЂРІРёСЃР° = DNS-РёРјСЏ РґР»СЏ
+      # РєРѕРЅС‚РµР№РЅРµСЂРѕРІ. Backend РґРѕСЃС‚СѓС‡РёС‚СЃСЏ РЅР° http://ai-service:8001 (СЃРј. .env).
+      # РџРѕРєР° AI-С‡Р°СЃС‚СЊ СЂР°Р·СЂР°Р±Р°С‚С‹РІР°РµС‚СЃСЏ, Р·Р°РІРёСЃРёРјРѕСЃС‚СЊ РќР• РѕР±СЏР·Р°С‚РµР»СЊРЅР°СЏ:
+      # РµСЃР»Рё AI Service РЅРµ РїРѕРґРЅСЏС‚, classify/answer РѕС‚РІРµС‡Р°СЋС‚ fallback'РѕРј
+      # (confidence=0.0 в†’ С‚РёРєРµС‚ СѓС…РѕРґРёС‚ Рє Р¶РёРІРѕРјСѓ Р°РіРµРЅС‚Сѓ, СЃРј. ai_classifier.py).
     volumes:
       - .:/app
-    # Сначала прогоняем миграции БД (alembic upgrade head), потом запускаем uvicorn.
-    # Так на каждом старте контейнера схема автоматически синхронизируется с кодом.
-    # Идемпотентно: если миграций нет — alembic ничего не делает.
+    # РЎРЅР°С‡Р°Р»Р° РїСЂРѕРіРѕРЅСЏРµРј РјРёРіСЂР°С†РёРё Р‘Р” (alembic upgrade head), РїРѕС‚РѕРј Р·Р°РїСѓСЃРєР°РµРј uvicorn.
+    # РўР°Рє РЅР° РєР°Р¶РґРѕРј СЃС‚Р°СЂС‚Рµ РєРѕРЅС‚РµР№РЅРµСЂР° СЃС…РµРјР° Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё СЃРёРЅС…СЂРѕРЅРёР·РёСЂСѓРµС‚СЃСЏ СЃ РєРѕРґРѕРј.
+    # РРґРµРјРїРѕС‚РµРЅС‚РЅРѕ: РµСЃР»Рё РјРёРіСЂР°С†РёР№ РЅРµС‚ вЂ” alembic РЅРёС‡РµРіРѕ РЅРµ РґРµР»Р°РµС‚.
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 
-  # ── ai-service ─────────────────────────────────────────────────────────────
-  # Локальный AI-сервис с Mistral (через Ollama / llama.cpp). По требованию
-  # заказчика (СИБИНТЕК-СОФТ / Роснефть) данные не покидают периметр —
-  # поэтому сервис крутится в соседнем контейнере, а не в облаке.
+  ai-worker:
+    build: .
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: db
+      AI_SERVICE_URL: http://host.docker.internal:8001
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    command: python -m app.workers.ai_worker
+
+  # в”Ђв”Ђ ai-service в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+  # Р›РѕРєР°Р»СЊРЅС‹Р№ AI-СЃРµСЂРІРёСЃ СЃ Mistral (С‡РµСЂРµР· Ollama / llama.cpp). РџРѕ С‚СЂРµР±РѕРІР°РЅРёСЋ
+  # Р·Р°РєР°Р·С‡РёРєР° (РЎРР‘РРќРўР•Рљ-РЎРћР¤Рў / Р РѕСЃРЅРµС„С‚СЊ) РґР°РЅРЅС‹Рµ РЅРµ РїРѕРєРёРґР°СЋС‚ РїРµСЂРёРјРµС‚СЂ вЂ”
+  # РїРѕСЌС‚РѕРјСѓ СЃРµСЂРІРёСЃ РєСЂСѓС‚РёС‚СЃСЏ РІ СЃРѕСЃРµРґРЅРµРј РєРѕРЅС‚РµР№РЅРµСЂРµ, Р° РЅРµ РІ РѕР±Р»Р°РєРµ.
   #
-  # Этот блок намеренно закомментирован: образ и runtime-настройки собирает
-  # AI-команда (отдельный репозиторий). Backend общается с сервисом только
-  # через HTTP-контракт:
-  #   POST /ai/classify   { ticket_id, title, body } → { category, priority, confidence, draft_response }
-  #   POST /ai/answer     { conversation_id, message }    → { answer, confidence, should_escalate }
+  # Р­С‚РѕС‚ Р±Р»РѕРє РЅР°РјРµСЂРµРЅРЅРѕ Р·Р°РєРѕРјРјРµРЅС‚РёСЂРѕРІР°РЅ: РѕР±СЂР°Р· Рё runtime-РЅР°СЃС‚СЂРѕР№РєРё СЃРѕР±РёСЂР°РµС‚
+  # AI-РєРѕРјР°РЅРґР° (РѕС‚РґРµР»СЊРЅС‹Р№ СЂРµРїРѕР·РёС‚РѕСЂРёР№). Backend РѕР±С‰Р°РµС‚СЃСЏ СЃ СЃРµСЂРІРёСЃРѕРј С‚РѕР»СЊРєРѕ
+  # С‡РµСЂРµР· HTTP-РєРѕРЅС‚СЂР°РєС‚:
+  #   POST /ai/classify   { ticket_id, title, body } в†’ { category, priority, confidence, draft_response }
+  #   POST /ai/answer     { conversation_id, message }    в†’ { answer, confidence, should_escalate }
   #
-  # Когда AI lead опубликует образ, раскомментируем и поставим конкретный
-  # image tag. Зависимость от GPU — тоже его решение (CPU для dev, GPU в prod).
+  # РљРѕРіРґР° AI lead РѕРїСѓР±Р»РёРєСѓРµС‚ РѕР±СЂР°Р·, СЂР°СЃРєРѕРјРјРµРЅС‚РёСЂСѓРµРј Рё РїРѕСЃС‚Р°РІРёРј РєРѕРЅРєСЂРµС‚РЅС‹Р№
+  # image tag. Р—Р°РІРёСЃРёРјРѕСЃС‚СЊ РѕС‚ GPU вЂ” С‚РѕР¶Рµ РµРіРѕ СЂРµС€РµРЅРёРµ (CPU РґР»СЏ dev, GPU РІ prod).
   #
   # ai-service:
   #   image: <registry>/<ai-service>:<tag>
   #   ports:
   #     - "8001:8001"
-  #   # volumes: монтируем модель, чтобы не скачивать её на каждом старте контейнера
+  #   # volumes: РјРѕРЅС‚РёСЂСѓРµРј РјРѕРґРµР»СЊ, С‡С‚РѕР±С‹ РЅРµ СЃРєР°С‡РёРІР°С‚СЊ РµС‘ РЅР° РєР°Р¶РґРѕРј СЃС‚Р°СЂС‚Рµ РєРѕРЅС‚РµР№РЅРµСЂР°
   #   # - ./models:/models
   #   healthcheck:
   #     test: ["CMD", "curl", "-f", "http://localhost:8001/healthcheck"]
   #     interval: 10s
   #     timeout: 5s
   #     retries: 5
-  #     start_period: 60s   # Mistral прогревается дольше, чем обычный HTTP-сервис
+  #     start_period: 60s   # Mistral РїСЂРѕРіСЂРµРІР°РµС‚СЃСЏ РґРѕР»СЊС€Рµ, С‡РµРј РѕР±С‹С‡РЅС‹Р№ HTTP-СЃРµСЂРІРёСЃ
 
   db:
     image: postgres:16-alpine

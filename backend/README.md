@@ -21,8 +21,8 @@ tests/           pytest
 
 1) Создайте файл `.env` на основе примера:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\start.ps1
+```bash
+copy .env.example .env
 ```
 
 2) Поднимите Postgres и приложение:
@@ -81,6 +81,15 @@ py -m scripts.seed_demo_agents
 ```bash
 py -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
+
+7) В отдельном терминале запустите worker ответов:
+
+```bash
+py -m app.workers.ai_worker
+```
+
+Без worker чат сохранит сообщение и покажет обработку, но ответ не появится,
+пока задача не будет обработана.
 
 Для локального запуска рядом с AI-service обычно нужно переопределить:
 
@@ -149,7 +158,7 @@ py -m pytest -q
 ## Переменные окружения
 
 Смотрите `.env.example`:
-- `POSTGRES_HOST=localhost` — для локального запуска; Docker Compose переопределяет его в `db`
+- `POSTGRES_HOST=db` — для запуска в Docker Compose (приложение обращается к сервису `db`)
 - `AI_SERVICE_URL` — адрес локального AI-сервиса (Mistral через Ollama/llama.cpp). По требованию заказчика данные не покидают периметр предприятия, облачные API не используются.
 - `JWT_SECRET_KEY` — длинная случайная строка. Генерация: `python -c "import secrets; print(secrets.token_urlsafe(64))"`. В `APP_ENV=production` дефолт запрещён — приложение упадёт на старте.
 - `CORS_ORIGINS` — список источников фронта через запятую. Пусто — CORS выключен.

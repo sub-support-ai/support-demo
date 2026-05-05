@@ -1,4 +1,4 @@
-export type UserRole = "user" | "agent" | "admin";
+﻿export type UserRole = "user" | "agent" | "admin";
 export type TicketStatus =
   | "new"
   | "pending_user"
@@ -127,7 +127,10 @@ export interface EscalateResponse {
 }
 
 export interface ApiErrorPayload {
-  detail?: string | Array<{ loc?: Array<string | number>; msg?: string; type?: string }>;
+  detail?:
+    | string
+    | { message?: string; fields?: string[] }
+    | Array<{ loc?: Array<string | number>; msg?: string; type?: string }>;
 }
 
 export interface TicketStats {

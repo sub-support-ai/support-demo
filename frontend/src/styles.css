@@ -38,7 +38,6 @@ body {
 
 .page-grid {
   display: grid;
-  align-items: start;
   grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
   gap: 16px;
   padding: 16px;
@@ -67,14 +66,6 @@ body {
 
 .messages-scroll {
   min-height: 320px;
-}
-
-.chat-surface.has-draft {
-  grid-template-rows: clamp(240px, calc(100vh - 360px), 460px) auto;
-}
-
-.chat-surface.has-draft .messages-scroll {
-  min-height: 240px;
 }
 
 .message-row {
@@ -115,6 +106,14 @@ body {
 
 .message-text {
   white-space: pre-wrap;
+}
+
+.ai-processing-indicator {
+  align-self: flex-start;
+  padding: 8px 10px;
+  border: 1px solid #dce5e2;
+  border-radius: 8px;
+  background: #ffffff;
 }
 
 .escalation-card {
@@ -230,20 +229,6 @@ body {
 .ticket-card {
   padding: 14px;
   background: #ffffff;
-}
-
-.metric-card,
-.dashboard-section {
-  padding: 14px;
-  background: #ffffff;
-  border-radius: 8px;
-}
-
-.metric-value {
-  font-size: 30px;
-  line-height: 1.15;
-  font-weight: 700;
-  margin-top: 4px;
 }
 
 @media (max-width: 960px) {
