@@ -18,6 +18,7 @@ import {
   getStatusLabel,
   getTicketPriorityLabel,
 } from "../../lib/ticketLabels";
+import { validateEmail } from "../../lib/validation";
 
 const DEPARTMENT_OPTIONS = [
   { value: "IT", label: "IT" },
@@ -72,11 +73,16 @@ export function PrefilledTicketPanel({
   const [stepsTried, setStepsTried] = useState(ticket.steps_tried ?? "");
 
   const canEdit = !ticket.confirmed_by_user && ticket.status === "pending_user";
+  const requesterEmailError = validateEmail(requesterEmail);
+  const hasRequiredContext =
+    requesterName.trim().length > 0 &&
+    !requesterEmailError &&
+    office.trim().length > 0 &&
+    affectedItem.trim().length > 0;
   const canSubmit =
     title.trim().length > 0 &&
     body.trim().length > 0 &&
-    requesterName.trim().length > 0 &&
-    requesterEmail.trim().length > 0;
+    hasRequiredContext;
   const isCriticalPriority = priority === CRITICAL_PRIORITY_OPTION.value;
 
   useEffect(() => {
@@ -170,6 +176,7 @@ export function PrefilledTicketPanel({
                 value={requesterEmail}
                 maxLength={255}
                 required
+                error={requesterEmail ? requesterEmailError : undefined}
                 onChange={(event) => setRequesterEmail(event.currentTarget.value)}
               />
             </Group>
@@ -241,6 +248,11 @@ export function PrefilledTicketPanel({
           </Stack>
         ) : (
           <Stack gap="sm">
+            {!hasRequiredContext && canEdit && (
+              <Alert color="yellow" variant="light">
+                Перед отправкой укажите заявителя, корректный email, офис и затронутый объект.
+              </Alert>
+            )}
             <div>
               <Text size="xs" c="dimmed" fw={600}>
                 Тема
@@ -282,7 +294,7 @@ export function PrefilledTicketPanel({
             leftSection={<IconCheck size={16} />}
             loading={confirmLoading}
             onClick={onConfirm}
-            disabled={!canEdit || isEditing}
+            disabled={!canEdit || isEditing || !hasRequiredContext}
           >
             Отправить как есть
           </Button>

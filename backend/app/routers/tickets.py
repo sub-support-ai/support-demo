@@ -18,7 +18,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.database import get_db
 from app.dependencies import get_current_user, require_role
-from app.models.agent import Agent
 from app.models.ai_log import AILog
 from app.models.ticket import Ticket
 from app.models.user import User
@@ -28,6 +27,7 @@ from app.schemas.ticket import (
     TicketRead,
     TicketStatusUpdate,
 )
+from app.services.agents import get_active_agent_for_user
 from app.services.audit import log_event
 from app.services.routing import assign_agent, unassign_agent
 from app.services.ticket_body import clean_optional_text, replace_context_block_if_present
@@ -100,16 +100,6 @@ async def get_ticket_for_owner(
     return ticket
 
 
-async def _get_agent_for_user(db: AsyncSession, user: User) -> Agent | None:
-    result = await db.execute(
-        select(Agent)
-        .where((Agent.email == user.email) | (Agent.username == user.username))
-        .where(Agent.is_active == True)
-        .limit(1)
-    )
-    return result.scalar_one_or_none()
-
-
 async def _user_is_assigned_agent(
     db: AsyncSession,
     user: User,
@@ -117,7 +107,7 @@ async def _user_is_assigned_agent(
 ) -> bool:
     if ticket.agent_id is None:
         return False
-    agent = await _get_agent_for_user(db, user)
+    agent = await get_active_agent_for_user(db, user)
     return bool(agent and agent.id == ticket.agent_id)
 
 
@@ -291,7 +281,7 @@ async def list_tickets(
     # Админ — все (в т.ч. с фильтром по department).
     # Когда появится роль "agent" — добавим ветку Ticket.agent_id == ...
     if current_user.role == "agent":
-        agent = await _get_agent_for_user(db, current_user)
+        agent = await get_active_agent_for_user(db, current_user)
         if agent is None:
             return []
         query = query.where(Ticket.agent_id == agent.id)

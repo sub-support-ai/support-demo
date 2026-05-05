@@ -18,11 +18,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies import get_current_user
-from app.models.agent import Agent
 from app.models.ticket import Ticket
 from app.models.ai_log import AILog
 from app.models.user import User
 from app.schemas.stats import StatsResponse, TicketStats, AIStats
+from app.services.agents import get_active_agent_for_user
 
 logger = logging.getLogger(__name__)
 
@@ -56,13 +56,7 @@ async def _ticket_scope_filters(db: AsyncSession, user: User):
     if user.role == "admin":
         return []
     if user.role == "agent":
-        agent_result = await db.execute(
-            select(Agent)
-            .where((Agent.email == user.email) | (Agent.username == user.username))
-            .where(Agent.is_active == True)
-            .limit(1)
-        )
-        agent = agent_result.scalar_one_or_none()
+        agent = await get_active_agent_for_user(db, user)
         if agent is None:
             return None
         return [Ticket.agent_id == agent.id]
@@ -128,38 +122,38 @@ async def get_stats(
 
     # Общие метрики из ai_logs одним запросом
     ai_stats_query = select(
-            func.count().label("total"),
-            func.avg(AILog.confidence_score).label("avg_confidence"),
+        func.count().label("total"),
+        func.avg(AILog.confidence_score).label("avg_confidence"),
             # Тикеты с низкой уверенностью (< 0.8) — нужна проверка агентом
-            func.sum(
-                case((AILog.confidence_score < 0.8, 1), else_=0)
-            ).label("low_confidence"),
+        func.sum(
+            case((AILog.confidence_score < 0.8, 1), else_=0)
+        ).label("low_confidence"),
             # Роутинг подтверждён агентом
-            func.sum(
-                case((AILog.routing_was_correct == True, 1), else_=0)
-            ).label("routing_correct"),
+        func.sum(
+            case((AILog.routing_was_correct == True, 1), else_=0)
+        ).label("routing_correct"),
             # Роутинг исправлен агентом
-            func.sum(
-                case((AILog.routing_was_correct == False, 1), else_=0)
-            ).label("routing_incorrect"),
+        func.sum(
+            case((AILog.routing_was_correct == False, 1), else_=0)
+        ).label("routing_incorrect"),
             # AI решил без тикета
-            func.sum(
-                case((AILog.outcome == "resolved_by_ai", 1), else_=0)
-            ).label("resolved_by_ai"),
+        func.sum(
+            case((AILog.outcome == "resolved_by_ai", 1), else_=0)
+        ).label("resolved_by_ai"),
             # AI создал тикет (пользователь принял или написал свой)
-            func.sum(
-                case((AILog.outcome.in_(
-                    ["escalated_ai_ticket", "escalated_user_ticket"]
-                ), 1), else_=0)
-            ).label("escalated"),
+        func.sum(
+            case((AILog.outcome.in_(
+                ["escalated_ai_ticket", "escalated_user_ticket"]
+            ), 1), else_=0)
+        ).label("escalated"),
             # Обратная связь
-            func.sum(
-                case((AILog.user_feedback == "helped", 1), else_=0)
-            ).label("feedback_helped"),
-            func.sum(
-                case((AILog.user_feedback == "not_helped", 1), else_=0)
-            ).label("feedback_not_helped"),
-        )
+        func.sum(
+            case((AILog.user_feedback == "helped", 1), else_=0)
+        ).label("feedback_helped"),
+        func.sum(
+            case((AILog.user_feedback == "not_helped", 1), else_=0)
+        ).label("feedback_not_helped"),
+    )
     if current_user.role != "admin":
         ai_stats_query = (
             ai_stats_query
