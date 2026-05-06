@@ -27,13 +27,14 @@ from app.schemas.ticket import (
     TicketCommentRead,
     TicketCreate,
     TicketDraftUpdate,
+    TicketFeedbackPayload,
     TicketRead,
     TicketStatusUpdate,
 )
 from app.services.agents import get_active_agent_for_user
 from app.services.audit import log_event
 from app.services.routing import assign_agent, unassign_agent
-from app.services.sla import start_ticket_sla
+from app.services.sla import OPEN_STATUSES, start_ticket_sla
 from app.services.ticket_body import clean_optional_text, replace_context_block_if_present
 
 router = APIRouter(prefix="/tickets", tags=["tickets"])
@@ -89,6 +90,16 @@ def _require_draft_context(ticket: Ticket) -> None:
                 "fields": missing,
             },
         )
+
+
+async def _get_latest_ai_log(ticket_id: int, db: AsyncSession) -> AILog | None:
+    result = await db.execute(
+        select(AILog)
+        .where(AILog.ticket_id == ticket_id)
+        .order_by(AILog.created_at.desc(), AILog.id.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
 
 
 # ── Хелпер: загрузка тикета с проверкой доступа ───────────────────────────────
@@ -349,6 +360,8 @@ async def update_ticket_status(
 
     old_status = ticket.status
     ticket.status = payload.status
+    if payload.status in OPEN_STATUSES and ticket.sla_started_at is None:
+        start_ticket_sla(ticket)
 
     closing_statuses = {"resolved", "closed"}
     if payload.status in closing_statuses and old_status not in closing_statuses:
@@ -484,6 +497,8 @@ async def confirm_ticket(
 
     ticket.confirmed_by_user = True
     ticket.status = "confirmed"
+    if ticket.sla_started_at is None:
+        start_ticket_sla(ticket)
 
     if ticket.agent_id is None:
         await assign_agent(db, ticket)
@@ -592,13 +607,7 @@ async def resolve_ticket(
         await unassign_agent(db, ticket)
 
     # Записываем или обновляем ai_log
-    log_result = await db.execute(
-        select(AILog)
-        .where(AILog.ticket_id == ticket_id)
-        .order_by(AILog.created_at.desc())
-        .limit(1)
-    )
-    ai_log = log_result.scalar_one_or_none()
+    ai_log = await _get_latest_ai_log(ticket_id, db)
 
     if ai_log:
         ai_log.agent_accepted_ai_response = payload.agent_accepted_ai_response
@@ -622,6 +631,140 @@ async def resolve_ticket(
 
     await db.flush()
     await db.refresh(ticket)
+    return ticket
+
+
+@router.get(
+    "/{ticket_id}/comments",
+    response_model=list[TicketCommentRead],
+    summary="Комментарии к запросу",
+)
+async def list_ticket_comments(
+    ticket_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    ticket = await get_ticket_for_reader(ticket_id, db, current_user)
+
+    query = (
+        select(TicketComment)
+        .where(TicketComment.ticket_id == ticket.id)
+        .order_by(TicketComment.created_at.asc(), TicketComment.id.asc())
+    )
+    if current_user.role == "user":
+        query = query.where(TicketComment.internal.is_(False))
+
+    result = await db.execute(query)
+    return result.scalars().all()
+
+
+@router.post(
+    "/{ticket_id}/comments",
+    response_model=TicketCommentRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Добавить комментарий к запросу",
+)
+async def create_ticket_comment(
+    ticket_id: int,
+    payload: TicketCommentCreate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    ticket = await get_ticket_for_operator(ticket_id, db, current_user)
+    _require_confirmed_ticket_for_operator(ticket)
+
+    content = payload.content.strip()
+    if not content:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Comment must not be empty",
+        )
+
+    comment = TicketComment(
+        ticket_id=ticket.id,
+        author_id=current_user.id,
+        author_username=current_user.username,
+        author_role=current_user.role,
+        content=content,
+        internal=payload.internal,
+    )
+    db.add(comment)
+    await db.flush()
+    await db.refresh(comment)
+
+    await log_event(
+        db,
+        action="ticket.comment",
+        user_id=current_user.id,
+        target_type="ticket",
+        target_id=ticket.id,
+        request=request,
+        details={"internal": comment.internal},
+    )
+
+    return comment
+
+
+@router.patch(
+    "/{ticket_id}/feedback",
+    response_model=TicketRead,
+    summary="Оценить решение запроса",
+)
+async def submit_ticket_feedback(
+    ticket_id: int,
+    payload: TicketFeedbackPayload,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    ticket = await _load_ticket(ticket_id, db)
+    if ticket.user_id != current_user.id and current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Ticket not found",
+        )
+    if ticket.status not in {"resolved", "closed"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Feedback is available only for resolved or closed tickets",
+        )
+
+    ai_log = await _get_latest_ai_log(ticket.id, db)
+    if ai_log is None:
+        ai_log = AILog(
+            ticket_id=ticket.id,
+            model_version="manual",
+            predicted_category=ticket.ai_category or "неизвестно",
+            predicted_priority=ticket.ai_priority or "средний",
+            confidence_score=ticket.ai_confidence or 0.0,
+        )
+        db.add(ai_log)
+    ai_log.user_feedback = payload.feedback
+
+    reopened = False
+    if payload.feedback == "not_helped" and payload.reopen:
+        ticket.status = "confirmed"
+        ticket.confirmed_by_user = True
+        ticket.resolved_at = None
+        ticket.reopen_count += 1
+        start_ticket_sla(ticket)
+        await assign_agent(db, ticket)
+        reopened = True
+
+    await db.flush()
+    await db.refresh(ticket)
+
+    await log_event(
+        db,
+        action="ticket.feedback",
+        user_id=current_user.id,
+        target_type="ticket",
+        target_id=ticket.id,
+        request=request,
+        details={"feedback": payload.feedback, "reopened": reopened},
+    )
+
     return ticket
 
 

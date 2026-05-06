@@ -23,13 +23,15 @@ function MetricCard({
   label,
   value,
   hint,
+  tone = "neutral",
 }: {
   label: string;
   value: string | number;
   hint?: string;
+  tone?: "neutral" | "warning" | "success";
 }) {
   return (
-    <Paper className="metric-card" withBorder>
+    <Paper className={`metric-card ${tone}`} withBorder>
       <Text className="metric-label" size="xs" tt="uppercase" fw={700} c="dimmed">
         {label}
       </Text>
@@ -81,6 +83,10 @@ function BreakdownList({
 export function DashboardPage() {
   const stats = useStats();
   const data = stats.data;
+  const activeRequests =
+    (data?.tickets.by_status.confirmed ?? 0) +
+    (data?.tickets.by_status.in_progress ?? 0) +
+    (data?.tickets.by_status.ai_processing ?? 0);
 
   return (
     <div className="content-page dashboard-page">
@@ -90,7 +96,7 @@ export function DashboardPage() {
           <div>
             <Title order={2}>Обзор</Title>
             <Text size="sm" c="dimmed">
-              Живая статистика по запросам, маршрутизации и качеству ответов.
+              Живая статистика по запросам, SLA, маршрутизации и качеству ответов.
             </Text>
           </div>
         </div>
@@ -105,20 +111,31 @@ export function DashboardPage() {
           <Stack gap="lg">
             <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
               <MetricCard label="Всего запросов" value={data.tickets.total} />
+              <MetricCard label="Активно" value={activeRequests} />
+              <MetricCard
+                label="SLA просрочен"
+                value={data.tickets.sla_overdue_count}
+                hint="открытые запросы"
+                tone={data.tickets.sla_overdue_count > 0 ? "warning" : "success"}
+              />
+              <MetricCard
+                label="SLA эскалаций"
+                value={data.tickets.sla_escalated_count}
+                tone={data.tickets.sla_escalated_count > 0 ? "warning" : "neutral"}
+              />
+              <MetricCard
+                label="Повторно открыто"
+                value={data.tickets.reopen_count}
+              />
               <MetricCard
                 label="Обработано"
                 value={data.ai.total_processed}
-                hint="записей в журнале обработки"
+                hint="записей в журнале"
               />
               <MetricCard
                 label="Низкая уверенность"
                 value={data.ai.low_confidence_count}
                 hint="требуют проверки"
-              />
-              <MetricCard
-                label="SLA просрочен"
-                value={data.tickets.sla_overdue_count}
-                hint="открытые запросы"
               />
               <MetricCard
                 label="Роутинг"
@@ -156,6 +173,7 @@ export function DashboardPage() {
               <MetricCard
                 label="Решено без специалиста"
                 value={data.ai.resolved_by_ai_count}
+                tone="success"
               />
               <MetricCard
                 label="Помогло / не помогло"

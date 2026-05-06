@@ -12,6 +12,8 @@ from app.models.agent import Agent  # noqa: F401
 from app.models.conversation import Conversation  # noqa: F401
 from app.models.message import Message  # noqa: F401
 from app.models.ai_job import AIJob  # noqa: F401
+from app.models.knowledge_article import KnowledgeArticle  # noqa: F401
+from app.models.response_template import ResponseTemplate  # noqa: F401
 from app.models.ticket import Ticket  # noqa: F401
 from app.models.ticket_comment import TicketComment  # noqa: F401
 from app.models.response import Response  # noqa: F401

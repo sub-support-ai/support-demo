@@ -45,6 +45,7 @@ export function TicketsPage() {
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [departmentFilter, setDepartmentFilter] = useState<string | null>(null);
   const [slaFilter, setSlaFilter] = useState<string | null>(null);
+
   const role = me.data?.role;
   const title = role === "admin" || role === "agent" ? "Запросы" : "Мои запросы";
   const description =
@@ -53,6 +54,7 @@ export function TicketsPage() {
       : role === "agent"
         ? "Назначенные вам обращения. Подтвержденные запросы можно взять в работу или закрыть."
         : "Активные и отправленные обращения.";
+
   const visibleTickets = useMemo(() => {
     const query = search.trim().toLowerCase();
     return tickets.data?.filter((ticket) => {
@@ -65,6 +67,8 @@ export function TicketsPage() {
           ticket.requester_email,
           ticket.office,
           ticket.affected_item,
+          ticket.request_type,
+          ticket.request_details,
         ]
           .filter(Boolean)
           .some((value) => value!.toLowerCase().includes(query));
@@ -79,16 +83,19 @@ export function TicketsPage() {
     });
   }, [departmentFilter, search, slaFilter, statusFilter, tickets.data]);
 
+  const error = tickets.error || me.error;
+
   return (
     <div className="content-page">
       <Paper className="tickets-panel" withBorder>
-        <LoadingOverlay visible={tickets.isLoading} />
+        <LoadingOverlay visible={tickets.isLoading || me.isLoading} />
         <Title order={2} mb="xs">
           {title}
         </Title>
         <Text size="sm" c="dimmed" mb="md">
           {description}
         </Text>
+
         <Group className="ticket-filters" align="end" mb="md">
           <TextInput
             label="Поиск"
@@ -118,11 +125,13 @@ export function TicketsPage() {
             onChange={setSlaFilter}
           />
         </Group>
-        {tickets.error && (
+
+        {error && (
           <Alert color="red" variant="light" mb="md">
-            {getApiError(tickets.error)}
+            {getApiError(error)}
           </Alert>
         )}
+
         {!visibleTickets?.length && !tickets.isLoading ? (
           <div className="empty-state tickets">
             <Text fw={600}>

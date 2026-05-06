@@ -54,6 +54,29 @@ class TicketDraftUpdate(BaseModel):
     request_details: str | None = Field(default=None, max_length=2000)
 
 
+class TicketCommentCreate(BaseModel):
+    content: str = Field(min_length=1, max_length=4000)
+    internal: bool = True
+
+
+class TicketCommentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    ticket_id: int
+    author_id: int
+    author_username: str
+    author_role: str
+    content: str
+    internal: bool
+    created_at: datetime
+
+
+class TicketFeedbackPayload(BaseModel):
+    feedback: Literal["helped", "not_helped"]
+    reopen: bool = False
+
+
 class TicketRead(TicketBase):
     model_config = ConfigDict(from_attributes=True)
 
@@ -72,6 +95,12 @@ class TicketRead(TicketBase):
     request_details: str | None = None
     steps_tried: str | None = None
     confirmed_by_user: bool
+    sla_started_at: datetime | None = None
+    sla_deadline_at: datetime | None = None
+    sla_escalated_at: datetime | None = None
+    sla_escalation_count: int = 0
+    is_sla_breached: bool = False
+    reopen_count: int = 0
 
     ai_category: str | None = None
     # ai_priority в модели хранится как строка: "критический"|"высокий"|"средний"|"низкий"
@@ -82,24 +111,3 @@ class TicketRead(TicketBase):
     created_at: datetime
     updated_at: datetime | None = None
     resolved_at: datetime | None = None
-    sla_started_at: datetime | None = None
-    sla_deadline_at: datetime | None = None
-    is_sla_breached: bool = False
-
-
-class TicketCommentCreate(BaseModel):
-    content: str = Field(min_length=1, max_length=2000)
-    internal: bool = True
-
-
-class TicketCommentRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    ticket_id: int
-    author_id: int | None = None
-    author_username: str | None = None
-    author_role: str | None = None
-    content: str
-    internal: bool
-    created_at: datetime

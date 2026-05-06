@@ -313,6 +313,18 @@ export function PrefilledTicketPanel({
                 {ticket.body}
               </Text>
             </div>
+            {(ticket.request_type || ticket.request_details) && (
+              <div>
+                <Text size="xs" c="dimmed" fw={600}>
+                  Форма запроса
+                </Text>
+                <Text size="sm">
+                  {[ticket.request_type, ticket.request_details]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </Text>
+              </div>
+            )}
             {ticket.steps_tried && (
               <div>
                 <Text size="xs" c="dimmed" fw={600}>

@@ -45,31 +45,6 @@ async def seed_demo_agents() -> None:
         for item in DEMO_AGENTS:
             password_hash = hash_password(demo_password)
 
-            result = await db.execute(
-                select(Agent).where(Agent.email == item["email"])
-            )
-            agent = result.scalar_one_or_none()
-
-            if agent is None:
-                agent = Agent(
-                    email=item["email"],
-                    username=item["username"],
-                    hashed_password=password_hash,
-                    department=item["department"],
-                    ai_routing_score=item["ai_routing_score"],
-                    is_active=True,
-                    active_ticket_count=0,
-                )
-                db.add(agent)
-                agents_created += 1
-            else:
-                agent.username = item["username"]
-                agent.hashed_password = password_hash
-                agent.department = item["department"]
-                agent.ai_routing_score = item["ai_routing_score"]
-                agent.is_active = True
-                agents_updated += 1
-
             user_result = await db.execute(
                 select(User).where(
                     (User.email == item["email"]) | (User.username == item["username"])
@@ -93,6 +68,34 @@ async def seed_demo_agents() -> None:
                 user.role = "agent"
                 user.is_active = True
                 users_updated += 1
+            await db.flush()
+
+            result = await db.execute(
+                select(Agent).where(Agent.email == item["email"])
+            )
+            agent = result.scalar_one_or_none()
+
+            if agent is None:
+                agent = Agent(
+                    user_id=user.id,
+                    email=item["email"],
+                    username=item["username"],
+                    hashed_password=password_hash,
+                    department=item["department"],
+                    ai_routing_score=item["ai_routing_score"],
+                    is_active=True,
+                    active_ticket_count=0,
+                )
+                db.add(agent)
+                agents_created += 1
+            else:
+                agent.user_id = user.id
+                agent.username = item["username"]
+                agent.hashed_password = password_hash
+                agent.department = item["department"]
+                agent.ai_routing_score = item["ai_routing_score"]
+                agent.is_active = True
+                agents_updated += 1
 
         await db.commit()
 

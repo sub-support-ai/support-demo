@@ -107,7 +107,10 @@ class Ticket(Base):
     )
     resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     sla_started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    sla_deadline_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    sla_deadline_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    sla_escalated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    sla_escalation_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    reopen_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     user: Mapped["User"] = relationship("User", back_populates="tickets")
     agent: Mapped[Optional["Agent"]] = relationship("Agent", back_populates="tickets")
@@ -117,7 +120,9 @@ class Ticket(Base):
     responses: Mapped[list["Response"]] = relationship("Response", back_populates="ticket")
     logs: Mapped[list["AILog"]] = relationship("AILog", back_populates="ticket")
     comments: Mapped[list["TicketComment"]] = relationship(
-        "TicketComment", back_populates="ticket", cascade="all, delete-orphan"
+        "TicketComment",
+        back_populates="ticket",
+        cascade="all, delete-orphan",
     )
 
     @property

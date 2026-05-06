@@ -11,6 +11,7 @@ from app.rate_limit import rate_limit
 from app.schemas.auth import TokenResponse, UserMe
 from app.schemas.user import UserCreate
 from app.security import create_access_token, hash_password, verify_password
+from app.services.agents import get_active_agent_for_user
 from app.services.audit import log_event
 from app.services.request_context import build_request_context
 
@@ -154,13 +155,22 @@ async def register(
 
 # ── GET /auth/me — кто я? ─────────────────────────────────────────────────────
 @router.get("/me", response_model=UserMe)
-async def get_me(current_user: User = Depends(get_current_user)):
+async def get_me(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """Вернуть данные текущего авторизованного пользователя."""
+    agent = None
+    if current_user.role == "agent":
+        agent = await get_active_agent_for_user(db, current_user)
+
     return UserMe(
         id=current_user.id,
         email=current_user.email,
         username=current_user.username,
         role=current_user.role,
         is_active=current_user.is_active,
+        agent_id=agent.id if agent else None,
+        agent_department=agent.department if agent else None,
         request_context=build_request_context(current_user),
     )

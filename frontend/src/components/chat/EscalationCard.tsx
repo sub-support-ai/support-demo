@@ -7,7 +7,7 @@ import {
   Text,
   TextInput,
 } from "@mantine/core";
-import { IconArrowRight, IconAlertTriangle } from "@tabler/icons-react";
+import { IconAlertTriangle, IconArrowRight } from "@tabler/icons-react";
 import { useEffect, useMemo, useState } from "react";
 
 import type { EscalationContext, RequestContextDefaults } from "../../api/types";
@@ -64,6 +64,7 @@ const REQUEST_TYPES = [
   {
     value: "other",
     label: "Другое",
+    affectedItem: "",
     detailsLabel: "Уточнение",
     detailsPlaceholder: "Опишите, какой тип запроса нужно передать специалисту",
   },
@@ -112,7 +113,7 @@ export function EscalationCard({
 
   useEffect(() => {
     if (selectedRequestType?.affectedItem) {
-      setAffectedItem((current) => current || selectedRequestType.affectedItem || null);
+      setAffectedItem((current) => current || selectedRequestType.affectedItem);
     }
   }, [selectedRequestType]);
 
@@ -126,7 +127,10 @@ export function EscalationCard({
 
   const affectedItemOptions = useMemo(() => {
     return toSelectOptions(
-      contextDefaults?.affected_item_options ?? DEFAULT_AFFECTED_ITEM_OPTIONS,
+      [
+        ...(contextDefaults?.affected_item_options ?? DEFAULT_AFFECTED_ITEM_OPTIONS),
+        ...REQUEST_TYPES.map((item) => item.affectedItem),
+      ],
       "Другое",
     );
   }, [contextDefaults]);

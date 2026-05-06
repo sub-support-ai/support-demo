@@ -18,6 +18,7 @@ from sqlalchemy import select
 from app.models.agent import Agent
 from app.models.user import User
 from app.security import hash_password
+from app.services.agents import get_active_agent_for_user
 
 
 # ── Вспомогательные функции ────────────────────────────────────────────────────
@@ -45,15 +46,6 @@ async def create_test_agent(
 ) -> Agent:
     """Создаёт агента напрямую в БД."""
     password_hash = hash_password("Secret123!")
-    agent = Agent(
-        email=f"agent{suffix}@example.com",
-        username=f"agent{suffix}",
-        hashed_password=password_hash,
-        department=department,
-        active_ticket_count=active_count,
-        ai_routing_score=routing_score,
-        is_active=True,
-    )
     agent_user = User(
         email=f"agent{suffix}@example.com",
         username=f"agent{suffix}",
@@ -62,6 +54,18 @@ async def create_test_agent(
         is_active=True,
     )
     db.add(agent_user)
+    await db.flush()
+
+    agent = Agent(
+        user_id=agent_user.id,
+        email=f"agent{suffix}@example.com",
+        username=f"agent{suffix}",
+        hashed_password=password_hash,
+        department=department,
+        active_ticket_count=active_count,
+        ai_routing_score=routing_score,
+        is_active=True,
+    )
     db.add(agent)
     await db.flush()
     await db.refresh(agent)
@@ -86,6 +90,33 @@ async def login_token(client: AsyncClient, username: str) -> str:
     )
     assert response.status_code == 200
     return response.json()["access_token"]
+
+
+@pytest.mark.asyncio
+async def test_active_agent_lookup_uses_user_id(db_session: AsyncSession):
+    password_hash = hash_password("Secret123!")
+    agent_user = User(
+        email="agent-link-user@example.com",
+        username="agent_link_user",
+        hashed_password=password_hash,
+        role="agent",
+        is_active=True,
+    )
+    db_session.add(agent_user)
+    await db_session.flush()
+
+    agent = Agent(
+        user_id=agent_user.id,
+        email="legacy-agent-record@example.com",
+        username="legacy_agent_record",
+        hashed_password=password_hash,
+        department="IT",
+        is_active=True,
+    )
+    db_session.add(agent)
+    await db_session.flush()
+
+    assert await get_active_agent_for_user(db_session, agent_user) == agent
 
 
 # ── Тест 1: агент назначается при создании тикета ─────────────────────────────

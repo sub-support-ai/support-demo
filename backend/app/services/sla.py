@@ -1,48 +1,54 @@
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
-from app.models.ticket import Ticket
-
-OPEN_STATUSES = {"new", "pending_user", "confirmed", "in_progress", "ai_processing"}
-
+OPEN_STATUSES = {"confirmed", "in_progress"}
 SLA_HOURS_BY_PRIORITY = {
     "критический": 4,
     "высокий": 8,
     "средний": 24,
     "низкий": 72,
 }
+DEFAULT_SLA_HOURS = 24
 
 
-def _now() -> datetime:
+def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _normalize_priority(ticket: Ticket) -> str:
-    if ticket.ai_priority:
-        return ticket.ai_priority.lower()
-    if ticket.user_priority <= 2:
-        return "высокий"
-    if ticket.user_priority == 3:
-        return "средний"
-    return "низкий"
+def _normalize_priority(ticket: Any) -> str:
+    priority = getattr(ticket, "ai_priority", None)
+    if isinstance(priority, str) and priority.strip():
+        return priority.strip().lower()
+    user_priority = getattr(ticket, "user_priority", None)
+    if isinstance(user_priority, int):
+        if user_priority <= 2:
+            return "высокий"
+        if user_priority == 3:
+            return "средний"
+        return "низкий"
+    return "средний"
 
 
-def get_sla_hours(ticket: Ticket) -> int:
-    return SLA_HOURS_BY_PRIORITY.get(_normalize_priority(ticket), 24)
+def get_sla_hours(ticket: Any) -> int:
+    priority = _normalize_priority(ticket)
+    return SLA_HOURS_BY_PRIORITY.get(priority, DEFAULT_SLA_HOURS)
 
 
-def start_ticket_sla(ticket: Ticket, started_at: datetime | None = None) -> None:
-    start = started_at or _now()
-    ticket.sla_started_at = start
-    ticket.sla_deadline_at = start + timedelta(hours=get_sla_hours(ticket))
+def start_ticket_sla(ticket: Any, started_at: datetime | None = None) -> None:
+    started = started_at or _utc_now()
+    ticket.sla_started_at = started
+    ticket.sla_deadline_at = started + timedelta(hours=get_sla_hours(ticket))
+    if hasattr(ticket, "sla_escalated_at"):
+        ticket.sla_escalated_at = None
 
 
-def _as_aware(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value
-
-
-def is_sla_breached(ticket: Ticket, now: datetime | None = None) -> bool:
-    if ticket.status not in OPEN_STATUSES or ticket.sla_deadline_at is None:
+def is_sla_breached(ticket: Any, now: datetime | None = None) -> bool:
+    deadline = getattr(ticket, "sla_deadline_at", None)
+    status = getattr(ticket, "status", None)
+    if deadline is None or status not in OPEN_STATUSES:
         return False
-    return _as_aware(ticket.sla_deadline_at) < (now or _now())
+
+    current_time = now or _utc_now()
+    if deadline.tzinfo is None:
+        current_time = current_time.replace(tzinfo=None)
+    return deadline < current_time

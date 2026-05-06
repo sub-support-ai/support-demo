@@ -2,11 +2,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "./client";
 import type {
-  TicketComment,
-  TicketCommentCreate,
   ResolveTicketPayload,
   Ticket,
+  TicketComment,
+  TicketCommentCreate,
   TicketDraftUpdate,
+  TicketFeedbackPayload,
   TicketStatusUpdate,
 } from "./types";
 
@@ -15,7 +16,7 @@ function updateTicketInCache(
   ticket: Ticket,
 ) {
   queryClient.setQueryData<Ticket[]>(["tickets"], (current) =>
-    current?.map((item) => (item.id === ticket.id ? ticket : item)),
+    current?.map((item) => (item.id === ticket.id ? ticket : item)) ?? current,
   );
   queryClient.setQueryData(["tickets", ticket.id], ticket);
 }
@@ -38,10 +39,9 @@ export function useConfirmTicket() {
       return data;
     },
     onSuccess: (ticket) => {
+      updateTicketInCache(queryClient, ticket);
       queryClient.invalidateQueries({ queryKey: ["tickets"] });
-      queryClient.invalidateQueries({
-        queryKey: ["tickets", ticket.id],
-      });
+      queryClient.invalidateQueries({ queryKey: ["stats"] });
     },
   });
 }
@@ -63,45 +63,8 @@ export function useUpdateTicketDraft() {
       return data;
     },
     onSuccess: (ticket) => {
+      updateTicketInCache(queryClient, ticket);
       queryClient.invalidateQueries({ queryKey: ["tickets"] });
-      queryClient.invalidateQueries({
-        queryKey: ["tickets", ticket.id],
-      });
-    },
-  });
-}
-
-export function useTicketComments(ticketId: number, enabled: boolean) {
-  return useQuery({
-    queryKey: ["tickets", ticketId, "comments"],
-    enabled,
-    queryFn: async () => {
-      const { data } = await api.get<TicketComment[]>(`/tickets/${ticketId}/comments`);
-      return data;
-    },
-  });
-}
-
-export function useCreateTicketComment() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async ({
-      ticketId,
-      payload,
-    }: {
-      ticketId: number;
-      payload: TicketCommentCreate;
-    }) => {
-      const { data } = await api.post<TicketComment>(
-        `/tickets/${ticketId}/comments`,
-        payload,
-      );
-      return data;
-    },
-    onSuccess: (comment) => {
-      queryClient.invalidateQueries({
-        queryKey: ["tickets", comment.ticket_id, "comments"],
-      });
     },
   });
 }
@@ -139,6 +102,67 @@ export function useResolveTicket() {
     }) => {
       const { data } = await api.patch<Ticket>(
         `/tickets/${ticketId}/resolve`,
+        payload,
+      );
+      return data;
+    },
+    onSuccess: (ticket) => {
+      updateTicketInCache(queryClient, ticket);
+      queryClient.invalidateQueries({ queryKey: ["tickets"] });
+      queryClient.invalidateQueries({ queryKey: ["stats"] });
+    },
+  });
+}
+
+export function useTicketComments(ticketId?: number, enabled = false) {
+  return useQuery({
+    queryKey: ["tickets", ticketId, "comments"],
+    enabled: Boolean(ticketId) && enabled,
+    queryFn: async () => {
+      const { data } = await api.get<TicketComment[]>(
+        `/tickets/${ticketId}/comments`,
+      );
+      return data;
+    },
+  });
+}
+
+export function useCreateTicketComment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      ticketId,
+      payload,
+    }: {
+      ticketId: number;
+      payload: TicketCommentCreate;
+    }) => {
+      const { data } = await api.post<TicketComment>(
+        `/tickets/${ticketId}/comments`,
+        payload,
+      );
+      return data;
+    },
+    onSuccess: (comment) => {
+      queryClient.invalidateQueries({
+        queryKey: ["tickets", comment.ticket_id, "comments"],
+      });
+    },
+  });
+}
+
+export function useSubmitTicketFeedback() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      ticketId,
+      payload,
+    }: {
+      ticketId: number;
+      payload: TicketFeedbackPayload;
+    }) => {
+      const { data } = await api.patch<Ticket>(
+        `/tickets/${ticketId}/feedback`,
         payload,
       );
       return data;

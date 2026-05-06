@@ -36,6 +36,7 @@ from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.ai_log import AILog
 from app.models.conversation import Conversation
+from app.models.knowledge_article import KnowledgeArticleFeedback
 from app.models.message import Message
 from app.models.ticket import Ticket
 from app.models.user import User
@@ -108,6 +109,9 @@ class SourceRead(BaseModel):
     """Источник из RAG, на который опирался AI при ответе."""
     title: str
     url: str | None = None
+    article_id: int | None = None
+    score: float | None = None
+    decision: str | None = None
 
 
 class MessageRead(BaseModel):
@@ -404,7 +408,6 @@ async def escalate_conversation(
     for m in messages:
         prefix = "Пользователь" if m.role == "user" else "AI"
         body_parts.append(f"{prefix}: {m.content}")
-    body = "\n\n".join(body_parts)
 
     # Классифицируем
     ai_result = await classify_ticket(
@@ -435,7 +438,14 @@ async def escalate_conversation(
     affected_item = clean_optional_text(payload.context.affected_item)
     request_type = clean_optional_text(payload.context.request_type)
     request_details = clean_optional_text(payload.context.request_details)
-    context_body = build_context_block(
+
+    form_lines: list[str] = []
+    if request_type:
+        form_lines.append(f"Тип запроса: {request_type}")
+    if request_details:
+        form_lines.append(f"Уточнение формы: {request_details}")
+
+    body = build_context_block(
         requester_name=requester_name,
         requester_email=requester_email,
         office=office,
@@ -443,14 +453,9 @@ async def escalate_conversation(
         creator_name=current_user.username,
         creator_email=current_user.email,
     )
-    form_lines = []
-    if request_type:
-        form_lines.append(f"Тип запроса: {request_type}")
-    if request_details:
-        form_lines.append(f"Уточнение формы: {request_details}")
     if form_lines:
-        context_body += "\n" + "\n".join(form_lines)
-    body = context_body + "\n\n" + body
+        body += "\n\nФорма запроса:\n" + "\n".join(form_lines)
+    body += "\n\n" + "\n\n".join(body_parts)
 
     settings = get_settings()
     ticket = Ticket(
@@ -479,6 +484,17 @@ async def escalate_conversation(
     )
     db.add(ticket)
     await db.flush()
+
+    feedback_result = await db.execute(
+        select(KnowledgeArticleFeedback)
+        .where(
+            KnowledgeArticleFeedback.conversation_id == conversation_id,
+            KnowledgeArticleFeedback.escalated_ticket_id.is_(None),
+        )
+        .order_by(KnowledgeArticleFeedback.created_at.desc(), KnowledgeArticleFeedback.id.desc())
+    )
+    for feedback in feedback_result.scalars().all():
+        feedback.escalated_ticket_id = ticket.id
 
     # Назначаем агента сразу — даже на pending_user тикет, чтобы старший
     # уже мог посмотреть на черновик и при подтверждении взять в работу.
@@ -522,6 +538,7 @@ async def escalate_conversation(
             "ai_confidence": ticket.ai_confidence,
             "office": ticket.office,
             "affected_item": ticket.affected_item,
+            "request_type": ticket.request_type,
         },
     )
 
@@ -702,8 +719,8 @@ def _should_offer_support_draft(messages: list[dict[str, str]]) -> bool:
 def _build_intake_answer() -> str:
     return (
         "Соберу данные для черновика обращения. Из истории возьму описание проблемы "
-        "и уже упомянутые действия. Уточните заявителя, офис и затронутый объект; "
-        "после этого сформирую черновик для специалиста."
+        "и уже упомянутые действия. Уточните тип запроса, заявителя, офис, затронутый объект "
+        "и конкретные детали по форме; после этого сформирую черновик для специалиста."
     )
 
 

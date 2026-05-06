@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent import Agent
+from app.models.ai_log import AILog
 from app.models.ticket import Ticket
 from app.models.user import User
 from app.security import hash_password
@@ -39,6 +40,33 @@ async def register_user(client: AsyncClient, suffix: str = "") -> tuple[int, str
         headers={"Authorization": f"Bearer {token}"},
     )
     assert me.status_code == 200
+    return me.json()["id"], token
+
+
+async def register_admin(client: AsyncClient, suffix: str = "") -> tuple[int, str]:
+    from app.config import get_settings
+
+    settings = get_settings()
+    admin_email = f"ticketadmin{suffix}@example.com"
+    previous_bootstrap_email = settings.BOOTSTRAP_ADMIN_EMAIL
+    settings.BOOTSTRAP_ADMIN_EMAIL = admin_email
+    try:
+        response = await client.post("/api/v1/auth/register", json={
+            "email": admin_email,
+            "username": f"ticketadmin{suffix}",
+            "password": "Secret123!",
+        })
+    finally:
+        settings.BOOTSTRAP_ADMIN_EMAIL = previous_bootstrap_email
+    assert response.status_code == 201
+    token = response.json()["access_token"]
+
+    me = await client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert me.status_code == 200
+    assert me.json()["role"] == "admin"
     return me.json()["id"], token
 
 
@@ -816,3 +844,132 @@ async def test_user_cannot_update_ticket_status_after_confirm(client: AsyncClien
     )
 
     assert update.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_confirm_ticket_sets_sla_deadline(client: AsyncClient):
+    _, token = await register_user(client, suffix="sla")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    create = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "не работает VPN",
+            "body": "ошибка подключения",
+            "user_priority": 3,
+            "office": "HQ",
+            "affected_item": "VPN",
+        },
+        headers=headers,
+    )
+    assert create.status_code == 201
+
+    confirm = await client.patch(
+        f"/api/v1/tickets/{create.json()['id']}/confirm",
+        headers=headers,
+    )
+
+    assert confirm.status_code == 200
+    data = confirm.json()
+    assert data["sla_started_at"] is not None
+    assert data["sla_deadline_at"] is not None
+    assert data["is_sla_breached"] is False
+
+
+@pytest.mark.asyncio
+async def test_admin_can_add_comment_to_confirmed_ticket(client: AsyncClient):
+    _, user_token = await register_user(client, suffix="comment")
+    _, admin_token = await register_admin(client, suffix="comment")
+    user_headers = {"Authorization": f"Bearer {user_token}"}
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+    create = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "сломано оборудование",
+            "body": "не включается монитор",
+            "user_priority": 3,
+            "office": "HQ",
+            "affected_item": "Монитор",
+        },
+        headers=user_headers,
+    )
+    assert create.status_code == 201
+    ticket_id = create.json()["id"]
+
+    confirm = await client.patch(
+        f"/api/v1/tickets/{ticket_id}/confirm",
+        headers=user_headers,
+    )
+    assert confirm.status_code == 200
+
+    comment = await client.post(
+        f"/api/v1/tickets/{ticket_id}/comments",
+        json={"content": "Взяли в диагностику", "internal": True},
+        headers=admin_headers,
+    )
+    assert comment.status_code == 201
+    assert comment.json()["content"] == "Взяли в диагностику"
+
+    comments = await client.get(
+        f"/api/v1/tickets/{ticket_id}/comments",
+        headers=admin_headers,
+    )
+    assert comments.status_code == 200
+    assert len(comments.json()) == 1
+
+
+@pytest.mark.asyncio
+async def test_negative_feedback_can_reopen_closed_ticket(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    _, user_token = await register_user(client, suffix="reopen")
+    _, admin_token = await register_admin(client, suffix="reopen")
+    user_headers = {"Authorization": f"Bearer {user_token}"}
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+    create = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "не работает почта",
+            "body": "письма не отправляются",
+            "user_priority": 3,
+            "office": "HQ",
+            "affected_item": "Почта",
+        },
+        headers=user_headers,
+    )
+    assert create.status_code == 201
+    ticket_id = create.json()["id"]
+    assert (await client.patch(
+        f"/api/v1/tickets/{ticket_id}/confirm",
+        headers=user_headers,
+    )).status_code == 200
+
+    resolve = await client.patch(
+        f"/api/v1/tickets/{ticket_id}/resolve",
+        json={"agent_accepted_ai_response": False},
+        headers=admin_headers,
+    )
+    assert resolve.status_code == 200
+    assert resolve.json()["status"] == "closed"
+
+    feedback = await client.patch(
+        f"/api/v1/tickets/{ticket_id}/feedback",
+        json={"feedback": "not_helped", "reopen": True},
+        headers=user_headers,
+    )
+    assert feedback.status_code == 200
+    data = feedback.json()
+    assert data["status"] == "confirmed"
+    assert data["reopen_count"] == 1
+    assert data["resolved_at"] is None
+
+    result = await db_session.execute(
+        select(AILog)
+        .where(AILog.ticket_id == ticket_id)
+        .order_by(AILog.id.desc())
+        .limit(1)
+    )
+    assert result.scalar_one().user_feedback == "not_helped"

@@ -15,13 +15,14 @@ import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import func, select, case
+from sqlalchemy import func, select, case, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.ticket import Ticket
 from app.models.ai_log import AILog
+from app.models.conversation import Conversation
 from app.models.user import User
 from app.schemas.stats import StatsResponse, TicketStats, AIStats
 from app.services.agents import get_active_agent_for_user
@@ -96,19 +97,33 @@ async def get_stats(
         .select_from(Ticket)
         .where(
             *ticket_filters,
-            Ticket.status.in_(OPEN_STATUSES),
+            Ticket.status.in_(tuple(OPEN_STATUSES)),
             Ticket.sla_deadline_at.is_not(None),
             Ticket.sla_deadline_at < datetime.now(timezone.utc),
         )
     )
-    sla_overdue_count = sla_overdue_result.scalar() or 0
+    reopen_result = await db.execute(
+        select(func.coalesce(func.sum(Ticket.reopen_count), 0))
+        .select_from(Ticket)
+        .where(*ticket_filters)
+    )
+    sla_escalated_result = await db.execute(
+        select(func.count())
+        .select_from(Ticket)
+        .where(
+            *ticket_filters,
+            Ticket.sla_escalated_at.is_not(None),
+        )
+    )
 
     ticket_stats = TicketStats(
         total=total_tickets,
         by_status=by_status,
         by_department=by_department,
         by_source=by_source,
-        sla_overdue_count=sla_overdue_count,
+        sla_overdue_count=sla_overdue_result.scalar() or 0,
+        sla_escalated_count=sla_escalated_result.scalar() or 0,
+        reopen_count=reopen_result.scalar() or 0,
     )
 
     # ── Статистика AI ─────────────────────────────────────────────────────────
@@ -147,11 +162,25 @@ async def get_stats(
                 case((AILog.user_feedback == "not_helped", 1), else_=0)
             ).label("feedback_not_helped"),
     )
-    if ticket_filters:
+    if current_user.role == "admin":
+        pass
+    elif current_user.role == "agent":
         ai_stats_query = (
             ai_stats_query
             .join(Ticket, AILog.ticket_id == Ticket.id)
             .where(*ticket_filters)
+        )
+    else:
+        ai_stats_query = (
+            ai_stats_query
+            .outerjoin(Ticket, AILog.ticket_id == Ticket.id)
+            .outerjoin(Conversation, AILog.conversation_id == Conversation.id)
+            .where(
+                or_(
+                    Ticket.user_id == current_user.id,
+                    Conversation.user_id == current_user.id,
+                )
+            )
         )
     ai_result = await db.execute(ai_stats_query)
     ai_row = ai_result.one()

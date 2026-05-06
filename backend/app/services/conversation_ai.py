@@ -5,8 +5,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
+from app.models.ai_log import AILog
 from app.models.conversation import Conversation
+from app.models.knowledge_article import KnowledgeArticle, KnowledgeArticleFeedback
 from app.models.message import Message
+from app.services.knowledge_base import find_knowledge_answer
 
 logger = logging.getLogger(__name__)
 
@@ -132,16 +135,21 @@ async def generate_ai_message(db: AsyncSession, conversation_id: int) -> Message
         raise ValueError(f"Conversation {conversation_id} is already escalated")
 
     history = await load_history_for_ai(db, conversation_id)
-    ai_payload = await get_ai_answer(conversation_id, history)
+    if should_offer_support_draft(history):
+        ai_payload = {
+            "answer": build_intake_answer(),
+            "confidence": 0.5,
+            "escalate": True,
+            "sources": [],
+            "model_version": "intake-rules-v1",
+        }
+    else:
+        ai_payload = await find_knowledge_answer(db, history)
+        if ai_payload is None:
+            ai_payload = await get_ai_answer(conversation_id, history)
 
     confidence = ai_payload.get("confidence")
     escalate = bool(ai_payload.get("escalate"))
-    if should_offer_support_draft(history):
-        ai_payload["answer"] = build_intake_answer()
-        ai_payload["escalate"] = True
-        confidence = min(float(confidence or 1.0), 0.5)
-        ai_payload["confidence"] = confidence
-        escalate = True
 
     requires_escalation = (
         escalate
@@ -160,6 +168,38 @@ async def generate_ai_message(db: AsyncSession, conversation_id: int) -> Message
     db.add(ai_message)
     if conversation.status == "ai_processing":
         conversation.status = "active"
+
+    await db.flush()
+
+    if ai_payload.get("knowledge_article_id") is not None:
+        article = await db.get(KnowledgeArticle, int(ai_payload["knowledge_article_id"]))
+        if article is not None:
+            article.view_count += 1
+            db.add(
+                KnowledgeArticleFeedback(
+                    article_id=article.id,
+                    conversation_id=conversation_id,
+                    message_id=ai_message.id,
+                    user_id=conversation.user_id,
+                    query=ai_payload.get("knowledge_query") or "",
+                    score=float(ai_payload.get("knowledge_score") or 0.0),
+                    decision=ai_payload.get("knowledge_decision") or "answer",
+                )
+            )
+        db.add(
+            AILog(
+                ticket_id=None,
+                conversation_id=conversation_id,
+                model_version=ai_payload.get("model_version") or "knowledge-base-v1",
+                predicted_category="knowledge_base",
+                predicted_priority="низкий",
+                confidence_score=float(confidence or 0.0),
+                routed_to_agent_id=None,
+                ai_response_draft=ai_payload.get("answer"),
+                ai_response_time_ms=0,
+                outcome="resolved_by_ai",
+            )
+        )
 
     await db.flush()
     await db.refresh(ai_message)
@@ -194,6 +234,7 @@ def should_offer_support_draft(messages: list[dict[str, str]]) -> bool:
 def build_intake_answer() -> str:
     return (
         "Соберу данные для черновика обращения. Из истории возьму описание проблемы "
-        "и уже упомянутые действия. Уточните заявителя, офис и затронутый объект; "
+        "и уже упомянутые действия. Уточните тип запроса, заявителя, офис, затронутый объект "
+        "и конкретные детали по форме; "
         "после этого сформирую черновик для специалиста."
     )

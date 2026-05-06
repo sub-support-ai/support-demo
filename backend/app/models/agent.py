@@ -1,7 +1,7 @@
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -9,6 +9,7 @@ from app.database import Base
 if TYPE_CHECKING:
     # Только для статической типизации (избегаем циклических импортов на runtime)
     from app.models.ticket import Ticket
+    from app.models.user import User
 
 
 class Agent(Base):
@@ -32,6 +33,13 @@ class Agent(Base):
     __tablename__ = "agents"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        unique=True,
+        index=True,
+    )
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     username: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -48,3 +56,4 @@ class Agent(Base):
     )
 
     tickets: Mapped[list["Ticket"]] = relationship("Ticket", back_populates="agent")
+    user: Mapped[Optional["User"]] = relationship("User", back_populates="agent_profile")

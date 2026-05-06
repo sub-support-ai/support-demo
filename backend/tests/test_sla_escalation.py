@@ -1,0 +1,153 @@
+from datetime import datetime, timedelta, timezone
+
+import pytest
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.agent import Agent
+from app.models.ticket import Ticket
+from app.models.ticket_comment import TicketComment
+from app.models.user import User
+from app.security import hash_password
+from app.services.sla_escalation import escalate_overdue_tickets
+
+
+async def _create_user(db: AsyncSession, suffix: str, role: str = "user") -> User:
+    user = User(
+        email=f"sla-{suffix}@example.com",
+        username=f"sla_{suffix}",
+        hashed_password=hash_password("Secret123!"),
+        role=role,
+        is_active=True,
+    )
+    db.add(user)
+    await db.flush()
+    return user
+
+
+async def _create_agent(
+    db: AsyncSession,
+    suffix: str,
+    *,
+    routing_score: float,
+    active_ticket_count: int,
+    department: str = "IT",
+) -> Agent:
+    user = await _create_user(db, f"agent-{suffix}", role="agent")
+    agent = Agent(
+        user_id=user.id,
+        email=user.email,
+        username=user.username,
+        hashed_password=user.hashed_password,
+        department=department,
+        ai_routing_score=routing_score,
+        active_ticket_count=active_ticket_count,
+        is_active=True,
+    )
+    db.add(agent)
+    await db.flush()
+    return agent
+
+
+@pytest.mark.asyncio
+async def test_sla_escalation_reassigns_overdue_ticket_to_senior_agent(
+    db_session: AsyncSession,
+):
+    now = datetime.now(timezone.utc)
+    requester = await _create_user(db_session, "requester")
+    regular_agent = await _create_agent(
+        db_session,
+        "regular",
+        routing_score=0.25,
+        active_ticket_count=1,
+    )
+    senior_agent = await _create_agent(
+        db_session,
+        "senior",
+        routing_score=0.95,
+        active_ticket_count=0,
+    )
+    ticket = Ticket(
+        user_id=requester.id,
+        agent_id=regular_agent.id,
+        title="Overdue equipment request",
+        body="Monitor is not working",
+        requester_name=requester.username,
+        requester_email=requester.email,
+        office="HQ",
+        affected_item="Monitor",
+        department="IT",
+        status="confirmed",
+        ticket_source="ai_generated",
+        confirmed_by_user=True,
+        user_priority=3,
+        ai_priority="high",
+        ai_confidence=0.9,
+        sla_started_at=now - timedelta(hours=10),
+        sla_deadline_at=now - timedelta(hours=1),
+    )
+    db_session.add(ticket)
+    await db_session.flush()
+
+    escalated = await escalate_overdue_tickets(db_session, now=now)
+
+    assert escalated == 1
+    assert ticket.agent_id == senior_agent.id
+    assert ticket.sla_escalated_at == now
+    assert ticket.sla_escalation_count == 1
+
+    await db_session.refresh(regular_agent)
+    await db_session.refresh(senior_agent)
+    assert regular_agent.active_ticket_count == 0
+    assert senior_agent.active_ticket_count == 1
+
+    comments = (
+        await db_session.execute(
+            select(TicketComment).where(TicketComment.ticket_id == ticket.id)
+        )
+    ).scalars().all()
+    assert len(comments) == 1
+    assert comments[0].author_role == "system"
+    assert comments[0].internal is True
+    assert "SLA просрочен" in comments[0].content
+    assert senior_agent.username in comments[0].content
+
+    assert await escalate_overdue_tickets(db_session, now=now) == 0
+
+
+@pytest.mark.asyncio
+async def test_sla_escalation_skips_unconfirmed_drafts(db_session: AsyncSession):
+    now = datetime.now(timezone.utc)
+    requester = await _create_user(db_session, "draft-requester")
+    agent = await _create_agent(
+        db_session,
+        "draft-agent",
+        routing_score=0.95,
+        active_ticket_count=0,
+    )
+    ticket = Ticket(
+        user_id=requester.id,
+        agent_id=agent.id,
+        title="Draft request",
+        body="User has not confirmed this request yet",
+        requester_name=requester.username,
+        requester_email=requester.email,
+        office="HQ",
+        affected_item="Laptop",
+        department="IT",
+        status="pending_user",
+        ticket_source="ai_generated",
+        confirmed_by_user=False,
+        user_priority=3,
+        ai_priority="high",
+        ai_confidence=0.9,
+        sla_started_at=now - timedelta(hours=10),
+        sla_deadline_at=now - timedelta(hours=1),
+    )
+    db_session.add(ticket)
+    await db_session.flush()
+
+    assert await escalate_overdue_tickets(db_session, now=now) == 0
+    assert ticket.agent_id == agent.id
+    assert ticket.sla_escalated_at is None
+    assert ticket.sla_escalation_count == 0

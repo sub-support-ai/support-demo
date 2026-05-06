@@ -23,4 +23,6 @@ class UserMe(BaseModel):
     username: str
     role: str
     is_active: bool
+    agent_id: int | None = None
+    agent_department: str | None = None
     request_context: RequestContextDefaults | None = None
