@@ -6,18 +6,24 @@
   Paper,
   Stack,
   Text,
+  Textarea,
   Title,
 } from "@mantine/core";
-import { IconCheck, IconPlayerPlay } from "@tabler/icons-react";
+import { IconCheck, IconMessageCircle, IconPlayerPlay } from "@tabler/icons-react";
+import { useState } from "react";
 
 import { getApiError } from "../../api/client";
-import { useResolveTicket, useUpdateTicketStatus } from "../../api/tickets";
+import {
+  useCreateTicketComment,
+  useResolveTicket,
+  useTicketComments,
+  useUpdateTicketStatus,
+} from "../../api/tickets";
 import type { Ticket, UserRole } from "../../api/types";
 import {
   getStatusLabel,
   getTicketPriorityLabel,
 } from "../../lib/ticketLabels";
-import { ConfidenceBadge } from "../chat/ConfidenceBadge";
 
 function getCorrectionLagSeconds(createdAt: string): number {
   const createdTime = new Date(createdAt).getTime();
@@ -25,6 +31,22 @@ function getCorrectionLagSeconds(createdAt: string): number {
     return 0;
   }
   return Math.max(0, Math.round((Date.now() - createdTime) / 1000));
+}
+
+function formatDateTime(value?: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return new Intl.DateTimeFormat("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
 }
 
 export function TicketCard({
@@ -36,13 +58,33 @@ export function TicketCard({
 }) {
   const updateStatus = useUpdateTicketStatus();
   const resolveTicket = useResolveTicket();
+  const createComment = useCreateTicketComment();
+  const [commentsOpen, setCommentsOpen] = useState(false);
+  const [commentText, setCommentText] = useState("");
+  const comments = useTicketComments(ticket.id, commentsOpen);
   const canOperate =
     (currentUserRole === "agent" || currentUserRole === "admin") &&
     ticket.status !== "pending_user" &&
     ticket.confirmed_by_user &&
     ticket.status !== "closed" &&
     ticket.status !== "resolved";
-  const mutationError = updateStatus.error ?? resolveTicket.error;
+  const canComment = (currentUserRole === "agent" || currentUserRole === "admin") &&
+    ticket.confirmed_by_user;
+  const mutationError =
+    updateStatus.error ?? resolveTicket.error ?? createComment.error ?? comments.error;
+  const slaDeadline = formatDateTime(ticket.sla_deadline_at);
+
+  async function handleCreateComment() {
+    const content = commentText.trim();
+    if (!content) {
+      return;
+    }
+    await createComment.mutateAsync({
+      ticketId: ticket.id,
+      payload: { content, internal: true },
+    });
+    setCommentText("");
+  }
 
   return (
     <Paper className="ticket-card" withBorder>
@@ -66,10 +108,13 @@ export function TicketCard({
         <Group gap="xs">
           <Badge variant="light">{ticket.department}</Badge>
           <Badge variant="light">{getTicketPriorityLabel(ticket)}</Badge>
-          {ticket.ai_confidence !== null &&
-            ticket.ai_confidence !== undefined &&
-            ticket.ai_confidence > 0 && (
-            <ConfidenceBadge confidence={ticket.ai_confidence} />
+          {ticket.request_type && (
+            <Badge variant="light">{ticket.request_type}</Badge>
+          )}
+          {slaDeadline && (
+            <Badge color={ticket.is_sla_breached ? "red" : "yellow"} variant="light">
+              SLA {ticket.is_sla_breached ? "просрочен" : "до"} {slaDeadline}
+            </Badge>
           )}
         </Group>
         {mutationError && (
@@ -115,6 +160,62 @@ export function TicketCard({
               Закрыть
             </Button>
           </Group>
+        )}
+        {canComment && (
+          <Stack gap="xs">
+            <Group justify="flex-end">
+              <Button
+                size="xs"
+                variant="subtle"
+                leftSection={<IconMessageCircle size={14} />}
+                onClick={() => setCommentsOpen((value) => !value)}
+              >
+                Комментарии
+              </Button>
+            </Group>
+            {commentsOpen && (
+              <Stack gap="xs" className="ticket-comments">
+                {comments.data?.length ? (
+                  comments.data.map((comment) => (
+                    <div className="ticket-comment" key={comment.id}>
+                      <Group justify="space-between" gap="xs">
+                        <Text size="xs" fw={600}>
+                          {comment.author_username ?? "Сотрудник"}
+                        </Text>
+                        <Text size="xs" c="dimmed">
+                          {formatDateTime(comment.created_at)}
+                        </Text>
+                      </Group>
+                      <Text size="sm">{comment.content}</Text>
+                    </div>
+                  ))
+                ) : (
+                  <Text size="sm" c="dimmed">
+                    Комментариев пока нет.
+                  </Text>
+                )}
+                <Textarea
+                  value={commentText}
+                  minRows={2}
+                  maxRows={5}
+                  autosize
+                  maxLength={2000}
+                  placeholder="Добавить рабочий комментарий"
+                  onChange={(event) => setCommentText(event.currentTarget.value)}
+                />
+                <Group justify="flex-end">
+                  <Button
+                    size="xs"
+                    loading={createComment.isPending}
+                    disabled={!commentText.trim()}
+                    onClick={handleCreateComment}
+                  >
+                    Добавить
+                  </Button>
+                </Group>
+              </Stack>
+            )}
+          </Stack>
         )}
       </Stack>
     </Paper>

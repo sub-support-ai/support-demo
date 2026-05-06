@@ -25,6 +25,50 @@ const DEFAULT_AFFECTED_ITEM_OPTIONS = [
   "Почта",
 ];
 
+const REQUEST_TYPES = [
+  {
+    value: "vpn_issue",
+    label: "VPN не работает",
+    affectedItem: "VPN",
+    detailsLabel: "Ошибка VPN и когда началось",
+    detailsPlaceholder: "Например: ошибка 809, началось сегодня утром, пробовал переподключиться",
+  },
+  {
+    value: "password_reset",
+    label: "Сброс пароля",
+    affectedItem: "Учетная запись",
+    detailsLabel: "Система и логин",
+    detailsPlaceholder: "Например: корпоративная почта, логин ivanov.i",
+  },
+  {
+    value: "hardware_broken",
+    label: "Сломано оборудование",
+    affectedItem: "Рабочее место",
+    detailsLabel: "Устройство и инвентарный номер",
+    detailsPlaceholder: "Например: ноутбук HP, инв. 1042, не включается",
+  },
+  {
+    value: "hr_request",
+    label: "HR-запрос",
+    affectedItem: "Кадровый документ",
+    detailsLabel: "Что нужно от HR",
+    detailsPlaceholder: "Например: справка о доходах за 2025 год",
+  },
+  {
+    value: "finance_request",
+    label: "Финансовый запрос",
+    affectedItem: "Оплата/документы",
+    detailsLabel: "Что нужно от финансов",
+    detailsPlaceholder: "Например: согласовать счет, номер договора, сумма",
+  },
+  {
+    value: "other",
+    label: "Другое",
+    detailsLabel: "Уточнение",
+    detailsPlaceholder: "Опишите, какой тип запроса нужно передать специалисту",
+  },
+];
+
 function toSelectOptions(values: string[], otherLabel: string) {
   const uniqueValues = Array.from(new Set(values.filter(Boolean)));
   return [
@@ -50,6 +94,12 @@ export function EscalationCard({
   const [customOffice, setCustomOffice] = useState("");
   const [affectedItem, setAffectedItem] = useState<string | null>(null);
   const [customAffectedItem, setCustomAffectedItem] = useState("");
+  const [requestType, setRequestType] = useState<string | null>(null);
+  const [requestDetails, setRequestDetails] = useState("");
+
+  const selectedRequestType = useMemo(() => {
+    return REQUEST_TYPES.find((item) => item.value === requestType) ?? null;
+  }, [requestType]);
 
   useEffect(() => {
     if (!contextDefaults) {
@@ -59,6 +109,12 @@ export function EscalationCard({
     setRequesterEmail((current) => current || contextDefaults.requester_email);
     setOffice((current) => current || contextDefaults.office || null);
   }, [contextDefaults]);
+
+  useEffect(() => {
+    if (selectedRequestType?.affectedItem) {
+      setAffectedItem((current) => current || selectedRequestType.affectedItem || null);
+    }
+  }, [selectedRequestType]);
 
   const officeOptions = useMemo(() => {
     const values = [
@@ -87,6 +143,8 @@ export function EscalationCard({
       requester_email: requesterEmail.trim(),
       office: resolvedOffice || "",
       affected_item: resolvedAffectedItem || "",
+      request_type: selectedRequestType?.label ?? null,
+      request_details: requestDetails.trim() || null,
     };
   }, [
     affectedItem,
@@ -95,6 +153,8 @@ export function EscalationCard({
     office,
     requesterEmail,
     requesterName,
+    requestDetails,
+    selectedRequestType,
   ]);
 
   const canSubmit = Boolean(
@@ -102,7 +162,9 @@ export function EscalationCard({
       context.requester_email &&
       EMAIL_RE.test(context.requester_email) &&
       context.office &&
-      context.affected_item,
+      context.affected_item &&
+      context.request_type &&
+      context.request_details,
   );
 
   return (
@@ -116,10 +178,33 @@ export function EscalationCard({
         <div>
           <Text fw={600}>Уточните данные для черновика</Text>
           <Text size="sm" c="dimmed">
-            Проблема и уже описанные действия попадут в тикет из истории диалога.
+            Проблема и уже описанные действия попадут в черновик запроса из истории диалога.
             Укажите, от кого запрос, где он возник и что именно затронуто.
           </Text>
         </div>
+
+        <Group grow align="start">
+          <Select
+            label="Тип запроса"
+            data={REQUEST_TYPES.map((item) => ({
+              value: item.value,
+              label: item.label,
+            }))}
+            value={requestType}
+            placeholder="Выберите сценарий"
+            allowDeselect={false}
+            required
+            onChange={setRequestType}
+          />
+          <TextInput
+            label={selectedRequestType?.detailsLabel ?? "Уточнение"}
+            value={requestDetails}
+            maxLength={2000}
+            required
+            placeholder={selectedRequestType?.detailsPlaceholder}
+            onChange={(event) => setRequestDetails(event.currentTarget.value)}
+          />
+        </Group>
 
         <Group grow align="start">
           <TextInput
@@ -197,7 +282,7 @@ export function EscalationCard({
             disabled={disabled || !canSubmit}
             onClick={() => onEscalate(context)}
           >
-            Создать тикет
+            Создать запрос
           </Button>
         </Group>
       </Stack>

@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
@@ -5,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent import Agent
 from app.models.ticket import Ticket
+from app.models.user import User
 from app.security import hash_password
 from app.services.ai_classifier import _choose_priority, _infer_priority_from_text
 
@@ -37,6 +40,31 @@ async def register_user(client: AsyncClient, suffix: str = "") -> tuple[int, str
     )
     assert me.status_code == 200
     return me.json()["id"], token
+
+
+async def create_operator(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    suffix: str,
+    role: str = "admin",
+) -> tuple[int, str]:
+    password = "Secret123!"
+    user = User(
+        email=f"operator{suffix}@example.com",
+        username=f"operator{suffix}",
+        hashed_password=hash_password(password),
+        role=role,
+        is_active=True,
+    )
+    db_session.add(user)
+    await db_session.flush()
+
+    response = await client.post(
+        "/api/v1/auth/login",
+        data={"username": user.username, "password": password},
+    )
+    assert response.status_code == 200
+    return user.id, response.json()["access_token"]
 
 
 @pytest.mark.asyncio
@@ -549,6 +577,143 @@ async def test_confirm_ticket_marks_user_confirmation(client: AsyncClient):
     assert data["id"] == ticket_id
     assert data["status"] == "confirmed"
     assert data["confirmed_by_user"] is True
+    assert data["sla_started_at"] is not None
+    assert data["sla_deadline_at"] is not None
+    assert data["is_sla_breached"] is False
+
+
+@pytest.mark.asyncio
+async def test_confirm_ticket_sets_sla_deadline_by_priority(client: AsyncClient):
+    _, token = await register_user(client, suffix="sla")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    create = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "сломано оборудование",
+            "body": "срочно нужна замена",
+            "user_priority": 3,
+            "office": "HQ",
+            "affected_item": "Ноутбук",
+        },
+        headers=headers,
+    )
+    assert create.status_code == 201
+
+    confirm = await client.patch(
+        f"/api/v1/tickets/{create.json()['id']}/confirm",
+        headers=headers,
+    )
+    assert confirm.status_code == 200
+    data = confirm.json()
+    started_at = datetime.fromisoformat(data["sla_started_at"])
+    deadline_at = datetime.fromisoformat(data["sla_deadline_at"])
+
+    assert deadline_at - started_at == timedelta(hours=8)
+
+
+@pytest.mark.asyncio
+async def test_ticket_response_marks_overdue_sla(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    user_id, token = await register_user(client, suffix="slaoverdue")
+    headers = {"Authorization": f"Bearer {token}"}
+    ticket = Ticket(
+        user_id=user_id,
+        title="Просроченный запрос",
+        body="Проверяем SLA",
+        user_priority=3,
+        department="IT",
+        status="confirmed",
+        confirmed_by_user=True,
+        ai_priority="средний",
+        requester_name="User",
+        requester_email="user@example.com",
+        office="HQ",
+        affected_item="VPN",
+        sla_started_at=datetime.now(timezone.utc) - timedelta(hours=30),
+        sla_deadline_at=datetime.now(timezone.utc) - timedelta(hours=6),
+    )
+    db_session.add(ticket)
+    await db_session.flush()
+
+    response = await client.get(f"/api/v1/tickets/{ticket.id}", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()["is_sla_breached"] is True
+
+
+@pytest.mark.asyncio
+async def test_admin_can_add_ticket_comment_after_confirmation(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    _, user_token = await register_user(client, suffix="commentowner")
+    user_headers = {"Authorization": f"Bearer {user_token}"}
+    _, admin_token = await create_operator(client, db_session, suffix="commentadmin")
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+    create = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "Не работает VPN",
+            "body": "Нужно проверить доступ",
+            "user_priority": 3,
+            "office": "HQ",
+            "affected_item": "VPN",
+        },
+        headers=user_headers,
+    )
+    assert create.status_code == 201
+    ticket_id = create.json()["id"]
+    confirm = await client.patch(f"/api/v1/tickets/{ticket_id}/confirm", headers=user_headers)
+    assert confirm.status_code == 200
+
+    comment = await client.post(
+        f"/api/v1/tickets/{ticket_id}/comments",
+        json={"content": "Проверить учетную запись и VPN-группу."},
+        headers=admin_headers,
+    )
+
+    assert comment.status_code == 201
+    assert comment.json()["content"] == "Проверить учетную запись и VPN-группу."
+    assert comment.json()["author_role"] == "admin"
+
+    comments = await client.get(
+        f"/api/v1/tickets/{ticket_id}/comments",
+        headers=admin_headers,
+    )
+    assert comments.status_code == 200
+    assert len(comments.json()) == 1
+
+
+@pytest.mark.asyncio
+async def test_regular_user_cannot_add_operator_comment(client: AsyncClient):
+    _, token = await register_user(client, suffix="commentregular")
+    headers = {"Authorization": f"Bearer {token}"}
+    create = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "Не работает принтер",
+            "body": "Нужна помощь",
+            "user_priority": 3,
+            "office": "HQ",
+            "affected_item": "Принтер/МФУ",
+        },
+        headers=headers,
+    )
+    ticket_id = create.json()["id"]
+    confirm = await client.patch(f"/api/v1/tickets/{ticket_id}/confirm", headers=headers)
+    assert confirm.status_code == 200
+
+    comment = await client.post(
+        f"/api/v1/tickets/{ticket_id}/comments",
+        json={"content": "Попытка оставить внутренний комментарий"},
+        headers=headers,
+    )
+
+    assert comment.status_code == 404
 
 
 @pytest.mark.asyncio

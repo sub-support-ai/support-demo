@@ -75,7 +75,7 @@ function getConversationTitle(conversation: Conversation, tickets?: Ticket[]) {
   }
 
   if (conversation.status === "active") {
-    return "Диалог без тикета";
+    return "Диалог без запроса";
   }
 
   return getStatusLabel(conversation.status);
@@ -339,7 +339,7 @@ export function ChatPage() {
           />
         ) : (
           <Paper withBorder p="md" className="quiet-panel">
-            <Title order={4}>Черновик тикета</Title>
+            <Title order={4}>Черновик запроса</Title>
             <Text size="sm" c="dimmed">
               Появится после эскалации диалога.
             </Text>

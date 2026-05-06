@@ -32,6 +32,8 @@ class TicketCreate(TicketBase):
     department: DepartmentLiteral | None = None
     office: str | None = Field(default=None, max_length=100)
     affected_item: str | None = Field(default=None, max_length=150)
+    request_type: str | None = Field(default=None, max_length=60)
+    request_details: str | None = Field(default=None, max_length=2000)
 
 
 class TicketStatusUpdate(BaseModel):
@@ -48,6 +50,8 @@ class TicketDraftUpdate(BaseModel):
     steps_tried: str | None = None
     office: str | None = Field(default=None, max_length=100)
     affected_item: str | None = Field(default=None, max_length=150)
+    request_type: str | None = Field(default=None, max_length=60)
+    request_details: str | None = Field(default=None, max_length=2000)
 
 
 class TicketRead(TicketBase):
@@ -64,6 +68,8 @@ class TicketRead(TicketBase):
     requester_email: str | None = None
     office: str | None = None
     affected_item: str | None = None
+    request_type: str | None = None
+    request_details: str | None = None
     steps_tried: str | None = None
     confirmed_by_user: bool
 
@@ -76,3 +82,24 @@ class TicketRead(TicketBase):
     created_at: datetime
     updated_at: datetime | None = None
     resolved_at: datetime | None = None
+    sla_started_at: datetime | None = None
+    sla_deadline_at: datetime | None = None
+    is_sla_breached: bool = False
+
+
+class TicketCommentCreate(BaseModel):
+    content: str = Field(min_length=1, max_length=2000)
+    internal: bool = True
+
+
+class TicketCommentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    ticket_id: int
+    author_id: int | None = None
+    author_username: str | None = None
+    author_role: str | None = None
+    content: str
+    internal: bool
+    created_at: datetime

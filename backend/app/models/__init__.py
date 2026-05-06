@@ -13,6 +13,7 @@ from app.models.conversation import Conversation  # noqa: F401
 from app.models.message import Message  # noqa: F401
 from app.models.ai_job import AIJob  # noqa: F401
 from app.models.ticket import Ticket  # noqa: F401
+from app.models.ticket_comment import TicketComment  # noqa: F401
 from app.models.response import Response  # noqa: F401
 from app.models.ai_log import AILog  # noqa: F401
 from app.models.audit_log import AuditLog  # noqa: F401

@@ -19,10 +19,6 @@ function percent(value: number): string {
   return `${Math.round(value)}%`;
 }
 
-function confidence(value: number): string {
-  return percent(value * 100);
-}
-
 function MetricCard({
   label,
   value,
@@ -34,7 +30,7 @@ function MetricCard({
 }) {
   return (
     <Paper className="metric-card" withBorder>
-      <Text size="xs" tt="uppercase" fw={700} c="dimmed">
+      <Text className="metric-label" size="xs" tt="uppercase" fw={700} c="dimmed">
         {label}
       </Text>
       <Text className="metric-value">{value}</Text>
@@ -56,7 +52,11 @@ function BreakdownList({
 }) {
   const entries = Object.entries(items);
   if (entries.length === 0) {
-    return <Text c="dimmed">Данных пока нет</Text>;
+    return (
+      <Text c="dimmed" size="sm">
+        Данных пока нет
+      </Text>
+    );
   }
 
   const max = Math.max(...entries.map(([, value]) => value), 1);
@@ -64,9 +64,11 @@ function BreakdownList({
   return (
     <Stack gap="sm">
       {entries.map(([key, value]) => (
-        <div key={key}>
-          <Group justify="space-between" gap="sm" mb={4}>
-            <Text size="sm">{labeler?.(key) ?? key}</Text>
+        <div className="breakdown-row" key={key}>
+          <Group justify="space-between" gap="sm" mb={6} wrap="nowrap">
+            <Text size="sm" lineClamp={1}>
+              {labeler?.(key) ?? key}
+            </Text>
             <Badge variant="light">{value}</Badge>
           </Group>
           <Progress value={(value / max) * 100} size="sm" />
@@ -81,15 +83,17 @@ export function DashboardPage() {
   const data = stats.data;
 
   return (
-    <div className="content-page">
-      <Paper className="tickets-panel" withBorder>
+    <div className="content-page dashboard-page">
+      <Paper className="tickets-panel dashboard-panel" withBorder>
         <LoadingOverlay visible={stats.isLoading} />
-        <Title order={2} mb="xs">
-          Обзор
-        </Title>
-        <Text size="sm" c="dimmed" mb="md">
-          Живая статистика по тикетам, маршрутизации и качеству ответов.
-        </Text>
+        <div className="dashboard-header">
+          <div>
+            <Title order={2}>Обзор</Title>
+            <Text size="sm" c="dimmed">
+              Живая статистика по запросам, маршрутизации и качеству ответов.
+            </Text>
+          </div>
+        </div>
 
         {stats.error && (
           <Alert color="red" variant="light" mb="md">
@@ -98,18 +102,23 @@ export function DashboardPage() {
         )}
 
         {data && (
-          <Stack gap="md">
+          <Stack gap="lg">
             <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
-              <MetricCard label="Всего тикетов" value={data.tickets.total} />
+              <MetricCard label="Всего запросов" value={data.tickets.total} />
               <MetricCard
                 label="Обработано"
                 value={data.ai.total_processed}
                 hint="записей в журнале обработки"
               />
               <MetricCard
-                label="Уверенность"
-                value={confidence(data.ai.avg_confidence)}
-                hint="средняя оценка"
+                label="Низкая уверенность"
+                value={data.ai.low_confidence_count}
+                hint="требуют проверки"
+              />
+              <MetricCard
+                label="SLA просрочен"
+                value={data.tickets.sla_overdue_count}
+                hint="открытые запросы"
               />
               <MetricCard
                 label="Роутинг"
@@ -143,13 +152,9 @@ export function DashboardPage() {
             </SimpleGrid>
 
             <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
-              <MetricCard
-                label="Низкая уверенность"
-                value={data.ai.low_confidence_count}
-              />
               <MetricCard label="Эскалации" value={data.ai.escalated_count} />
               <MetricCard
-                label="Решено без тикета"
+                label="Решено без специалиста"
                 value={data.ai.resolved_by_ai_count}
               />
               <MetricCard

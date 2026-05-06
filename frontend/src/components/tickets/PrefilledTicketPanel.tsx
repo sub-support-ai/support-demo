@@ -10,7 +10,7 @@ import {
   TextInput,
   Title,
 } from "@mantine/core";
-import { IconCheck, IconEdit, IconTicket } from "@tabler/icons-react";
+import { IconCheck, IconEdit, IconFileText } from "@tabler/icons-react";
 import { useEffect, useState } from "react";
 
 import type { Ticket, TicketDraftUpdate } from "../../api/types";
@@ -70,6 +70,8 @@ export function PrefilledTicketPanel({
   const [requesterEmail, setRequesterEmail] = useState(ticket.requester_email ?? "");
   const [office, setOffice] = useState(ticket.office ?? "");
   const [affectedItem, setAffectedItem] = useState(ticket.affected_item ?? "");
+  const [requestType, setRequestType] = useState(ticket.request_type ?? "");
+  const [requestDetails, setRequestDetails] = useState(ticket.request_details ?? "");
   const [stepsTried, setStepsTried] = useState(ticket.steps_tried ?? "");
 
   const canEdit = !ticket.confirmed_by_user && ticket.status === "pending_user";
@@ -94,6 +96,8 @@ export function PrefilledTicketPanel({
     setRequesterEmail(ticket.requester_email ?? "");
     setOffice(ticket.office ?? "");
     setAffectedItem(ticket.affected_item ?? "");
+    setRequestType(ticket.request_type ?? "");
+    setRequestDetails(ticket.request_details ?? "");
     setStepsTried(ticket.steps_tried ?? "");
     setIsEditing(false);
   }, [
@@ -106,6 +110,8 @@ export function PrefilledTicketPanel({
     ticket.requester_email,
     ticket.office,
     ticket.affected_item,
+    ticket.request_type,
+    ticket.request_details,
     ticket.steps_tried,
   ]);
 
@@ -118,6 +124,8 @@ export function PrefilledTicketPanel({
       requester_email: requesterEmail.trim(),
       office: office.trim() || null,
       affected_item: affectedItem.trim() || null,
+      request_type: requestType.trim() || null,
+      request_details: requestDetails.trim() || null,
       steps_tried: stepsTried.trim() || null,
     };
     if (!isCriticalPriority) {
@@ -128,11 +136,11 @@ export function PrefilledTicketPanel({
   }
 
   return (
-    <Alert color="teal" variant="light" icon={<IconTicket size={18} />}>
+    <Alert color="teal" variant="light" icon={<IconFileText size={18} />}>
       <Stack gap="sm">
         <Group justify="space-between" align="start">
           <div>
-            <Title order={4}>Черновик тикета</Title>
+            <Title order={4}>Черновик запроса</Title>
             <Text size="sm" c="dimmed">
               Проверьте, что агент увидит правильное описание проблемы.
             </Text>
@@ -220,6 +228,20 @@ export function PrefilledTicketPanel({
                 onChange={(event) => setAffectedItem(event.currentTarget.value)}
               />
             </Group>
+            <Group grow align="start">
+              <TextInput
+                label="Тип запроса"
+                value={requestType}
+                maxLength={60}
+                onChange={(event) => setRequestType(event.currentTarget.value)}
+              />
+              <TextInput
+                label="Уточнение формы"
+                value={requestDetails}
+                maxLength={2000}
+                onChange={(event) => setRequestDetails(event.currentTarget.value)}
+              />
+            </Group>
             <Textarea
               label="Что уже пробовали"
               value={stepsTried}
@@ -271,6 +293,18 @@ export function PrefilledTicketPanel({
                 {ticket.affected_item ? ` · ${ticket.affected_item}` : ""}
               </Text>
             </div>
+            {(ticket.request_type || ticket.request_details) && (
+              <div>
+                <Text size="xs" c="dimmed" fw={600}>
+                  Форма запроса
+                </Text>
+                <Text size="sm">
+                  {[ticket.request_type, ticket.request_details]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </Text>
+              </div>
+            )}
             <div>
               <Text size="xs" c="dimmed" fw={600}>
                 Описание для агента

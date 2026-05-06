@@ -5,7 +5,6 @@ import type {
   Message,
   RequestContextDefaults,
 } from "../../api/types";
-import { ConfidenceBadge } from "./ConfidenceBadge";
 import { EscalationCard } from "./EscalationCard";
 import { Sources } from "./Sources";
 
@@ -30,11 +29,10 @@ export function MessageBubble({
         <div className="escalation-stack">
           {message.content && (
             <Paper className="message-bubble ai" withBorder>
-              <Group justify="space-between" gap="xs" mb={4}>
+              <Group gap="xs" mb={4}>
                 <Text size="xs" fw={600} c="dimmed">
                   AI
                 </Text>
-                <ConfidenceBadge confidence={message.ai_confidence} />
               </Group>
               <Text size="sm" className="message-text">
                 {message.content}
@@ -58,11 +56,10 @@ export function MessageBubble({
   return (
     <div className={`message-row ${isUser ? "user" : "ai"}`}>
       <Paper className={`message-bubble ${isUser ? "user" : "ai"}`} withBorder>
-        <Group justify="space-between" gap="xs" mb={4}>
+        <Group gap="xs" mb={4}>
           <Text size="xs" fw={600} c="dimmed">
             {isUser ? "Вы" : "AI"}
           </Text>
-          {!isUser && <ConfidenceBadge confidence={message.ai_confidence} />}
         </Group>
         <Text size="sm" className="message-text">
           {message.content}

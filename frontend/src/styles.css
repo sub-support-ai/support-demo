@@ -48,11 +48,59 @@ body {
   padding: 16px;
 }
 
+.dashboard-page {
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
 .chat-panel,
 .tickets-panel {
   position: relative;
   padding: 16px;
   background: #ffffff;
+}
+
+.dashboard-panel {
+  padding: 20px;
+}
+
+.dashboard-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.metric-card,
+.dashboard-section {
+  padding: 16px;
+  background: #ffffff;
+}
+
+.metric-card {
+  min-height: 128px;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.metric-label {
+  min-height: 16px;
+}
+
+.metric-value {
+  font-size: 32px;
+  line-height: 1.1;
+  font-weight: 700;
+}
+
+.dashboard-section {
+  min-height: 220px;
+}
+
+.breakdown-row {
+  min-width: 0;
 }
 
 .chat-surface {
@@ -231,6 +279,26 @@ body {
   background: #ffffff;
 }
 
+.ticket-filters {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.4fr) repeat(3, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.ticket-comments {
+  padding: 10px;
+  border: 1px solid #dce5e2;
+  border-radius: 8px;
+  background: #f8fbfa;
+}
+
+.ticket-comment {
+  padding: 8px;
+  border: 1px solid #dce5e2;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
 @media (max-width: 960px) {
   .page-grid {
     grid-template-columns: 1fr;
@@ -250,5 +318,26 @@ body {
   .chat-panel,
   .tickets-panel {
     padding: 12px;
+  }
+
+  .dashboard-panel {
+    padding: 14px;
+  }
+
+  .dashboard-header {
+    margin-bottom: 14px;
+  }
+
+  .metric-card,
+  .dashboard-section {
+    padding: 12px;
+  }
+
+  .metric-value {
+    font-size: 28px;
+  }
+
+  .ticket-filters {
+    grid-template-columns: 1fr;
   }
 }

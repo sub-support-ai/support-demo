@@ -9,9 +9,9 @@ import {
 } from "@mantine/core";
 import {
   IconChartBar,
+  IconFileText,
   IconLogout,
   IconMessageCircle,
-  IconTicket,
 } from "@tabler/icons-react";
 import { NavLink as RouterNavLink, Outlet, useLocation } from "react-router-dom";
 
@@ -22,6 +22,8 @@ export function ShellLayout() {
   const { token, logout } = useAuth();
   const { data: me } = useMe(Boolean(token));
   const location = useLocation();
+  const requestsLabel =
+    me?.role === "admin" || me?.role === "agent" ? "Запросы" : "Мои запросы";
 
   return (
     <AppShell header={{ height: 58 }} navbar={{ width: 240, breakpoint: "sm" }}>
@@ -67,8 +69,8 @@ export function ShellLayout() {
         <NavLink
           component={RouterNavLink}
           to="/tickets"
-          label="Мои тикеты"
-          leftSection={<IconTicket size={18} />}
+          label={requestsLabel}
+          leftSection={<IconFileText size={18} />}
           active={location.pathname.startsWith("/tickets")}
         />
       </AppShell.Navbar>

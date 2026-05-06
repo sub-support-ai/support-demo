@@ -12,6 +12,8 @@
 """
 
 import logging
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select, case
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,6 +25,7 @@ from app.models.ai_log import AILog
 from app.models.user import User
 from app.schemas.stats import StatsResponse, TicketStats, AIStats
 from app.services.agents import get_active_agent_for_user
+from app.services.sla import OPEN_STATUSES
 
 logger = logging.getLogger(__name__)
 
@@ -88,11 +91,24 @@ async def get_stats(
     )
     by_source = {row.ticket_source: row.cnt for row in source_result}
 
+    sla_overdue_result = await db.execute(
+        select(func.count())
+        .select_from(Ticket)
+        .where(
+            *ticket_filters,
+            Ticket.status.in_(OPEN_STATUSES),
+            Ticket.sla_deadline_at.is_not(None),
+            Ticket.sla_deadline_at < datetime.now(timezone.utc),
+        )
+    )
+    sla_overdue_count = sla_overdue_result.scalar() or 0
+
     ticket_stats = TicketStats(
         total=total_tickets,
         by_status=by_status,
         by_department=by_department,
         by_source=by_source,
+        sla_overdue_count=sla_overdue_count,
     )
 
     # ── Статистика AI ─────────────────────────────────────────────────────────

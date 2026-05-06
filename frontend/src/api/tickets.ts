@@ -2,11 +2,23 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "./client";
 import type {
+  TicketComment,
+  TicketCommentCreate,
   ResolveTicketPayload,
   Ticket,
   TicketDraftUpdate,
   TicketStatusUpdate,
 } from "./types";
+
+function updateTicketInCache(
+  queryClient: ReturnType<typeof useQueryClient>,
+  ticket: Ticket,
+) {
+  queryClient.setQueryData<Ticket[]>(["tickets"], (current) =>
+    current?.map((item) => (item.id === ticket.id ? ticket : item)),
+  );
+  queryClient.setQueryData(["tickets", ticket.id], ticket);
+}
 
 export function useTickets() {
   return useQuery({
@@ -59,6 +71,41 @@ export function useUpdateTicketDraft() {
   });
 }
 
+export function useTicketComments(ticketId: number, enabled: boolean) {
+  return useQuery({
+    queryKey: ["tickets", ticketId, "comments"],
+    enabled,
+    queryFn: async () => {
+      const { data } = await api.get<TicketComment[]>(`/tickets/${ticketId}/comments`);
+      return data;
+    },
+  });
+}
+
+export function useCreateTicketComment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      ticketId,
+      payload,
+    }: {
+      ticketId: number;
+      payload: TicketCommentCreate;
+    }) => {
+      const { data } = await api.post<TicketComment>(
+        `/tickets/${ticketId}/comments`,
+        payload,
+      );
+      return data;
+    },
+    onSuccess: (comment) => {
+      queryClient.invalidateQueries({
+        queryKey: ["tickets", comment.ticket_id, "comments"],
+      });
+    },
+  });
+}
+
 export function useUpdateTicketStatus() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -73,8 +120,8 @@ export function useUpdateTicketStatus() {
       return data;
     },
     onSuccess: (ticket) => {
+      updateTicketInCache(queryClient, ticket);
       queryClient.invalidateQueries({ queryKey: ["tickets"] });
-      queryClient.invalidateQueries({ queryKey: ["tickets", ticket.id] });
       queryClient.invalidateQueries({ queryKey: ["stats"] });
     },
   });
@@ -97,8 +144,8 @@ export function useResolveTicket() {
       return data;
     },
     onSuccess: (ticket) => {
+      updateTicketInCache(queryClient, ticket);
       queryClient.invalidateQueries({ queryKey: ["tickets"] });
-      queryClient.invalidateQueries({ queryKey: ["tickets", ticket.id] });
       queryClient.invalidateQueries({ queryKey: ["stats"] });
     },
   });

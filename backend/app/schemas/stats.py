@@ -7,6 +7,7 @@ class TicketStats(BaseModel):
     by_status: dict[str, int]   # сколько тикетов в каждом статусе
     by_department: dict[str, int]  # сколько тикетов по отделам
     by_source: dict[str, int]   # ai_generated / user_written / ai_assisted
+    sla_overdue_count: int = 0  # открытые запросы с просроченным SLA
 
 
 class AIStats(BaseModel):

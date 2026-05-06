@@ -141,6 +141,8 @@ class EscalationContext(BaseModel):
     requester_email: EmailStr
     office: str = Field(min_length=1, max_length=100)
     affected_item: str = Field(min_length=1, max_length=150)
+    request_type: str | None = Field(default=None, max_length=60)
+    request_details: str | None = Field(default=None, max_length=2000)
 
     @field_validator("requester_name", "office", "affected_item")
     @classmethod
@@ -156,6 +158,14 @@ class EscalationContext(BaseModel):
         if isinstance(value, str):
             return value.strip()
         return value
+
+    @field_validator("request_type", "request_details")
+    @classmethod
+    def strip_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        return value or None
 
 
 class EscalatePayload(BaseModel):
@@ -423,14 +433,24 @@ async def escalate_conversation(
     )
     office = clean_optional_text(payload.context.office)
     affected_item = clean_optional_text(payload.context.affected_item)
-    body = build_context_block(
+    request_type = clean_optional_text(payload.context.request_type)
+    request_details = clean_optional_text(payload.context.request_details)
+    context_body = build_context_block(
         requester_name=requester_name,
         requester_email=requester_email,
         office=office,
         affected_item=affected_item,
         creator_name=current_user.username,
         creator_email=current_user.email,
-    ) + "\n\n" + body
+    )
+    form_lines = []
+    if request_type:
+        form_lines.append(f"Тип запроса: {request_type}")
+    if request_details:
+        form_lines.append(f"Уточнение формы: {request_details}")
+    if form_lines:
+        context_body += "\n" + "\n".join(form_lines)
+    body = context_body + "\n\n" + body
 
     settings = get_settings()
     ticket = Ticket(
@@ -442,6 +462,8 @@ async def escalate_conversation(
         requester_email=requester_email,
         office=office,
         affected_item=affected_item,
+        request_type=request_type,
+        request_details=request_details,
         steps_tried=steps_tried,
         # Пользователь не выставлял приоритет вручную — берём середину.
         # ai_priority используется в роутинге, user_priority остаётся 3.

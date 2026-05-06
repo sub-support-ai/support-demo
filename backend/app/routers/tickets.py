@@ -20,8 +20,11 @@ from app.database import get_db
 from app.dependencies import get_current_user, require_role
 from app.models.ai_log import AILog
 from app.models.ticket import Ticket
+from app.models.ticket_comment import TicketComment
 from app.models.user import User
 from app.schemas.ticket import (
+    TicketCommentCreate,
+    TicketCommentRead,
     TicketCreate,
     TicketDraftUpdate,
     TicketRead,
@@ -30,6 +33,7 @@ from app.schemas.ticket import (
 from app.services.agents import get_active_agent_for_user
 from app.services.audit import log_event
 from app.services.routing import assign_agent, unassign_agent
+from app.services.sla import start_ticket_sla
 from app.services.ticket_body import clean_optional_text, replace_context_block_if_present
 
 router = APIRouter(prefix="/tickets", tags=["tickets"])
@@ -222,6 +226,8 @@ async def create_ticket(
         requester_email=current_user.email,
         office=payload.office.strip() if payload.office else None,
         affected_item=payload.affected_item.strip() if payload.affected_item else None,
+        request_type=clean_optional_text(payload.request_type),
+        request_details=clean_optional_text(payload.request_details),
         ai_category=ai_result.get("category"),
         ai_priority=ai_result.get("priority"),
         ai_confidence=ai_result.get("confidence"),
@@ -415,6 +421,10 @@ async def update_ticket_draft(
         ticket.office = clean_optional_text(update_data["office"])
     if "affected_item" in update_data:
         ticket.affected_item = clean_optional_text(update_data["affected_item"])
+    if "request_type" in update_data:
+        ticket.request_type = clean_optional_text(update_data["request_type"])
+    if "request_details" in update_data:
+        ticket.request_details = clean_optional_text(update_data["request_details"])
 
     if not ticket.title or not ticket.body:
         raise HTTPException(
@@ -477,10 +487,81 @@ async def confirm_ticket(
 
     if ticket.agent_id is None:
         await assign_agent(db, ticket)
+    if ticket.sla_started_at is None:
+        start_ticket_sla(ticket)
 
     await db.flush()
     await db.refresh(ticket)
     return ticket
+
+
+# ── GET/POST /tickets/{id}/comments — рабочие комментарии ────────────────────
+
+@router.get(
+    "/{ticket_id}/comments",
+    response_model=list[TicketCommentRead],
+    summary="Комментарии к запросу",
+)
+async def list_ticket_comments(
+    ticket_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await get_ticket_for_reader(ticket_id, db, current_user)
+    result = await db.execute(
+        select(TicketComment)
+        .where(TicketComment.ticket_id == ticket_id)
+        .order_by(TicketComment.created_at.desc(), TicketComment.id.desc())
+        .limit(50)
+    )
+    return result.scalars().all()
+
+
+@router.post(
+    "/{ticket_id}/comments",
+    response_model=TicketCommentRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Добавить комментарий к запросу",
+)
+async def create_ticket_comment(
+    ticket_id: int,
+    payload: TicketCommentCreate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    ticket = await get_ticket_for_operator(ticket_id, db, current_user)
+    _require_confirmed_ticket_for_operator(ticket)
+    content = payload.content.strip()
+    if not content:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Комментарий не должен быть пустым",
+        )
+
+    comment = TicketComment(
+        ticket_id=ticket.id,
+        author_id=current_user.id,
+        author_username=current_user.username,
+        author_role=current_user.role,
+        content=content,
+        internal=payload.internal,
+    )
+    db.add(comment)
+    await db.flush()
+    await db.refresh(comment)
+
+    await log_event(
+        db,
+        action="ticket.comment",
+        user_id=current_user.id,
+        target_type="ticket",
+        target_id=ticket.id,
+        request=request,
+        details={"internal": payload.internal},
+    )
+
+    return comment
 
 
 # ── PATCH /tickets/{id}/resolve — агент закрывает тикет ───────────────────────

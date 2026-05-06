@@ -82,6 +82,8 @@ export interface Ticket {
   requester_email?: string | null;
   office?: string | null;
   affected_item?: string | null;
+  request_type?: string | null;
+  request_details?: string | null;
   steps_tried?: string | null;
   confirmed_by_user: boolean;
   ai_category?: string | null;
@@ -91,6 +93,9 @@ export interface Ticket {
   created_at: string;
   updated_at?: string | null;
   resolved_at?: string | null;
+  sla_started_at?: string | null;
+  sla_deadline_at?: string | null;
+  is_sla_breached?: boolean;
 }
 
 export interface TicketDraftUpdate {
@@ -103,6 +108,8 @@ export interface TicketDraftUpdate {
   steps_tried?: string | null;
   office?: string | null;
   affected_item?: string | null;
+  request_type?: string | null;
+  request_details?: string | null;
 }
 
 export interface TicketStatusUpdate {
@@ -114,11 +121,29 @@ export interface ResolveTicketPayload {
   correction_lag_seconds?: number | null;
 }
 
+export interface TicketComment {
+  id: number;
+  ticket_id: number;
+  author_id?: number | null;
+  author_username?: string | null;
+  author_role?: string | null;
+  content: string;
+  internal: boolean;
+  created_at: string;
+}
+
+export interface TicketCommentCreate {
+  content: string;
+  internal?: boolean;
+}
+
 export interface EscalationContext {
   requester_name: string;
   requester_email: string;
   office: string;
   affected_item: string;
+  request_type?: string | null;
+  request_details?: string | null;
 }
 
 export interface EscalateResponse {
@@ -138,6 +163,7 @@ export interface TicketStats {
   by_status: Record<string, number>;
   by_department: Record<string, number>;
   by_source: Record<string, number>;
+  sla_overdue_count: number;
 }
 
 export interface AiStats {
