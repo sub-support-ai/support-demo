@@ -86,7 +86,7 @@ export function MessageBubble({
         <div className="escalation-stack">
           {message.content && (
             <Paper className="message-bubble ai" withBorder>
-              <Group justify="space-between" gap="xs" mb={4}>
+              <Group gap="xs" mb={4}>
                 <Text size="xs" fw={600} c="dimmed">
                   AI
                 </Text>
@@ -114,7 +114,7 @@ export function MessageBubble({
   return (
     <div className={`message-row ${isUser ? "user" : "ai"}`}>
       <Paper className={`message-bubble ${isUser ? "user" : "ai"}`} withBorder>
-        <Group justify="space-between" gap="xs" mb={4}>
+        <Group gap="xs" mb={4}>
           <Text size="xs" fw={600} c="dimmed">
             {isUser ? "Вы" : "AI"}
           </Text>

@@ -4,6 +4,7 @@ import {
   Group,
   LoadingOverlay,
   Paper,
+  Progress,
   SimpleGrid,
   Stack,
   Text,
@@ -14,47 +15,91 @@ import { getApiError } from "../api/client";
 import { useStats } from "../api/stats";
 import { getStatusLabel } from "../lib/ticketLabels";
 
+function percent(value: number): string {
+  return `${Math.round(value)}%`;
+}
+
 function MetricCard({
   label,
   value,
+  hint,
   tone = "neutral",
 }: {
   label: string;
-  value: number | string;
+  value: string | number;
+  hint?: string;
   tone?: "neutral" | "warning" | "success";
 }) {
   return (
     <Paper className={`metric-card ${tone}`} withBorder>
-      <Text size="sm" c="dimmed">
+      <Text className="metric-label" size="xs" tt="uppercase" fw={700} c="dimmed">
         {label}
       </Text>
       <Text className="metric-value">{value}</Text>
+      {hint && (
+        <Text size="sm" c="dimmed">
+          {hint}
+        </Text>
+      )}
     </Paper>
+  );
+}
+
+function BreakdownList({
+  items,
+  labeler,
+}: {
+  items: Record<string, number>;
+  labeler?: (key: string) => string;
+}) {
+  const entries = Object.entries(items);
+  if (entries.length === 0) {
+    return (
+      <Text c="dimmed" size="sm">
+        Данных пока нет
+      </Text>
+    );
+  }
+
+  const max = Math.max(...entries.map(([, value]) => value), 1);
+
+  return (
+    <Stack gap="sm">
+      {entries.map(([key, value]) => (
+        <div className="breakdown-row" key={key}>
+          <Group justify="space-between" gap="sm" mb={6} wrap="nowrap">
+            <Text size="sm" lineClamp={1}>
+              {labeler?.(key) ?? key}
+            </Text>
+            <Badge variant="light">{value}</Badge>
+          </Group>
+          <Progress value={(value / max) * 100} size="sm" />
+        </div>
+      ))}
+    </Stack>
   );
 }
 
 export function DashboardPage() {
   const stats = useStats();
-  const ticketStats = stats.data?.tickets;
-  const aiStats = stats.data?.ai;
+  const data = stats.data;
   const activeRequests =
-    (ticketStats?.by_status.confirmed ?? 0) +
-    (ticketStats?.by_status.in_progress ?? 0) +
-    (ticketStats?.by_status.ai_processing ?? 0);
+    (data?.tickets.by_status.confirmed ?? 0) +
+    (data?.tickets.by_status.in_progress ?? 0) +
+    (data?.tickets.by_status.ai_processing ?? 0);
 
   return (
-    <div className="content-page">
-      <Paper className="dashboard-panel" withBorder>
+    <div className="content-page dashboard-page">
+      <Paper className="tickets-panel dashboard-panel" withBorder>
         <LoadingOverlay visible={stats.isLoading} />
-        <Group justify="space-between" mb="md">
+        <div className="dashboard-header">
           <div>
             <Title order={2}>Обзор</Title>
             <Text size="sm" c="dimmed">
-              Состояние обращений, SLA и качества ответов.
+              Живая статистика по запросам, SLA, маршрутизации и качеству ответов.
             </Text>
           </div>
-          <Badge variant="light">Live</Badge>
-        </Group>
+        </div>
 
         {stats.error && (
           <Alert color="red" variant="light" mb="md">
@@ -62,72 +107,81 @@ export function DashboardPage() {
           </Alert>
         )}
 
-        <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
-          <MetricCard label="Всего запросов" value={ticketStats?.total ?? 0} />
-          <MetricCard label="Активно" value={activeRequests} />
-          <MetricCard
-            label="SLA просрочен"
-            value={ticketStats?.sla_overdue_count ?? 0}
-            tone={(ticketStats?.sla_overdue_count ?? 0) > 0 ? "warning" : "success"}
-          />
-          <MetricCard
-            label="SLA эскалаций"
-            value={ticketStats?.sla_escalated_count ?? 0}
-            tone={(ticketStats?.sla_escalated_count ?? 0) > 0 ? "warning" : "neutral"}
-          />
-          <MetricCard
-            label="Повторно открыто"
-            value={ticketStats?.reopen_count ?? 0}
-          />
-          <MetricCard
-            label="Решено без специалиста"
-            value={aiStats?.resolved_by_ai_count ?? 0}
-            tone="success"
-          />
-          <MetricCard
-            label="Передано специалисту"
-            value={aiStats?.escalated_count ?? 0}
-          />
-          <MetricCard
-            label="Помогло"
-            value={aiStats?.user_feedback_helped ?? 0}
-            tone="success"
-          />
-          <MetricCard
-            label="Не помогло"
-            value={aiStats?.user_feedback_not_helped ?? 0}
-            tone={(aiStats?.user_feedback_not_helped ?? 0) > 0 ? "warning" : "neutral"}
-          />
-        </SimpleGrid>
+        {data && (
+          <Stack gap="lg">
+            <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
+              <MetricCard label="Всего запросов" value={data.tickets.total} />
+              <MetricCard label="Активно" value={activeRequests} />
+              <MetricCard
+                label="SLA просрочен"
+                value={data.tickets.sla_overdue_count}
+                hint="открытые запросы"
+                tone={data.tickets.sla_overdue_count > 0 ? "warning" : "success"}
+              />
+              <MetricCard
+                label="SLA эскалаций"
+                value={data.tickets.sla_escalated_count}
+                tone={data.tickets.sla_escalated_count > 0 ? "warning" : "neutral"}
+              />
+              <MetricCard
+                label="Повторно открыто"
+                value={data.tickets.reopen_count}
+              />
+              <MetricCard
+                label="Обработано"
+                value={data.ai.total_processed}
+                hint="записей в журнале"
+              />
+              <MetricCard
+                label="Низкая уверенность"
+                value={data.ai.low_confidence_count}
+                hint="требуют проверки"
+              />
+              <MetricCard
+                label="Роутинг"
+                value={percent(data.ai.routing_accuracy_pct)}
+                hint="подтверждено агентами"
+              />
+            </SimpleGrid>
 
-        <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md" mt="md">
-          <Paper className="dashboard-section" withBorder>
-            <Title order={4} mb="sm">
-              Статусы
-            </Title>
-            <Stack gap="xs">
-              {Object.entries(ticketStats?.by_status ?? {}).map(([status, count]) => (
-                <Group key={status} justify="space-between">
-                  <Text size="sm">{getStatusLabel(status)}</Text>
-                  <Badge variant="light">{count}</Badge>
-                </Group>
-              ))}
-            </Stack>
-          </Paper>
-          <Paper className="dashboard-section" withBorder>
-            <Title order={4} mb="sm">
-              Отделы
-            </Title>
-            <Stack gap="xs">
-              {Object.entries(ticketStats?.by_department ?? {}).map(([department, count]) => (
-                <Group key={department} justify="space-between">
-                  <Text size="sm">{department}</Text>
-                  <Badge variant="light">{count}</Badge>
-                </Group>
-              ))}
-            </Stack>
-          </Paper>
-        </SimpleGrid>
+            <SimpleGrid cols={{ base: 1, md: 3 }} spacing="md">
+              <Paper className="quiet-panel dashboard-section" withBorder>
+                <Title order={4} mb="sm">
+                  По статусам
+                </Title>
+                <BreakdownList
+                  items={data.tickets.by_status}
+                  labeler={getStatusLabel}
+                />
+              </Paper>
+              <Paper className="quiet-panel dashboard-section" withBorder>
+                <Title order={4} mb="sm">
+                  По отделам
+                </Title>
+                <BreakdownList items={data.tickets.by_department} />
+              </Paper>
+              <Paper className="quiet-panel dashboard-section" withBorder>
+                <Title order={4} mb="sm">
+                  По источникам
+                </Title>
+                <BreakdownList items={data.tickets.by_source} />
+              </Paper>
+            </SimpleGrid>
+
+            <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
+              <MetricCard label="Эскалации" value={data.ai.escalated_count} />
+              <MetricCard
+                label="Решено без специалиста"
+                value={data.ai.resolved_by_ai_count}
+                tone="success"
+              />
+              <MetricCard
+                label="Помогло / не помогло"
+                value={`${data.ai.user_feedback_helped} / ${data.ai.user_feedback_not_helped}`}
+              />
+            </SimpleGrid>
+          </Stack>
+        )}
       </Paper>
     </div>
   );

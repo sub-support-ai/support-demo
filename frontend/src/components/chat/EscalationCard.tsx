@@ -27,46 +27,46 @@ const DEFAULT_AFFECTED_ITEM_OPTIONS = [
 
 const REQUEST_TYPES = [
   {
-    value: "VPN не работает",
+    value: "vpn_issue",
     label: "VPN не работает",
     affectedItem: "VPN",
     detailsLabel: "Ошибка VPN и когда началось",
     detailsPlaceholder: "Например: ошибка 809, началось сегодня утром, пробовал переподключиться",
   },
   {
-    value: "Сброс пароля",
+    value: "password_reset",
     label: "Сброс пароля",
     affectedItem: "Учетная запись",
     detailsLabel: "Система и логин",
-    detailsPlaceholder: "Например: доменная учетная запись, login.petrov",
+    detailsPlaceholder: "Например: корпоративная почта, логин ivanov.i",
   },
   {
-    value: "Сломано оборудование",
+    value: "hardware_broken",
     label: "Сломано оборудование",
-    affectedItem: "Оборудование",
+    affectedItem: "Рабочее место",
     detailsLabel: "Устройство и инвентарный номер",
     detailsPlaceholder: "Например: ноутбук HP, инв. 1042, не включается",
   },
   {
-    value: "HR-запрос",
+    value: "hr_request",
     label: "HR-запрос",
-    affectedItem: "HR",
-    detailsLabel: "Тема HR-запроса",
-    detailsPlaceholder: "Например: справка, отпуск, доступ к кадровому документу",
+    affectedItem: "Кадровый документ",
+    detailsLabel: "Что нужно от HR",
+    detailsPlaceholder: "Например: справка о доходах за 2025 год",
   },
   {
-    value: "Финансовый запрос",
+    value: "finance_request",
     label: "Финансовый запрос",
-    affectedItem: "Финансы",
-    detailsLabel: "Документ или операция",
-    detailsPlaceholder: "Например: счет, акт, выплата, номер документа",
+    affectedItem: "Оплата/документы",
+    detailsLabel: "Что нужно от финансов",
+    detailsPlaceholder: "Например: согласовать счет, номер договора, сумма",
   },
   {
-    value: "Другое",
+    value: "other",
     label: "Другое",
     affectedItem: "",
-    detailsLabel: "Что именно нужно уточнить",
-    detailsPlaceholder: "Опишите важные детали для специалиста",
+    detailsLabel: "Уточнение",
+    detailsPlaceholder: "Опишите, какой тип запроса нужно передать специалисту",
   },
 ];
 
@@ -98,6 +98,10 @@ export function EscalationCard({
   const [requestType, setRequestType] = useState<string | null>(null);
   const [requestDetails, setRequestDetails] = useState("");
 
+  const selectedRequestType = useMemo(() => {
+    return REQUEST_TYPES.find((item) => item.value === requestType) ?? null;
+  }, [requestType]);
+
   useEffect(() => {
     if (!contextDefaults) {
       return;
@@ -106,6 +110,12 @@ export function EscalationCard({
     setRequesterEmail((current) => current || contextDefaults.requester_email);
     setOffice((current) => current || contextDefaults.office || null);
   }, [contextDefaults]);
+
+  useEffect(() => {
+    if (selectedRequestType?.affectedItem) {
+      setAffectedItem((current) => current || selectedRequestType.affectedItem);
+    }
+  }, [selectedRequestType]);
 
   const officeOptions = useMemo(() => {
     const values = [
@@ -125,10 +135,6 @@ export function EscalationCard({
     );
   }, [contextDefaults]);
 
-  const selectedRequestType = REQUEST_TYPES.find(
-    (item) => item.value === requestType,
-  );
-
   const context = useMemo<EscalationContext>(() => {
     const resolvedOffice =
       office === OTHER_VALUE ? customOffice.trim() : office?.trim();
@@ -141,18 +147,18 @@ export function EscalationCard({
       requester_email: requesterEmail.trim(),
       office: resolvedOffice || "",
       affected_item: resolvedAffectedItem || "",
-      request_type: requestType,
-      request_details: requestDetails.trim(),
+      request_type: selectedRequestType?.label ?? null,
+      request_details: requestDetails.trim() || null,
     };
   }, [
     affectedItem,
     customAffectedItem,
     customOffice,
     office,
-    requestDetails,
-    requestType,
     requesterEmail,
     requesterName,
+    requestDetails,
+    selectedRequestType,
   ]);
 
   const canSubmit = Boolean(
@@ -165,14 +171,6 @@ export function EscalationCard({
       context.request_details,
   );
 
-  function handleRequestTypeChange(value: string | null) {
-    setRequestType(value);
-    const nextType = REQUEST_TYPES.find((item) => item.value === value);
-    if (nextType?.affectedItem && !affectedItem) {
-      setAffectedItem(nextType.affectedItem);
-    }
-  }
-
   return (
     <Alert
       color="red"
@@ -184,11 +182,33 @@ export function EscalationCard({
         <div>
           <Text fw={600}>Уточните данные для черновика</Text>
           <Text size="sm" c="dimmed">
-            Проблема и уже описанные действия попадут в запрос из истории
-            диалога. Укажите, от кого запрос, где он возник и что именно
-            затронуто.
+            Проблема и уже описанные действия попадут в черновик запроса из истории диалога.
+            Укажите, от кого запрос, где он возник и что именно затронуто.
           </Text>
         </div>
+
+        <Group grow align="start">
+          <Select
+            label="Тип запроса"
+            data={REQUEST_TYPES.map((item) => ({
+              value: item.value,
+              label: item.label,
+            }))}
+            value={requestType}
+            placeholder="Выберите сценарий"
+            allowDeselect={false}
+            required
+            onChange={setRequestType}
+          />
+          <TextInput
+            label={selectedRequestType?.detailsLabel ?? "Уточнение"}
+            value={requestDetails}
+            maxLength={2000}
+            required
+            placeholder={selectedRequestType?.detailsPlaceholder}
+            onChange={(event) => setRequestDetails(event.currentTarget.value)}
+          />
+        </Group>
 
         <Group grow align="start">
           <TextInput
@@ -209,25 +229,6 @@ export function EscalationCard({
                 : undefined
             }
             onChange={(event) => setRequesterEmail(event.currentTarget.value)}
-          />
-        </Group>
-
-        <Group grow align="start">
-          <Select
-            label="Тип запроса"
-            data={REQUEST_TYPES}
-            value={requestType}
-            placeholder="Выберите сценарий"
-            allowDeselect={false}
-            required
-            onChange={handleRequestTypeChange}
-          />
-          <TextInput
-            label={selectedRequestType?.detailsLabel ?? "Уточнение"}
-            value={requestDetails}
-            placeholder={selectedRequestType?.detailsPlaceholder}
-            required
-            onChange={(event) => setRequestDetails(event.currentTarget.value)}
           />
         </Group>
 

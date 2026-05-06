@@ -66,7 +66,7 @@ class Ticket(Base):
     requester_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     office: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     affected_item: Mapped[Optional[str]] = mapped_column(String(150), nullable=True)
-    request_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    request_type: Mapped[Optional[str]] = mapped_column(String(60), nullable=True)
     request_details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Что пользователь уже пробовал — AI извлекает из диалога

@@ -5,9 +5,6 @@ import os
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.pool import NullPool
 
-from app.database import Base, get_db
-from app.main import app
-
 # Отдельная база для тестов — не трогает рабочие данные.
 # По умолчанию используем SQLite, чтобы тесты проходили "из коробки"
 # без поднятого Postgres. При необходимости можно переопределить через env:
@@ -16,6 +13,11 @@ TEST_DATABASE_URL = os.getenv(
     "TEST_DATABASE_URL",
     "sqlite+aiosqlite:///./test.db",
 )
+os.environ["DATABASE_URL"] = TEST_DATABASE_URL
+
+# App imports must happen after DATABASE_URL is forced to the test database.
+from app.database import Base, get_db
+from app.main import app
 
 test_engine = create_async_engine(
     TEST_DATABASE_URL,

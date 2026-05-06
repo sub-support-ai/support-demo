@@ -232,12 +232,13 @@ export function PrefilledTicketPanel({
               <TextInput
                 label="Тип запроса"
                 value={requestType}
-                maxLength={50}
+                maxLength={60}
                 onChange={(event) => setRequestType(event.currentTarget.value)}
               />
               <TextInput
                 label="Уточнение формы"
                 value={requestDetails}
+                maxLength={2000}
                 onChange={(event) => setRequestDetails(event.currentTarget.value)}
               />
             </Group>
@@ -292,6 +293,18 @@ export function PrefilledTicketPanel({
                 {ticket.affected_item ? ` · ${ticket.affected_item}` : ""}
               </Text>
             </div>
+            {(ticket.request_type || ticket.request_details) && (
+              <div>
+                <Text size="xs" c="dimmed" fw={600}>
+                  Форма запроса
+                </Text>
+                <Text size="sm">
+                  {[ticket.request_type, ticket.request_details]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </Text>
+              </div>
+            )}
             <div>
               <Text size="xs" c="dimmed" fw={600}>
                 Описание для агента

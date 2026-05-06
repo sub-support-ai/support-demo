@@ -54,6 +54,35 @@ def _stub_ai_services(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(ai_classifier, "classify_ticket", classify_fallback)
 
 
+@pytest.fixture(autouse=True)
+def _stub_ai_services(monkeypatch: pytest.MonkeyPatch):
+    from app.services import ai_classifier, conversation_ai
+
+    async def answer_fallback(conversation_id: int, messages: list[dict[str, str]]):
+        return {
+            "answer": "[AI Service временно недоступен. Ваше сообщение сохранено, агент ответит вручную.]",
+            "confidence": 0.0,
+            "escalate": True,
+            "sources": [],
+            "model_version": "test-fallback",
+        }
+
+    async def classify_fallback(ticket_id: int, title: str, body: str):
+        inferred = ai_classifier._infer_priority_from_text(title, body)
+        return {
+            "category": "other",
+            "department": "IT",
+            "priority": ai_classifier._choose_priority("средний", inferred),
+            "confidence": 0.0,
+            "draft_response": "[AI Service недоступен — требует агента]",
+            "model_version": "test-fallback",
+            "response_time_ms": 0,
+        }
+
+    monkeypatch.setattr(conversation_ai, "get_ai_answer", answer_fallback)
+    monkeypatch.setattr(ai_classifier, "classify_ticket", classify_fallback)
+
+
 async def register_user(client: AsyncClient, suffix: str) -> tuple[int, str]:
     """Регистрирует пользователя и возвращает (id, access_token)."""
     response = await client.post("/api/v1/auth/register", json={

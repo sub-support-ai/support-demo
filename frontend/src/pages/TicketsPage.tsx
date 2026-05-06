@@ -1,5 +1,6 @@
 import {
   Alert,
+  Group,
   LoadingOverlay,
   Paper,
   Select,
@@ -33,7 +34,7 @@ const DEPARTMENT_OPTIONS = [
 
 const SLA_OPTIONS = [
   { value: "overdue", label: "SLA просрочен" },
-  { value: "active", label: "SLA активен" },
+  { value: "active", label: "SLA в норме" },
 ];
 
 export function TicketsPage() {
@@ -41,54 +42,46 @@ export function TicketsPage() {
   const me = useMe(Boolean(token));
   const tickets = useTickets();
   const [search, setSearch] = useState("");
-  const [status, setStatus] = useState<string | null>(null);
-  const [department, setDepartment] = useState<string | null>(null);
-  const [sla, setSla] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<string | null>(null);
+  const [departmentFilter, setDepartmentFilter] = useState<string | null>(null);
+  const [slaFilter, setSlaFilter] = useState<string | null>(null);
 
-  const isOperator = me.data?.role === "agent" || me.data?.role === "admin";
-  const pageTitle = isOperator ? "Запросы" : "Мои запросы";
-  const pageDescription =
-    me.data?.role === "admin"
-      ? "Все обращения пользователей, SLA и работа специалистов."
-      : me.data?.role === "agent"
-        ? "Назначенные вам обращения и рабочая очередь."
+  const role = me.data?.role;
+  const title = role === "admin" || role === "agent" ? "Запросы" : "Мои запросы";
+  const description =
+    role === "admin"
+      ? "Все обращения пользователей. Подтвержденные запросы можно взять в работу или закрыть."
+      : role === "agent"
+        ? "Назначенные вам обращения. Подтвержденные запросы можно взять в работу или закрыть."
         : "Активные и отправленные обращения.";
 
-  const filteredTickets = useMemo(() => {
+  const visibleTickets = useMemo(() => {
     const query = search.trim().toLowerCase();
-    return (tickets.data ?? []).filter((ticket) => {
-      const haystack = [
-        ticket.title,
-        ticket.body,
-        ticket.requester_name,
-        ticket.requester_email,
-        ticket.office,
-        ticket.affected_item,
-        ticket.request_type,
-        ticket.request_details,
-      ]
-        .filter(Boolean)
-        .join("\n")
-        .toLowerCase();
-
-      if (query && !haystack.includes(query)) {
-        return false;
-      }
-      if (status && ticket.status !== status) {
-        return false;
-      }
-      if (department && ticket.department !== department) {
-        return false;
-      }
-      if (sla === "overdue" && !ticket.is_sla_breached) {
-        return false;
-      }
-      if (sla === "active" && (!ticket.sla_deadline_at || ticket.is_sla_breached)) {
-        return false;
-      }
-      return true;
+    return tickets.data?.filter((ticket) => {
+      const matchesSearch =
+        !query ||
+        [
+          ticket.title,
+          ticket.body,
+          ticket.requester_name,
+          ticket.requester_email,
+          ticket.office,
+          ticket.affected_item,
+          ticket.request_type,
+          ticket.request_details,
+        ]
+          .filter(Boolean)
+          .some((value) => value!.toLowerCase().includes(query));
+      const matchesStatus = !statusFilter || ticket.status === statusFilter;
+      const matchesDepartment =
+        !departmentFilter || ticket.department === departmentFilter;
+      const matchesSla =
+        !slaFilter ||
+        (slaFilter === "overdue" && ticket.is_sla_breached) ||
+        (slaFilter === "active" && ticket.sla_deadline_at && !ticket.is_sla_breached);
+      return matchesSearch && matchesStatus && matchesDepartment && matchesSla;
     });
-  }, [department, search, sla, status, tickets.data]);
+  }, [departmentFilter, search, slaFilter, statusFilter, tickets.data]);
 
   const error = tickets.error || me.error;
 
@@ -97,47 +90,49 @@ export function TicketsPage() {
       <Paper className="tickets-panel" withBorder>
         <LoadingOverlay visible={tickets.isLoading || me.isLoading} />
         <Title order={2} mb="xs">
-          {pageTitle}
+          {title}
         </Title>
         <Text size="sm" c="dimmed" mb="md">
-          {pageDescription}
+          {description}
         </Text>
+
+        <Group className="ticket-filters" align="end" mb="md">
+          <TextInput
+            label="Поиск"
+            placeholder="Тема, заявитель, офис, объект"
+            value={search}
+            onChange={(event) => setSearch(event.currentTarget.value)}
+          />
+          <Select
+            label="Статус"
+            data={STATUS_OPTIONS}
+            value={statusFilter}
+            clearable
+            onChange={setStatusFilter}
+          />
+          <Select
+            label="Отдел"
+            data={DEPARTMENT_OPTIONS}
+            value={departmentFilter}
+            clearable
+            onChange={setDepartmentFilter}
+          />
+          <Select
+            label="SLA"
+            data={SLA_OPTIONS}
+            value={slaFilter}
+            clearable
+            onChange={setSlaFilter}
+          />
+        </Group>
+
         {error && (
           <Alert color="red" variant="light" mb="md">
             {getApiError(error)}
           </Alert>
         )}
 
-        <div className="ticket-filters">
-          <TextInput
-            placeholder="Поиск по теме, офису, объекту или заявителю"
-            value={search}
-            onChange={(event) => setSearch(event.currentTarget.value)}
-          />
-          <Select
-            placeholder="Статус"
-            data={STATUS_OPTIONS}
-            value={status}
-            clearable
-            onChange={setStatus}
-          />
-          <Select
-            placeholder="Отдел"
-            data={DEPARTMENT_OPTIONS}
-            value={department}
-            clearable
-            onChange={setDepartment}
-          />
-          <Select
-            placeholder="SLA"
-            data={SLA_OPTIONS}
-            value={sla}
-            clearable
-            onChange={setSla}
-          />
-        </div>
-
-        {!filteredTickets.length && !tickets.isLoading ? (
+        {!visibleTickets?.length && !tickets.isLoading ? (
           <div className="empty-state tickets">
             <Text fw={600}>
               {tickets.data?.length ? "По фильтрам запросов нет" : "Запросов нет"}
@@ -145,8 +140,12 @@ export function TicketsPage() {
           </div>
         ) : (
           <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
-            {filteredTickets.map((ticket) => (
-              <TicketCard key={ticket.id} ticket={ticket} role={me.data?.role} />
+            {visibleTickets?.map((ticket) => (
+              <TicketCard
+                key={ticket.id}
+                ticket={ticket}
+                currentUserRole={me.data?.role}
+              />
             ))}
           </SimpleGrid>
         )}

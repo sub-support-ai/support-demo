@@ -49,6 +49,7 @@ async def assign_agent(
         select(Agent)
         .where(Agent.department == department)
         .where(Agent.is_active == True)
+        .with_for_update()
         .limit(1)
     )
 

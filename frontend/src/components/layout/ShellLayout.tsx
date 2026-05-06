@@ -22,7 +22,8 @@ export function ShellLayout() {
   const { token, logout } = useAuth();
   const { data: me } = useMe(Boolean(token));
   const location = useLocation();
-  const requestLabel = me?.role === "user" ? "Мои запросы" : "Запросы";
+  const requestsLabel =
+    me?.role === "admin" || me?.role === "agent" ? "Запросы" : "Мои запросы";
 
   return (
     <AppShell header={{ height: 58 }} navbar={{ width: 240, breakpoint: "sm" }}>
@@ -68,7 +69,7 @@ export function ShellLayout() {
         <NavLink
           component={RouterNavLink}
           to="/tickets"
-          label={requestLabel}
+          label={requestsLabel}
           leftSection={<IconFileText size={18} />}
           active={location.pathname.startsWith("/tickets")}
         />

@@ -2,14 +2,19 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "./client";
 import type {
+  ResolveTicketPayload,
   Ticket,
   TicketComment,
   TicketCommentCreate,
   TicketDraftUpdate,
   TicketFeedbackPayload,
+  TicketStatusUpdate,
 } from "./types";
 
-function updateTicketInCache(queryClient: ReturnType<typeof useQueryClient>, ticket: Ticket) {
+function updateTicketInCache(
+  queryClient: ReturnType<typeof useQueryClient>,
+  ticket: Ticket,
+) {
   queryClient.setQueryData<Ticket[]>(["tickets"], (current) =>
     current?.map((item) => (item.id === ticket.id ? ticket : item)) ?? current,
   );
@@ -35,6 +40,8 @@ export function useConfirmTicket() {
     },
     onSuccess: (ticket) => {
       updateTicketInCache(queryClient, ticket);
+      queryClient.invalidateQueries({ queryKey: ["tickets"] });
+      queryClient.invalidateQueries({ queryKey: ["stats"] });
     },
   });
 }
@@ -57,6 +64,7 @@ export function useUpdateTicketDraft() {
     },
     onSuccess: (ticket) => {
       updateTicketInCache(queryClient, ticket);
+      queryClient.invalidateQueries({ queryKey: ["tickets"] });
     },
   });
 }
@@ -66,16 +74,17 @@ export function useUpdateTicketStatus() {
   return useMutation({
     mutationFn: async ({
       ticketId,
-      status,
+      payload,
     }: {
       ticketId: number;
-      status: string;
+      payload: TicketStatusUpdate;
     }) => {
-      const { data } = await api.patch<Ticket>(`/tickets/${ticketId}`, { status });
+      const { data } = await api.patch<Ticket>(`/tickets/${ticketId}`, payload);
       return data;
     },
     onSuccess: (ticket) => {
       updateTicketInCache(queryClient, ticket);
+      queryClient.invalidateQueries({ queryKey: ["tickets"] });
       queryClient.invalidateQueries({ queryKey: ["stats"] });
     },
   });
@@ -84,14 +93,22 @@ export function useUpdateTicketStatus() {
 export function useResolveTicket() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (ticketId: number) => {
-      const { data } = await api.patch<Ticket>(`/tickets/${ticketId}/resolve`, {
-        agent_accepted_ai_response: false,
-      });
+    mutationFn: async ({
+      ticketId,
+      payload,
+    }: {
+      ticketId: number;
+      payload: ResolveTicketPayload;
+    }) => {
+      const { data } = await api.patch<Ticket>(
+        `/tickets/${ticketId}/resolve`,
+        payload,
+      );
       return data;
     },
     onSuccess: (ticket) => {
       updateTicketInCache(queryClient, ticket);
+      queryClient.invalidateQueries({ queryKey: ["tickets"] });
       queryClient.invalidateQueries({ queryKey: ["stats"] });
     },
   });
@@ -100,13 +117,13 @@ export function useResolveTicket() {
 export function useTicketComments(ticketId?: number, enabled = false) {
   return useQuery({
     queryKey: ["tickets", ticketId, "comments"],
+    enabled: Boolean(ticketId) && enabled,
     queryFn: async () => {
       const { data } = await api.get<TicketComment[]>(
         `/tickets/${ticketId}/comments`,
       );
       return data;
     },
-    enabled: Boolean(ticketId) && enabled,
   });
 }
 
@@ -126,9 +143,9 @@ export function useCreateTicketComment() {
       );
       return data;
     },
-    onSuccess: (_comment, variables) => {
+    onSuccess: (comment) => {
       queryClient.invalidateQueries({
-        queryKey: ["tickets", variables.ticketId, "comments"],
+        queryKey: ["tickets", comment.ticket_id, "comments"],
       });
     },
   });
@@ -152,6 +169,7 @@ export function useSubmitTicketFeedback() {
     },
     onSuccess: (ticket) => {
       updateTicketInCache(queryClient, ticket);
+      queryClient.invalidateQueries({ queryKey: ["tickets"] });
       queryClient.invalidateQueries({ queryKey: ["stats"] });
     },
   });

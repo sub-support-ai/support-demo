@@ -32,8 +32,8 @@ class TicketCreate(TicketBase):
     department: DepartmentLiteral | None = None
     office: str | None = Field(default=None, max_length=100)
     affected_item: str | None = Field(default=None, max_length=150)
-    request_type: str | None = Field(default=None, max_length=50)
-    request_details: str | None = None
+    request_type: str | None = Field(default=None, max_length=60)
+    request_details: str | None = Field(default=None, max_length=2000)
 
 
 class TicketStatusUpdate(BaseModel):
@@ -50,8 +50,8 @@ class TicketDraftUpdate(BaseModel):
     steps_tried: str | None = None
     office: str | None = Field(default=None, max_length=100)
     affected_item: str | None = Field(default=None, max_length=150)
-    request_type: str | None = Field(default=None, max_length=50)
-    request_details: str | None = None
+    request_type: str | None = Field(default=None, max_length=60)
+    request_details: str | None = Field(default=None, max_length=2000)
 
 
 class TicketCommentCreate(BaseModel):

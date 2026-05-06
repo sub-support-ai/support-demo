@@ -1,5 +1,27 @@
 export type UserRole = "user" | "agent" | "admin";
 
+export type TicketStatus =
+  | "new"
+  | "pending_user"
+  | "confirmed"
+  | "in_progress"
+  | "resolved"
+  | "closed"
+  | "ai_processing"
+  | "declined"
+  | "escalated"
+  | "active";
+
+export type TicketMutableStatus =
+  | "new"
+  | "pending_user"
+  | "confirmed"
+  | "in_progress"
+  | "resolved"
+  | "closed"
+  | "ai_processing"
+  | "declined";
+
 export interface TokenResponse {
   access_token: string;
   token_type: string;
@@ -60,7 +82,7 @@ export interface Ticket {
   title: string;
   body: string;
   user_priority: number;
-  status: string;
+  status: TicketStatus | string;
   department: string;
   ticket_source: string;
   requester_name?: string | null;
@@ -98,6 +120,15 @@ export interface TicketDraftUpdate {
   affected_item?: string | null;
   request_type?: string | null;
   request_details?: string | null;
+}
+
+export interface TicketStatusUpdate {
+  status: TicketMutableStatus;
+}
+
+export interface ResolveTicketPayload {
+  agent_accepted_ai_response: boolean;
+  correction_lag_seconds?: number | null;
 }
 
 export interface EscalationContext {

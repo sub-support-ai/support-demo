@@ -15,14 +15,22 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _normalize_priority(priority: object) -> str:
-    if not isinstance(priority, str):
-        return "средний"
-    return priority.strip().lower() or "средний"
+def _normalize_priority(ticket: Any) -> str:
+    priority = getattr(ticket, "ai_priority", None)
+    if isinstance(priority, str) and priority.strip():
+        return priority.strip().lower()
+    user_priority = getattr(ticket, "user_priority", None)
+    if isinstance(user_priority, int):
+        if user_priority <= 2:
+            return "высокий"
+        if user_priority == 3:
+            return "средний"
+        return "низкий"
+    return "средний"
 
 
 def get_sla_hours(ticket: Any) -> int:
-    priority = _normalize_priority(getattr(ticket, "ai_priority", None))
+    priority = _normalize_priority(ticket)
     return SLA_HOURS_BY_PRIORITY.get(priority, DEFAULT_SLA_HOURS)
 
 

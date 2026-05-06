@@ -145,8 +145,8 @@ class EscalationContext(BaseModel):
     requester_email: EmailStr
     office: str = Field(min_length=1, max_length=100)
     affected_item: str = Field(min_length=1, max_length=150)
-    request_type: str | None = Field(default=None, max_length=50)
-    request_details: str | None = None
+    request_type: str | None = Field(default=None, max_length=60)
+    request_details: str | None = Field(default=None, max_length=2000)
 
     @field_validator("requester_name", "office", "affected_item")
     @classmethod
@@ -156,6 +156,13 @@ class EscalationContext(BaseModel):
             raise ValueError("Field must not be empty")
         return value
 
+    @field_validator("requester_email", mode="before")
+    @classmethod
+    def strip_email(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
     @field_validator("request_type", "request_details")
     @classmethod
     def strip_optional_text(cls, value: str | None) -> str | None:
@@ -163,13 +170,6 @@ class EscalationContext(BaseModel):
             return None
         value = value.strip()
         return value or None
-
-    @field_validator("requester_email", mode="before")
-    @classmethod
-    def strip_email(cls, value: object) -> object:
-        if isinstance(value, str):
-            return value.strip()
-        return value
 
 
 class EscalatePayload(BaseModel):
@@ -720,8 +720,7 @@ def _build_intake_answer() -> str:
     return (
         "Соберу данные для черновика обращения. Из истории возьму описание проблемы "
         "и уже упомянутые действия. Уточните тип запроса, заявителя, офис, затронутый объект "
-        "и конкретные детали по форме; "
-        "после этого сформирую черновик для специалиста."
+        "и конкретные детали по форме; после этого сформирую черновик для специалиста."
     )
 
 

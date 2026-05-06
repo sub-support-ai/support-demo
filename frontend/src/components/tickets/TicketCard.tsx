@@ -11,8 +11,14 @@ import {
   Textarea,
   Title,
 } from "@mantine/core";
+import {
+  IconCheck,
+  IconMessageCircle,
+  IconPlayerPlay,
+} from "@tabler/icons-react";
 import { useMemo, useState } from "react";
 
+import { getApiError } from "../../api/client";
 import { useResponseTemplates } from "../../api/responseTemplates";
 import type { ResponseTemplate, Ticket, UserRole } from "../../api/types";
 import {
@@ -27,7 +33,15 @@ import {
   getTicketPriorityLabel,
 } from "../../lib/ticketLabels";
 
-function formatDateTime(value?: string | null) {
+function getCorrectionLagSeconds(createdAt: string): number {
+  const createdTime = new Date(createdAt).getTime();
+  if (Number.isNaN(createdTime)) {
+    return 0;
+  }
+  return Math.max(0, Math.round((Date.now() - createdTime) / 1000));
+}
+
+function formatDateTime(value?: string | null): string | null {
   if (!value) {
     return null;
   }
@@ -62,30 +76,42 @@ function renderTemplate(template: ResponseTemplate, ticket: Ticket) {
 
 export function TicketCard({
   ticket,
-  role = "user",
+  currentUserRole,
+  role,
 }: {
   ticket: Ticket;
+  currentUserRole?: UserRole;
   role?: UserRole;
 }) {
+  const viewerRole = currentUserRole ?? role ?? "user";
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [commentText, setCommentText] = useState("");
   const [internalComment, setInternalComment] = useState(true);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
+
   const comments = useTicketComments(ticket.id, commentsOpen);
   const createComment = useCreateTicketComment();
   const updateStatus = useUpdateTicketStatus();
   const resolveTicket = useResolveTicket();
   const feedback = useSubmitTicketFeedback();
 
-  const isOperator = role === "agent" || role === "admin";
-  const isOwner = role === "user";
+  const isOperator = viewerRole === "agent" || viewerRole === "admin";
+  const isOwner = viewerRole === "user";
   const isClosed = ticket.status === "closed" || ticket.status === "resolved";
-  const canOperatorAct = isOperator && ticket.confirmed_by_user && !isClosed;
-  const slaDate = formatDateTime(ticket.sla_deadline_at);
+  const canOperate =
+    isOperator &&
+    ticket.status !== "pending_user" &&
+    ticket.confirmed_by_user &&
+    !isClosed;
+  const canComment = isOperator && ticket.confirmed_by_user;
+  const mutationError =
+    updateStatus.error ?? resolveTicket.error ?? createComment.error ?? comments.error;
+  const slaDeadline = formatDateTime(ticket.sla_deadline_at);
+
   const templates = useResponseTemplates({
     department: ticket.department,
     requestType: ticket.request_type,
-    enabled: commentsOpen && canOperatorAct,
+    enabled: commentsOpen && canOperate,
   });
 
   const templateOptions = useMemo(
@@ -99,17 +125,14 @@ export function TicketCard({
     [templates.data],
   );
 
-  async function handleAddComment() {
+  async function handleCreateComment() {
     const content = commentText.trim();
     if (!content) {
       return;
     }
     await createComment.mutateAsync({
       ticketId: ticket.id,
-      payload: {
-        content,
-        internal: internalComment,
-      },
+      payload: { content, internal: internalComment },
     });
     setCommentText("");
     setSelectedTemplateId(null);
@@ -137,9 +160,11 @@ export function TicketCard({
           </div>
           <Badge>{getStatusLabel(ticket.status)}</Badge>
         </Group>
+
         <Text size="sm" lineClamp={3}>
           {ticket.body}
         </Text>
+
         {(ticket.requester_name || ticket.office || ticket.affected_item) && (
           <Text size="xs" c="dimmed">
             {[ticket.requester_name, ticket.office, ticket.affected_item]
@@ -147,6 +172,7 @@ export function TicketCard({
               .join(" · ")}
           </Text>
         )}
+
         {(ticket.request_type || ticket.request_details) && (
           <div className="ticket-form-summary">
             {ticket.request_type && (
@@ -161,12 +187,13 @@ export function TicketCard({
             )}
           </div>
         )}
+
         <Group gap="xs">
           <Badge variant="light">{ticket.department}</Badge>
           <Badge variant="light">{getTicketPriorityLabel(ticket)}</Badge>
-          {slaDate && (
-            <Badge color={ticket.is_sla_breached ? "red" : "gray"} variant="light">
-              {ticket.is_sla_breached ? "SLA просрочен" : "SLA до"} {slaDate}
+          {slaDeadline && (
+            <Badge color={ticket.is_sla_breached ? "red" : "yellow"} variant="light">
+              SLA {ticket.is_sla_breached ? "просрочен" : "до"} {slaDeadline}
             </Badge>
           )}
           {(ticket.reopen_count ?? 0) > 0 && (
@@ -181,35 +208,48 @@ export function TicketCard({
           )}
         </Group>
 
-        {canOperatorAct && (
-          <Group gap="xs">
-            {ticket.status === "confirmed" && (
+        {mutationError && (
+          <Alert color="red" variant="light">
+            {getApiError(mutationError)}
+          </Alert>
+        )}
+
+        {canOperate && (
+          <Group gap="xs" justify="flex-end">
+            {ticket.status !== "in_progress" && (
               <Button
                 size="xs"
+                variant="light"
+                leftSection={<IconPlayerPlay size={14} />}
                 loading={updateStatus.isPending}
                 onClick={() =>
-                  updateStatus.mutate({ ticketId: ticket.id, status: "in_progress" })
+                  updateStatus.mutate({
+                    ticketId: ticket.id,
+                    payload: { status: "in_progress" },
+                  })
                 }
               >
                 В работу
               </Button>
             )}
-            {ticket.status === "in_progress" && (
-              <Button
-                size="xs"
-                color="teal"
-                loading={resolveTicket.isPending}
-                onClick={() => resolveTicket.mutate(ticket.id)}
-              >
-                Закрыть
-              </Button>
-            )}
             <Button
               size="xs"
-              variant="light"
-              onClick={() => setCommentsOpen((value) => !value)}
+              color="green"
+              leftSection={<IconCheck size={14} />}
+              loading={resolveTicket.isPending}
+              onClick={() =>
+                resolveTicket.mutate({
+                  ticketId: ticket.id,
+                  payload: {
+                    agent_accepted_ai_response: true,
+                    correction_lag_seconds: getCorrectionLagSeconds(
+                      ticket.created_at,
+                    ),
+                  },
+                })
+              }
             >
-              Комментарии
+              Закрыть
             </Button>
           </Group>
         )}
@@ -246,69 +286,87 @@ export function TicketCard({
           </Group>
         )}
 
-        {commentsOpen && (
-          <Stack className="ticket-comments" gap="xs">
-            {comments.data?.length ? (
-              comments.data.map((comment) => (
-                <Paper key={comment.id} className="ticket-comment" withBorder>
-                  <Group justify="space-between" gap="xs">
-                    <Text size="xs" fw={600}>
-                      {comment.author_username}
-                    </Text>
-                    <Badge size="xs" variant="light">
-                      {comment.internal ? "Внутренний" : "Для пользователя"}
-                    </Badge>
-                  </Group>
-                  <Text size="sm">{comment.content}</Text>
-                </Paper>
-              ))
-            ) : (
-              <Text size="sm" c="dimmed">
-                Комментариев пока нет.
-              </Text>
-            )}
-            {createComment.error && (
-              <Alert color="red" variant="light">
-                Не удалось добавить комментарий.
-              </Alert>
-            )}
-            {canOperatorAct && (
-              <Select
-                placeholder="Вставить шаблон ответа"
-                data={templateOptions}
-                value={selectedTemplateId}
-                clearable
-                searchable
-                nothingFoundMessage="Шаблонов нет"
-                disabled={templates.isLoading || !templateOptions.length}
-                onChange={handleTemplateSelect}
-              />
-            )}
-            <Textarea
-              value={commentText}
-              minRows={2}
-              maxRows={5}
-              autosize
-              placeholder="Кратко зафиксируйте ход работы или решение"
-              onChange={(event) => setCommentText(event.currentTarget.value)}
-            />
-            <Group justify="space-between">
-              <Checkbox
-                checked={internalComment}
-                label="Внутренний комментарий"
-                onChange={(event) =>
-                  setInternalComment(event.currentTarget.checked)
-                }
-              />
+        {canComment && (
+          <Stack gap="xs">
+            <Group justify="flex-end">
               <Button
                 size="xs"
-                loading={createComment.isPending}
-                disabled={!commentText.trim()}
-                onClick={handleAddComment}
+                variant="subtle"
+                leftSection={<IconMessageCircle size={14} />}
+                onClick={() => setCommentsOpen((value) => !value)}
               >
-                Добавить
+                Комментарии
               </Button>
             </Group>
+
+            {commentsOpen && (
+              <Stack className="ticket-comments" gap="xs">
+                {comments.data?.length ? (
+                  comments.data.map((comment) => (
+                    <div className="ticket-comment" key={comment.id}>
+                      <Group justify="space-between" gap="xs">
+                        <Text size="xs" fw={600}>
+                          {comment.author_username}
+                        </Text>
+                        <Group gap={6}>
+                          <Badge size="xs" variant="light">
+                            {comment.internal ? "Внутренний" : "Для пользователя"}
+                          </Badge>
+                          <Text size="xs" c="dimmed">
+                            {formatDateTime(comment.created_at)}
+                          </Text>
+                        </Group>
+                      </Group>
+                      <Text size="sm">{comment.content}</Text>
+                    </div>
+                  ))
+                ) : (
+                  <Text size="sm" c="dimmed">
+                    Комментариев пока нет.
+                  </Text>
+                )}
+
+                {canOperate && (
+                  <Select
+                    placeholder="Вставить шаблон ответа"
+                    data={templateOptions}
+                    value={selectedTemplateId}
+                    clearable
+                    searchable
+                    nothingFoundMessage="Шаблонов нет"
+                    disabled={templates.isLoading || !templateOptions.length}
+                    onChange={handleTemplateSelect}
+                  />
+                )}
+
+                <Textarea
+                  value={commentText}
+                  minRows={2}
+                  maxRows={5}
+                  autosize
+                  maxLength={4000}
+                  placeholder="Кратко зафиксируйте ход работы или решение"
+                  onChange={(event) => setCommentText(event.currentTarget.value)}
+                />
+                <Group justify="space-between">
+                  <Checkbox
+                    checked={internalComment}
+                    label="Внутренний комментарий"
+                    onChange={(event) =>
+                      setInternalComment(event.currentTarget.checked)
+                    }
+                  />
+                  <Button
+                    size="xs"
+                    loading={createComment.isPending}
+                    disabled={!commentText.trim()}
+                    onClick={handleCreateComment}
+                  >
+                    Добавить
+                  </Button>
+                </Group>
+              </Stack>
+            )}
           </Stack>
         )}
       </Stack>
