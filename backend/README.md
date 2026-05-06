@@ -76,11 +76,42 @@ py -m scripts.seed_demo_agents
 дубликаты. Пароль задаётся через `DEMO_AGENT_PASSWORD`; если переменная не
 задана, используется локальный демо-пароль `DemoPass123!`.
 
+Для демонстрации шаблонов ответов и поиска по базе знаний также запустите:
+
+```bash
+py -m scripts.seed_response_templates
+py -m scripts.seed_knowledge_articles
+```
+
+База знаний использует PostgreSQL full-text search в production:
+
+- `knowledge_articles.search_vector` создаётся миграцией как generated `tsvector`;
+- GIN-индекс ускоряет поиск по статьям;
+- ранжирование сочетает `ts_rank_cd`, фильтры по контексту, свежесть статьи и feedback пользователей;
+- в тестах на SQLite используется переносимый fallback без PostgreSQL-специфичных операторов.
+
 6) Запустите API:
 
 ```bash
 py -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
+
+7) В отдельном терминале запустите worker ответов:
+
+```bash
+py -m app.workers.ai_worker
+```
+
+Без worker чат сохранит сообщение и покажет обработку, но ответ не появится,
+пока задача не будет обработана.
+
+8) В отдельном терминале запустите SLA worker:
+
+```bash
+py -m app.workers.sla_worker
+```
+
+Он периодически проверяет просроченные подтверждённые запросы и эскалирует их старшему специалисту отдела.
 
 Для локального запуска рядом с AI-service обычно нужно переопределить:
 

@@ -1,9 +1,13 @@
 from datetime import datetime
+from typing import Optional, TYPE_CHECKING
 
 from sqlalchemy import Boolean, DateTime, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+
+if TYPE_CHECKING:
+    from app.models.agent import Agent
 
 
 class User(Base):
@@ -27,3 +31,8 @@ class User(Base):
 
     # Один пользователь — много тикетов
     tickets: Mapped[list["Ticket"]] = relationship("Ticket", back_populates="user")
+    agent_profile: Mapped[Optional["Agent"]] = relationship(
+        "Agent",
+        back_populates="user",
+        uselist=False,
+    )

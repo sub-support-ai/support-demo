@@ -5,7 +5,7 @@ import type { ApiErrorPayload } from "./types";
 export const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api/v1";
 export const API_TIMEOUT_MS = Number(
-  import.meta.env.VITE_API_TIMEOUT_MS ?? 180000,
+  import.meta.env.VITE_API_TIMEOUT_MS ?? 210000,
 );
 
 const TOKEN_KEY = "tp_access_token";
@@ -54,6 +54,12 @@ export function getApiError(error: unknown): string {
         .map((item) => item.msg)
         .filter(Boolean)
         .join("; ");
+    }
+    if (detail && typeof detail === "object") {
+      const message = detail.message ?? "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РґР°РЅРЅС‹Рµ";
+      return detail.fields?.length
+        ? `${message}: ${detail.fields.join(", ")}`
+        : message;
     }
     return detail ?? error.message;
   }

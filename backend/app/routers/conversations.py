@@ -28,7 +28,7 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,12 +36,19 @@ from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.ai_log import AILog
 from app.models.conversation import Conversation
+from app.models.knowledge_article import KnowledgeArticleFeedback
 from app.models.message import Message
 from app.models.ticket import Ticket
 from app.models.user import User
 from app.schemas.ticket import TicketRead
+from app.services.ai_jobs import enqueue_ai_response_job
 from app.services.audit import log_event
 from app.services.routing import assign_agent
+from app.services.ticket_body import (
+    build_context_block,
+    clean_optional_text,
+    clean_text_with_fallback,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +70,21 @@ RED_ZONE_THRESHOLD = 0.6
 # деньги, ухудшение качества (модель путается). 20 — компромисс между
 # сохранением темы и стоимостью.
 MAX_HISTORY_MESSAGES = 20
+
+SUPPORT_DRAFT_INTENT_TERMS = (
+    "тикет", "заявк", "черновик", "обращен", "запрос", "техподдерж", "тех поддерж",
+    "специалист", "саппорт", "support",
+)
+SUPPORT_DRAFT_ACTION_TERMS = (
+    "созда", "сформир", "оформ", "заведи", "завести", "отправ", "эскал",
+)
+URGENT_TERMS = (
+    "срочно", "авар", "критич", "опасн", "горит", "дым", "искр",
+)
+PHYSICAL_INCIDENT_TERMS = (
+    "провод", "кабел", "розетк", "удлинител", "электр", "питани", "сломал",
+    "сломался", "порвал", "порвался", "оторвал", "поврежд",
+)
 
 
 # ── Схемы запросов/ответов (определены здесь чтобы не плодить файлы) ──────────
@@ -87,6 +109,9 @@ class SourceRead(BaseModel):
     """Источник из RAG, на который опирался AI при ответе."""
     title: str
     url: str | None = None
+    article_id: int | None = None
+    score: float | None = None
+    decision: str | None = None
 
 
 class MessageRead(BaseModel):
@@ -113,6 +138,42 @@ class MessageRead(BaseModel):
     ai_confidence: float | None = None
     ai_escalate: bool | None = None
     requires_escalation: bool | None = None
+
+
+class EscalationContext(BaseModel):
+    requester_name: str = Field(min_length=1, max_length=100)
+    requester_email: EmailStr
+    office: str = Field(min_length=1, max_length=100)
+    affected_item: str = Field(min_length=1, max_length=150)
+    request_type: str | None = Field(default=None, max_length=50)
+    request_details: str | None = None
+
+    @field_validator("requester_name", "office", "affected_item")
+    @classmethod
+    def strip_required_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Field must not be empty")
+        return value
+
+    @field_validator("request_type", "request_details")
+    @classmethod
+    def strip_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        return value or None
+
+    @field_validator("requester_email", mode="before")
+    @classmethod
+    def strip_email(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+
+class EscalatePayload(BaseModel):
+    context: EscalationContext
 
 
 # ── POST /conversations/ — создать диалог ─────────────────────────────────────
@@ -207,6 +268,25 @@ async def add_message(
         conversation_id, db, current_user
     )
 
+    if conversation.status == "escalated":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Диалог уже эскалирован в тикет. Подтвердите черновик "
+                "или начните новый диалог."
+            ),
+        )
+    if conversation.status == "ai_processing":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Дождитесь ответа перед созданием черновика.",
+        )
+    if conversation.status == "ai_processing":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Дождитесь ответа по предыдущему сообщению.",
+        )
+
     # Сохраняем сообщение пользователя
     user_message = Message(
         conversation_id=conversation_id,
@@ -217,47 +297,11 @@ async def add_message(
     await db.flush()
     await db.refresh(user_message)
 
-    # Собираем историю для AI (вместе со свежим user_message).
-    # Берём ПОСЛЕДНИЕ MAX_HISTORY_MESSAGES сообщений, в хронологическом порядке.
-    history = await _load_history_for_ai(db, conversation_id)
-
-    # Зовём AI: получаем dict с answer/confidence/escalate/sources/model_version
-    ai_payload = await _get_ai_answer(conversation_id, history)
-
-    # Применяем правило "красной зоны": если модель не уверена ИЛИ сама
-    # попросила эскалацию — помечаем сообщение как требующее эскалации.
-    # Клиент использует этот флаг, чтобы показать кнопку "Создать тикет".
-    confidence = ai_payload.get("confidence")
-    escalate = bool(ai_payload.get("escalate"))
-    requires_escalation = (
-        escalate
-        or (confidence is not None and confidence < RED_ZONE_THRESHOLD)
-    )
-
-    # Сохраняем ответ AI вместе с метаданными — нужно для UI (sources)
-    # и для офлайн-аудита решений модели (confidence/escalate).
-    ai_message = Message(
-        conversation_id=conversation_id,
-        role="ai",
-        content=ai_payload.get("answer", ""),
-        ai_confidence=confidence,
-        ai_escalate=escalate,
-        sources=ai_payload.get("sources") or None,
-        requires_escalation=requires_escalation,
-    )
-    db.add(ai_message)
+    conversation.status = "ai_processing"
+    await enqueue_ai_response_job(db, conversation_id)
     await db.flush()
-    await db.refresh(ai_message)
 
-    # Если AI ответил уверенно и не просит эскалацию — диалог считается
-    # потенциально решённым. Финально status="resolved" должен ставить
-    # клиент после явной обратной связи "помогло"; здесь не трогаем.
-    # Но: убедимся, что conversation не остался в "escalated" из старой
-    # эскалации, если пользователь продолжил писать — переоткрываем.
-    if conversation.status == "escalated":
-        conversation.status = "active"
-
-    return [user_message, ai_message]
+    return [user_message]
 
 
 # ── GET /conversations/{id}/messages — история сообщений ──────────────────────
@@ -278,7 +322,7 @@ async def get_messages(
     result = await db.execute(
         select(Message)
         .where(Message.conversation_id == conversation_id)
-        .order_by(Message.created_at.asc())
+        .order_by(Message.created_at.asc(), Message.id.asc())
     )
     return result.scalars().all()
 
@@ -313,6 +357,7 @@ class EscalateResponse(BaseModel):
 async def escalate_conversation(
     conversation_id: int,
     request: Request,
+    payload: EscalatePayload,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -323,13 +368,21 @@ async def escalate_conversation(
     conversation = await _get_conversation_for_user(
         conversation_id, db, current_user
     )
+    if conversation.status == "escalated":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Диалог уже эскалирован в тикет. Подтвердите черновик "
+                "или начните новый диалог."
+            ),
+        )
 
     # Подтягиваем все сообщения диалога — без лимита: для классификации
     # нам нужен максимум контекста (диалог короткий, обычно 5-15 сообщений).
     msg_result = await db.execute(
         select(Message)
         .where(Message.conversation_id == conversation_id)
-        .order_by(Message.created_at.asc())
+        .order_by(Message.created_at.asc(), Message.id.asc())
     )
     messages = list(msg_result.scalars().all())
 
@@ -355,7 +408,6 @@ async def escalate_conversation(
     for m in messages:
         prefix = "Пользователь" if m.role == "user" else "AI"
         body_parts.append(f"{prefix}: {m.content}")
-    body = "\n\n".join(body_parts)
 
     # Классифицируем
     ai_result = await classify_ticket(
@@ -374,6 +426,36 @@ async def escalate_conversation(
     # Простая эвристика на ключевые фразы; полноценное извлечение через
     # LLM — отдельная задача (iteration 2). Здесь — минимально полезно.
     steps_tried = _extract_steps_tried(messages)
+    requester_name = clean_text_with_fallback(
+        payload.context.requester_name,
+        current_user.username,
+    )
+    requester_email = clean_text_with_fallback(
+        payload.context.requester_email,
+        current_user.email,
+    )
+    office = clean_optional_text(payload.context.office)
+    affected_item = clean_optional_text(payload.context.affected_item)
+    request_type = clean_optional_text(payload.context.request_type)
+    request_details = clean_optional_text(payload.context.request_details)
+
+    form_lines: list[str] = []
+    if request_type:
+        form_lines.append(f"Тип запроса: {request_type}")
+    if request_details:
+        form_lines.append(f"Уточнение формы: {request_details}")
+
+    body = build_context_block(
+        requester_name=requester_name,
+        requester_email=requester_email,
+        office=office,
+        affected_item=affected_item,
+        creator_name=current_user.username,
+        creator_email=current_user.email,
+    )
+    if form_lines:
+        body += "\n\nФорма запроса:\n" + "\n".join(form_lines)
+    body += "\n\n" + "\n\n".join(body_parts)
 
     settings = get_settings()
     ticket = Ticket(
@@ -381,6 +463,12 @@ async def escalate_conversation(
         conversation_id=conversation_id,
         title=title,
         body=body,
+        requester_name=requester_name,
+        requester_email=requester_email,
+        office=office,
+        affected_item=affected_item,
+        request_type=request_type,
+        request_details=request_details,
         steps_tried=steps_tried,
         # Пользователь не выставлял приоритет вручную — берём середину.
         # ai_priority используется в роутинге, user_priority остаётся 3.
@@ -396,6 +484,17 @@ async def escalate_conversation(
     )
     db.add(ticket)
     await db.flush()
+
+    feedback_result = await db.execute(
+        select(KnowledgeArticleFeedback)
+        .where(
+            KnowledgeArticleFeedback.conversation_id == conversation_id,
+            KnowledgeArticleFeedback.escalated_ticket_id.is_(None),
+        )
+        .order_by(KnowledgeArticleFeedback.created_at.desc(), KnowledgeArticleFeedback.id.desc())
+    )
+    for feedback in feedback_result.scalars().all():
+        feedback.escalated_ticket_id = ticket.id
 
     # Назначаем агента сразу — даже на pending_user тикет, чтобы старший
     # уже мог посмотреть на черновик и при подтверждении взять в работу.
@@ -437,6 +536,9 @@ async def escalate_conversation(
             "ticket_id": ticket.id,
             "department": ticket.department,
             "ai_confidence": ticket.ai_confidence,
+            "office": ticket.office,
+            "affected_item": ticket.affected_item,
+            "request_type": ticket.request_type,
         },
     )
 
@@ -529,33 +631,47 @@ async def _get_ai_answer(
         "model_version": settings.AI_MODEL_VERSION_FALLBACK,
     }
 
+    service_urls = [settings.AI_SERVICE_URL.rstrip("/")]
+    if service_urls[0] == "http://ai-service:8001":
+        service_urls.append("http://localhost:8001")
+
     try:
-        async with httpx.AsyncClient(timeout=settings.AI_SERVICE_TIMEOUT_SECONDS) as client:
-            response = await client.post(
-                f"{settings.AI_SERVICE_URL}/ai/answer",
-                json={
-                    "conversation_id": conversation_id,
-                    "messages": messages,
-                },
-            )
-            response.raise_for_status()
-            data = response.json()
+        data: Any = None
+        for service_url in service_urls:
+            try:
+                async with httpx.AsyncClient(timeout=settings.AI_SERVICE_TIMEOUT_SECONDS) as client:
+                    response = await client.post(
+                        f"{service_url}/ai/answer",
+                        json={
+                            "conversation_id": conversation_id,
+                            "messages": messages,
+                        },
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+                    break
+            except (
+                httpx.ConnectError,
+                httpx.TimeoutException,
+                httpx.HTTPStatusError,
+                httpx.UnsupportedProtocol,
+            ) as e:
+                logger.warning(
+                    "AI Service недоступен или ответ с ошибкой: %s",
+                    e,
+                    extra={
+                        "conversation_id": conversation_id,
+                        "ai_service_url": service_url,
+                    },
+                )
+        if data is None:
+            return fallback
     except (
-        httpx.ConnectError,
-        httpx.TimeoutException,
-        httpx.HTTPStatusError,
-        httpx.UnsupportedProtocol,
+        ValueError
     ) as e:
         logger.warning(
-            "AI Service недоступен или ответ с ошибкой: %s",
+            "AI Service вернул невалидный JSON: %s",
             e,
-            extra={"conversation_id": conversation_id},
-        )
-        return fallback
-    except ValueError:
-        # JSONDecodeError — невалидный JSON в ответе
-        logger.warning(
-            "AI Service вернул невалидный JSON",
             extra={"conversation_id": conversation_id},
             exc_info=True,
         )
@@ -572,6 +688,41 @@ async def _get_ai_answer(
     data.setdefault("sources", [])
     data.setdefault("model_version", settings.AI_MODEL_VERSION_FALLBACK)
     return data
+
+
+def _should_offer_support_draft(messages: list[dict[str, str]]) -> bool:
+    """Определяет, нужно ли показывать сбор контекста и создание черновика."""
+    user_messages = [
+        message.get("content", "").strip().lower()
+        for message in messages
+        if message.get("role") == "user" and message.get("content", "").strip()
+    ]
+    if not user_messages:
+        return False
+
+    latest = user_messages[-1]
+    combined = "\n".join(user_messages)
+
+    has_draft_action = any(term in latest for term in SUPPORT_DRAFT_ACTION_TERMS)
+    has_draft_object = any(term in latest for term in SUPPORT_DRAFT_INTENT_TERMS)
+    if has_draft_action and has_draft_object:
+        return True
+
+    has_urgent_context = any(term in combined for term in URGENT_TERMS)
+    has_physical_incident = any(term in combined for term in PHYSICAL_INCIDENT_TERMS)
+    if has_urgent_context and has_physical_incident:
+        return True
+
+    return False
+
+
+def _build_intake_answer() -> str:
+    return (
+        "Соберу данные для черновика обращения. Из истории возьму описание проблемы "
+        "и уже упомянутые действия. Уточните тип запроса, заявителя, офис, затронутый объект "
+        "и конкретные детали по форме; "
+        "после этого сформирую черновик для специалиста."
+    )
 
 
 def _extract_steps_tried(messages: list[Message]) -> str | None:

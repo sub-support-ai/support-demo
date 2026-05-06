@@ -1,7 +1,9 @@
 from contextlib import asynccontextmanager
 import logging
+import time
+import uuid
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -13,6 +15,8 @@ import app.models  # noqa: F401 — регистрирует все ORM-моде
 from app.routers.audit import router as audit_router
 from app.routers.auth import router as auth_router
 from app.routers.conversations import router as conversations_router
+from app.routers.knowledge_articles import router as knowledge_articles_router
+from app.routers.response_templates import router as response_templates_router
 from app.routers.users import router as users_router
 from app.routers.stats import router as stats_router
 from app.routers.tickets import router as tickets_router
@@ -76,10 +80,46 @@ if _settings.CORS_ORIGINS:
 else:
     logger.info("CORS_ORIGINS пуст — CORS middleware отключён")
 
+
+@app.middleware("http")
+async def request_observability_middleware(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex
+    started = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        duration_ms = round((time.perf_counter() - started) * 1000, 2)
+        logger.exception(
+            "HTTP request failed",
+            extra={
+                "request_id": request_id,
+                "method": request.method,
+                "path": request.url.path,
+                "duration_ms": duration_ms,
+            },
+        )
+        raise
+
+    duration_ms = round((time.perf_counter() - started) * 1000, 2)
+    response.headers["X-Request-ID"] = request_id
+    logger.info(
+        "HTTP request completed",
+        extra={
+            "request_id": request_id,
+            "method": request.method,
+            "path": request.url.path,
+            "status_code": response.status_code,
+            "duration_ms": duration_ms,
+        },
+    )
+    return response
+
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(users_router, prefix="/api/v1")
 app.include_router(stats_router, prefix="/api/v1")
 app.include_router(tickets_router, prefix="/api/v1")
+app.include_router(knowledge_articles_router, prefix="/api/v1")
+app.include_router(response_templates_router, prefix="/api/v1")
 app.include_router(conversations_router, prefix="/api/v1")
 app.include_router(audit_router, prefix="/api/v1")
 

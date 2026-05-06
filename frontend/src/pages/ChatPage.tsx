@@ -3,6 +3,7 @@ import {
   Badge,
   Button,
   Group,
+  Loader,
   LoadingOverlay,
   Paper,
   ScrollArea,
@@ -21,12 +22,23 @@ import {
   useSendMessage,
 } from "../api/conversations";
 import { getApiError } from "../api/client";
-import { useConfirmTicket, useTickets, useUpdateTicketDraft } from "../api/tickets";
-import type { Conversation, Ticket, TicketDraftUpdate } from "../api/types";
+import { useMe } from "../api/auth";
+import {
+  useConfirmTicket,
+  useTickets,
+  useUpdateTicketDraft,
+} from "../api/tickets";
+import type {
+  Conversation,
+  EscalationContext,
+  Ticket,
+  TicketDraftUpdate,
+} from "../api/types";
 import { Composer } from "../components/chat/Composer";
 import { MessageBubble } from "../components/chat/MessageBubble";
 import { PrefilledTicketPanel } from "../components/tickets/PrefilledTicketPanel";
 import { getStatusLabel } from "../lib/ticketLabels";
+import { useAuth } from "../stores/auth";
 
 function formatConversationDate(value?: string | null) {
   if (!value) {
@@ -63,13 +75,15 @@ function getConversationTitle(conversation: Conversation, tickets?: Ticket[]) {
   }
 
   if (conversation.status === "active") {
-    return "Диалог без тикета";
+    return "Диалог без запроса";
   }
 
   return getStatusLabel(conversation.status);
 }
 
 export function ChatPage() {
+  const { token } = useAuth();
+  const me = useMe(Boolean(token));
   const conversations = useConversations();
   const createConversation = useCreateConversation();
   const sendMessage = useSendMessage();
@@ -105,6 +119,13 @@ export function ChatPage() {
     draftTicket?.conversation_id === activeConversationId
       ? draftTicket
       : restoredTicket;
+  const hasPendingDraft =
+    activeTicket !== null &&
+    activeTicket.status === "pending_user" &&
+    !activeTicket.confirmed_by_user;
+  const isAiProcessing = activeConversation?.status === "ai_processing";
+  const composerDisabled =
+    activeConversation?.status === "escalated" || hasPendingDraft || isAiProcessing;
 
   useEffect(() => {
     if (!activeConversationId && conversations.data?.length) {
@@ -112,14 +133,20 @@ export function ChatPage() {
     }
   }, [activeConversationId, conversations.data]);
 
-  const messages = useMessages(activeConversationId);
+  const messages = useMessages(activeConversationId, isAiProcessing);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.data?.length]);
+  }, [messages.data?.length, isAiProcessing]);
 
   async function ensureConversation() {
-    if (activeConversationId) {
+    const activeConversationExists =
+      activeConversationId &&
+      (
+        !conversations.data ||
+        conversations.data.some((item) => item.id === activeConversationId)
+      );
+    if (activeConversationExists) {
       return activeConversationId;
     }
     const conversation = await createConversation.mutateAsync();
@@ -146,13 +173,14 @@ export function ChatPage() {
     }
   }
 
-  async function handleEscalate() {
-    if (!activeConversationId) {
-      return;
-    }
+  async function handleEscalate(conversationId: number, context: EscalationContext) {
     try {
-      const response = await escalate.mutateAsync(activeConversationId);
+      const response = await escalate.mutateAsync({
+        conversationId,
+        context,
+      });
       setDraftTicket(response.ticket);
+      setActiveConversationId(conversationId);
     } catch {
       // Ошибка уже хранится в mutation state и показывается в Alert.
     }
@@ -174,15 +202,11 @@ export function ChatPage() {
     if (!activeTicket) {
       return;
     }
-    try {
-      const ticket = await updateTicketDraft.mutateAsync({
-        ticketId: activeTicket.id,
-        payload,
-      });
-      setDraftTicket(ticket);
-    } catch {
-      // Ошибка уже хранится в mutation/query state и показывается в Alert.
-    }
+    const ticket = await updateTicketDraft.mutateAsync({
+      ticketId: activeTicket.id,
+      payload,
+    });
+    setDraftTicket(ticket);
   }
 
   const error =
@@ -193,7 +217,9 @@ export function ChatPage() {
     confirmTicket.error ||
     updateTicketDraft.error ||
     createConversation.error ||
+    me.error ||
     tickets.error;
+  const requestContext = me.data?.request_context ?? null;
 
   return (
     <div className="page-grid">
@@ -237,15 +263,26 @@ export function ChatPage() {
                 <MessageBubble
                   key={message.id}
                   message={message}
+                  escalationDisabled={composerDisabled}
                   escalationLoading={escalate.isPending}
+                  contextDefaults={requestContext}
                   onEscalate={handleEscalate}
                 />
               ))}
+              {isAiProcessing && (
+                <Group className="ai-processing-indicator" gap="xs">
+                  <Loader size="xs" />
+                  <Text size="sm" c="dimmed">
+                    Ответ обрабатывается
+                  </Text>
+                </Group>
+              )}
               <div ref={bottomRef} />
             </Stack>
           </ScrollArea>
           <Composer
             loading={sendMessage.isPending || createConversation.isPending}
+            disabled={composerDisabled}
             onSend={handleSend}
           />
         </div>
@@ -302,7 +339,7 @@ export function ChatPage() {
           />
         ) : (
           <Paper withBorder p="md" className="quiet-panel">
-            <Title order={4}>Черновик тикета</Title>
+            <Title order={4}>Черновик запроса</Title>
             <Text size="sm" c="dimmed">
               Появится после эскалации диалога.
             </Text>

@@ -12,20 +12,38 @@
 """
 
 import logging
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends
-from sqlalchemy import func, select, case
+from sqlalchemy import func, select, case, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.ticket import Ticket
 from app.models.ai_log import AILog
+from app.models.conversation import Conversation
 from app.models.user import User
 from app.schemas.stats import StatsResponse, TicketStats, AIStats
+from app.services.agents import get_active_agent_for_user
+from app.services.sla import OPEN_STATUSES
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/stats", tags=["stats"])
+
+
+async def _ticket_scope_filters(
+    db: AsyncSession,
+    current_user: User,
+):
+    if current_user.role == "admin":
+        return []
+    if current_user.role == "agent":
+        agent = await get_active_agent_for_user(db, current_user)
+        if agent is None:
+            return [Ticket.id == -1]
+        return [Ticket.agent_id == agent.id]
+    return [Ticket.user_id == current_user.id]
 
 
 @router.get("/", response_model=StatsResponse)
@@ -43,12 +61,16 @@ async def get_stats(
     # ── Статистика тикетов ────────────────────────────────────────────────────
 
     # Всего тикетов
-    total_result = await db.execute(select(func.count()).select_from(Ticket))
+    ticket_filters = await _ticket_scope_filters(db, current_user)
+    total_result = await db.execute(
+        select(func.count()).select_from(Ticket).where(*ticket_filters)
+    )
     total_tickets = total_result.scalar() or 0
 
     # По статусам: {"new": 5, "in_progress": 12, "resolved": 30, ...}
     status_result = await db.execute(
         select(Ticket.status, func.count().label("cnt"))
+        .where(*ticket_filters)
         .group_by(Ticket.status)
     )
     by_status = {row.status: row.cnt for row in status_result}
@@ -56,6 +78,7 @@ async def get_stats(
     # По отделам: {"IT": 20, "HR": 5, "finance": 8}
     dept_result = await db.execute(
         select(Ticket.department, func.count().label("cnt"))
+        .where(*ticket_filters)
         .group_by(Ticket.department)
     )
     by_department = {row.department: row.cnt for row in dept_result}
@@ -63,22 +86,49 @@ async def get_stats(
     # По источнику: {"ai_generated": 25, "user_written": 8, "ai_assisted": 3}
     source_result = await db.execute(
         select(Ticket.ticket_source, func.count().label("cnt"))
+        .where(*ticket_filters)
         .group_by(Ticket.ticket_source)
     )
     by_source = {row.ticket_source: row.cnt for row in source_result}
+
+    sla_overdue_result = await db.execute(
+        select(func.count())
+        .select_from(Ticket)
+        .where(
+            *ticket_filters,
+            Ticket.status.in_(tuple(OPEN_STATUSES)),
+            Ticket.sla_deadline_at.is_not(None),
+            Ticket.sla_deadline_at < datetime.now(timezone.utc),
+        )
+    )
+    reopen_result = await db.execute(
+        select(func.coalesce(func.sum(Ticket.reopen_count), 0))
+        .select_from(Ticket)
+        .where(*ticket_filters)
+    )
+    sla_escalated_result = await db.execute(
+        select(func.count())
+        .select_from(Ticket)
+        .where(
+            *ticket_filters,
+            Ticket.sla_escalated_at.is_not(None),
+        )
+    )
 
     ticket_stats = TicketStats(
         total=total_tickets,
         by_status=by_status,
         by_department=by_department,
         by_source=by_source,
+        sla_overdue_count=sla_overdue_result.scalar() or 0,
+        sla_escalated_count=sla_escalated_result.scalar() or 0,
+        reopen_count=reopen_result.scalar() or 0,
     )
 
     # ── Статистика AI ─────────────────────────────────────────────────────────
 
     # Общие метрики из ai_logs одним запросом
-    ai_result = await db.execute(
-        select(
+    ai_stats_query = select(
             func.count().label("total"),
             func.avg(AILog.confidence_score).label("avg_confidence"),
             # Тикеты с низкой уверенностью (< 0.8) — нужна проверка агентом
@@ -110,8 +160,28 @@ async def get_stats(
             func.sum(
                 case((AILog.user_feedback == "not_helped", 1), else_=0)
             ).label("feedback_not_helped"),
-        )
     )
+    if current_user.role == "admin":
+        pass
+    elif current_user.role == "agent":
+        ai_stats_query = (
+            ai_stats_query
+            .join(Ticket, AILog.ticket_id == Ticket.id)
+            .where(*ticket_filters)
+        )
+    else:
+        ai_stats_query = (
+            ai_stats_query
+            .outerjoin(Ticket, AILog.ticket_id == Ticket.id)
+            .outerjoin(Conversation, AILog.conversation_id == Conversation.id)
+            .where(
+                or_(
+                    Ticket.user_id == current_user.id,
+                    Conversation.user_id == current_user.id,
+                )
+            )
+        )
+    ai_result = await db.execute(ai_stats_query)
     ai_row = ai_result.one()
 
     total_processed = ai_row.total or 0

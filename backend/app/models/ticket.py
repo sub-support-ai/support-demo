@@ -62,6 +62,13 @@ class Ticket(Base):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
 
+    requester_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    requester_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    office: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    affected_item: Mapped[Optional[str]] = mapped_column(String(150), nullable=True)
+    request_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    request_details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
     # Что пользователь уже пробовал — AI извлекает из диалога
     steps_tried: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
@@ -99,6 +106,11 @@ class Ticket(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
     resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    sla_started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    sla_deadline_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    sla_escalated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    sla_escalation_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    reopen_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     user: Mapped["User"] = relationship("User", back_populates="tickets")
     agent: Mapped[Optional["Agent"]] = relationship("Agent", back_populates="tickets")
@@ -107,3 +119,14 @@ class Ticket(Base):
     )
     responses: Mapped[list["Response"]] = relationship("Response", back_populates="ticket")
     logs: Mapped[list["AILog"]] = relationship("AILog", back_populates="ticket")
+    comments: Mapped[list["TicketComment"]] = relationship(
+        "TicketComment",
+        back_populates="ticket",
+        cascade="all, delete-orphan",
+    )
+
+    @property
+    def is_sla_breached(self) -> bool:
+        from app.services.sla import is_sla_breached
+
+        return is_sla_breached(self)

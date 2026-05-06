@@ -1,9 +1,7 @@
-export const USERNAME_MIN_LENGTH = 3;
-export const USERNAME_MAX_LENGTH = 32;
+export const USERNAME_MAX_LENGTH = 100;
 export const PASSWORD_MIN_LENGTH = 8;
 export const PASSWORD_MAX_LENGTH = 128;
 
-const USERNAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{2,31}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 export interface AuthValidationErrors {
@@ -31,14 +29,8 @@ export function validateUsername(username: string): string | undefined {
   if (!value) {
     return "Укажите логин";
   }
-  if (
-    value.length < USERNAME_MIN_LENGTH ||
-    value.length > USERNAME_MAX_LENGTH
-  ) {
-    return "Логин должен быть от 3 до 32 символов";
-  }
-  if (!USERNAME_RE.test(value)) {
-    return "Логин: латиница, цифры, точка, дефис или подчёркивание; первый символ — буква или цифра";
+  if (value.length > USERNAME_MAX_LENGTH) {
+    return "Логин слишком длинный";
   }
   return undefined;
 }

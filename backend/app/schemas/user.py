@@ -1,27 +1,24 @@
 from datetime import datetime
-import re
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
-USERNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{2,31}$")
+USERNAME_MAX_LENGTH = 100
 PASSWORD_MIN_LENGTH = 8
 PASSWORD_MAX_LENGTH = 128
 
 
 class UserBase(BaseModel):
     email: EmailStr
-    username: str = Field(min_length=3, max_length=32)
+    username: str = Field(min_length=1, max_length=USERNAME_MAX_LENGTH)
 
     @field_validator("username")
     @classmethod
     def validate_username(cls, value: str) -> str:
-        if not USERNAME_RE.fullmatch(value):
-            raise ValueError(
-                "Логин должен быть 3-32 символа: латиница, цифры, точка, "
-                "дефис или подчёркивание; первый символ — буква или цифра"
-            )
-        return value
+        username = value.strip()
+        if not username:
+            raise ValueError("Логин не должен быть пустым")
+        return username
 
 
 class UserCreate(UserBase):

@@ -5,6 +5,7 @@ from sqlalchemy import select
 
 from app.database import AsyncSessionLocal
 from app.models.agent import Agent
+from app.models.user import User
 from app.security import hash_password
 
 
@@ -36,10 +37,39 @@ async def seed_demo_agents() -> None:
     demo_password = os.getenv("DEMO_AGENT_PASSWORD", DEFAULT_DEMO_PASSWORD)
 
     async with AsyncSessionLocal() as db:
-        created = 0
-        updated = 0
+        agents_created = 0
+        agents_updated = 0
+        users_created = 0
+        users_updated = 0
 
         for item in DEMO_AGENTS:
+            password_hash = hash_password(demo_password)
+
+            user_result = await db.execute(
+                select(User).where(
+                    (User.email == item["email"]) | (User.username == item["username"])
+                )
+            )
+            user = user_result.scalar_one_or_none()
+            if user is None:
+                user = User(
+                    email=item["email"],
+                    username=item["username"],
+                    hashed_password=password_hash,
+                    role="agent",
+                    is_active=True,
+                )
+                db.add(user)
+                users_created += 1
+            else:
+                user.email = item["email"]
+                user.username = item["username"]
+                user.hashed_password = password_hash
+                user.role = "agent"
+                user.is_active = True
+                users_updated += 1
+            await db.flush()
+
             result = await db.execute(
                 select(Agent).where(Agent.email == item["email"])
             )
@@ -47,29 +77,32 @@ async def seed_demo_agents() -> None:
 
             if agent is None:
                 agent = Agent(
+                    user_id=user.id,
                     email=item["email"],
                     username=item["username"],
-                    hashed_password=hash_password(demo_password),
+                    hashed_password=password_hash,
                     department=item["department"],
                     ai_routing_score=item["ai_routing_score"],
                     is_active=True,
                     active_ticket_count=0,
                 )
                 db.add(agent)
-                created += 1
-                continue
-
-            agent.username = item["username"]
-            agent.hashed_password = hash_password(demo_password)
-            agent.department = item["department"]
-            agent.ai_routing_score = item["ai_routing_score"]
-            agent.is_active = True
-            updated += 1
+                agents_created += 1
+            else:
+                agent.user_id = user.id
+                agent.username = item["username"]
+                agent.hashed_password = password_hash
+                agent.department = item["department"]
+                agent.ai_routing_score = item["ai_routing_score"]
+                agent.is_active = True
+                agents_updated += 1
 
         await db.commit()
 
     print(
-        f"Demo agents ready: created={created}, updated={updated}. "
+        "Demo agents ready: "
+        f"agents_created={agents_created}, agents_updated={agents_updated}, "
+        f"users_created={users_created}, users_updated={users_updated}. "
         "Password source: DEMO_AGENT_PASSWORD env or documented demo default."
     )
 

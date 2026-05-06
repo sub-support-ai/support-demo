@@ -1,7 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "./client";
-import type { Conversation, EscalateResponse, Message } from "./types";
+import type {
+  Conversation,
+  EscalateResponse,
+  EscalationContext,
+  Message,
+} from "./types";
 
 export function useConversations() {
   return useQuery({
@@ -9,6 +14,12 @@ export function useConversations() {
     queryFn: async () => {
       const { data } = await api.get<Conversation[]>("/conversations/");
       return data;
+    },
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      return data?.some((conversation) => conversation.status === "ai_processing")
+        ? 2000
+        : false;
     },
   });
 }
@@ -26,7 +37,7 @@ export function useCreateConversation() {
   });
 }
 
-export function useMessages(conversationId?: number) {
+export function useMessages(conversationId?: number, aiProcessing = false) {
   return useQuery({
     queryKey: ["conversations", conversationId, "messages"],
     queryFn: async () => {
@@ -36,7 +47,8 @@ export function useMessages(conversationId?: number) {
       return data;
     },
     enabled: Boolean(conversationId),
-    refetchInterval: document.visibilityState === "visible" ? 5000 : false,
+    refetchInterval:
+      aiProcessing && document.visibilityState === "visible" ? 2000 : false,
   });
 }
 
@@ -68,9 +80,16 @@ export function useSendMessage() {
 export function useEscalateConversation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (conversationId: number) => {
+    mutationFn: async ({
+      conversationId,
+      context,
+    }: {
+      conversationId: number;
+      context: EscalationContext;
+    }) => {
       const { data } = await api.post<EscalateResponse>(
         `/conversations/${conversationId}/escalate`,
+        { context },
       );
       return data;
     },

@@ -18,6 +18,7 @@ from sqlalchemy import select
 from app.models.agent import Agent
 from app.models.user import User
 from app.security import hash_password
+from app.services.agents import get_active_agent_for_user
 
 
 # ── Вспомогательные функции ────────────────────────────────────────────────────
@@ -44,10 +45,22 @@ async def create_test_agent(
     routing_score: float = 1.0,
 ) -> Agent:
     """Создаёт агента напрямую в БД."""
-    agent = Agent(
+    password_hash = hash_password("Secret123!")
+    agent_user = User(
         email=f"agent{suffix}@example.com",
         username=f"agent{suffix}",
-        hashed_password=hash_password("Secret123!"),
+        hashed_password=password_hash,
+        role="agent",
+        is_active=True,
+    )
+    db.add(agent_user)
+    await db.flush()
+
+    agent = Agent(
+        user_id=agent_user.id,
+        email=f"agent{suffix}@example.com",
+        username=f"agent{suffix}",
+        hashed_password=password_hash,
         department=department,
         active_ticket_count=active_count,
         ai_routing_score=routing_score,
@@ -68,6 +81,42 @@ async def get_tokens(client: AsyncClient, suffix: str = "") -> str:
     })
     assert response.status_code == 201
     return response.json()["access_token"]
+
+
+async def login_token(client: AsyncClient, username: str) -> str:
+    response = await client.post(
+        "/api/v1/auth/login",
+        data={"username": username, "password": "Secret123!"},
+    )
+    assert response.status_code == 200
+    return response.json()["access_token"]
+
+
+@pytest.mark.asyncio
+async def test_active_agent_lookup_uses_user_id(db_session: AsyncSession):
+    password_hash = hash_password("Secret123!")
+    agent_user = User(
+        email="agent-link-user@example.com",
+        username="agent_link_user",
+        hashed_password=password_hash,
+        role="agent",
+        is_active=True,
+    )
+    db_session.add(agent_user)
+    await db_session.flush()
+
+    agent = Agent(
+        user_id=agent_user.id,
+        email="legacy-agent-record@example.com",
+        username="legacy_agent_record",
+        hashed_password=password_hash,
+        department="IT",
+        is_active=True,
+    )
+    db_session.add(agent)
+    await db_session.flush()
+
+    assert await get_active_agent_for_user(db_session, agent_user) == agent
 
 
 # ── Тест 1: агент назначается при создании тикета ─────────────────────────────
@@ -140,23 +189,32 @@ async def test_active_ticket_count_decreases_on_resolve(
             "title": "тест resolve",
             "body": "проверяем что счётчик падает",
             "user_priority": 2,
+            "office": "Главный офис",
+            "affected_item": "Рабочее место",
         },
         headers={"Authorization": f"Bearer {token}"},
     )
     assert create_resp.status_code == 201
     ticket_id = create_resp.json()["id"]
 
+    confirm_resp = await client.patch(
+        f"/api/v1/tickets/{ticket_id}/confirm",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert confirm_resp.status_code == 200
+
     await db_session.refresh(agent)
     count_before = agent.active_ticket_count  # должно быть 1
 
     # Закрываем тикет через resolve
+    agent_token = await login_token(client, agent.username)
     resolve_resp = await client.patch(
         f"/api/v1/tickets/{ticket_id}/resolve",
         json={
             "agent_accepted_ai_response": True,
             "correction_lag_seconds": 120,
         },
-        headers={"Authorization": f"Bearer {token}"},
+        headers={"Authorization": f"Bearer {agent_token}"},
     )
     assert resolve_resp.status_code == 200
     assert resolve_resp.json()["status"] == "closed"
@@ -177,7 +235,7 @@ async def test_create_ticket_without_token_returns_401(client: AsyncClient):
             "title": "тест без токена",
             "body": "не должно создаться",
             "user_id": 1,
-            "user_priority": 1,
+            "user_priority": 3,
         },
     )
     assert response.status_code == 401

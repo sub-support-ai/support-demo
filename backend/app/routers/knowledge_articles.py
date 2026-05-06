@@ -1,0 +1,282 @@
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from sqlalchemy import or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.database import get_db
+from app.dependencies import get_current_user, require_role
+from app.models.conversation import Conversation
+from app.models.knowledge_article import KnowledgeArticle, KnowledgeArticleFeedback
+from app.models.user import User
+from app.schemas.knowledge_article import (
+    KnowledgeArticleCreate,
+    KnowledgeFeedbackCreate,
+    KnowledgeFeedbackRead,
+    KnowledgeArticleMatch,
+    KnowledgeArticleRead,
+    KnowledgeArticleUpdate,
+)
+from app.services.agents import get_active_agent_for_user
+from app.services.audit import log_event
+from app.services.knowledge_base import (
+    KnowledgeSearchFilters,
+    build_search_text,
+    search_knowledge_articles,
+)
+
+router = APIRouter(prefix="/knowledge", tags=["knowledge"])
+
+
+async def _knowledge_visibility(
+    query,
+    db: AsyncSession,
+    current_user: User,
+):
+    if current_user.role == "admin":
+        return query
+    if current_user.role == "agent":
+        agent = await get_active_agent_for_user(db, current_user)
+        if agent is None:
+            return query.where(KnowledgeArticle.id == -1)
+        return query.where(
+            KnowledgeArticle.access_scope.in_(("public", "internal")),
+            or_(
+                KnowledgeArticle.department == agent.department,
+                KnowledgeArticle.department.is_(None),
+            ),
+        )
+    return query.where(KnowledgeArticle.access_scope == "public")
+
+
+async def _access_scopes_for_user(db: AsyncSession, current_user: User) -> tuple[str, ...]:
+    if current_user.role == "admin":
+        return ("public", "internal")
+    if current_user.role == "agent":
+        agent = await get_active_agent_for_user(db, current_user)
+        if agent is None:
+            return ("public",)
+        return ("public", "internal")
+    return ("public",)
+
+
+@router.get("/", response_model=list[KnowledgeArticleRead])
+async def list_knowledge_articles(
+    department: str | None = Query(default=None),
+    request_type: str | None = Query(default=None),
+    active_only: bool = Query(default=True),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    query = select(KnowledgeArticle)
+    query = await _knowledge_visibility(query, db, current_user)
+    if active_only:
+        query = query.where(KnowledgeArticle.is_active.is_(True))
+    if department:
+        query = query.where(KnowledgeArticle.department == department)
+    if request_type:
+        query = query.where(KnowledgeArticle.request_type == request_type)
+
+    query = query.order_by(
+        KnowledgeArticle.department.asc(),
+        KnowledgeArticle.request_type.asc(),
+        KnowledgeArticle.title.asc(),
+    )
+    result = await db.execute(query)
+    return result.scalars().all()
+
+
+@router.get("/search", response_model=list[KnowledgeArticleMatch])
+async def search_knowledge(
+    q: str = Query(min_length=2, max_length=500),
+    limit: int = Query(default=5, ge=1, le=20),
+    department: str | None = Query(default=None),
+    request_type: str | None = Query(default=None),
+    office: str | None = Query(default=None),
+    system: str | None = Query(default=None),
+    device: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    effective_department = department
+    if current_user.role == "agent":
+        agent = await get_active_agent_for_user(db, current_user)
+        if agent is None:
+            effective_department = "__none__"
+        else:
+            effective_department = agent.department
+
+    filters = KnowledgeSearchFilters(
+        department=effective_department,
+        request_type=request_type,
+        office=office,
+        system=system,
+        device=device,
+        access_scopes=await _access_scopes_for_user(db, current_user),
+    )
+    matches = await search_knowledge_articles(db, q, limit=limit, filters=filters)
+    response: list[KnowledgeArticleMatch] = []
+    for match in matches:
+        article = KnowledgeArticleRead.model_validate(match.article)
+        response.append(
+            KnowledgeArticleMatch(
+                **article.model_dump(),
+                score=match.score,
+                decision=match.decision,
+            )
+        )
+    return response
+
+
+@router.post(
+    "/",
+    response_model=KnowledgeArticleRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_knowledge_article(
+    payload: KnowledgeArticleCreate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_role("admin")),
+):
+    article = KnowledgeArticle(
+        department=payload.department,
+        request_type=payload.request_type,
+        title=payload.title,
+        body=payload.body,
+        problem=payload.problem,
+        symptoms=payload.symptoms,
+        applies_to=payload.applies_to,
+        steps=payload.steps,
+        when_to_escalate=payload.when_to_escalate,
+        required_context=payload.required_context,
+        keywords=payload.keywords,
+        source_url=payload.source_url,
+        owner=payload.owner,
+        access_scope=payload.access_scope,
+        version=payload.version,
+        reviewed_at=payload.reviewed_at,
+        expires_at=payload.expires_at,
+        is_active=payload.is_active,
+    )
+    db.add(article)
+    await db.flush()
+    article.search_text = build_search_text(article)
+    await db.flush()
+    await db.refresh(article)
+
+    await log_event(
+        db,
+        action="knowledge_article.create",
+        user_id=admin.id,
+        target_type="knowledge_article",
+        target_id=article.id,
+        request=request,
+        details={
+            "department": article.department,
+            "request_type": article.request_type,
+        },
+    )
+    return article
+
+
+@router.patch("/{article_id}", response_model=KnowledgeArticleRead)
+async def update_knowledge_article(
+    article_id: int,
+    payload: KnowledgeArticleUpdate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_role("admin")),
+):
+    article = await db.get(KnowledgeArticle, article_id)
+    if article is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge article not found",
+        )
+
+    updates = payload.model_dump(exclude_unset=True)
+    if not updates:
+        return article
+
+    for field, value in updates.items():
+        setattr(article, field, value)
+    if "version" not in updates:
+        article.version = (article.version or 1) + 1
+    article.search_text = build_search_text(article)
+    await db.flush()
+    await db.refresh(article)
+
+    await log_event(
+        db,
+        action="knowledge_article.update",
+        user_id=admin.id,
+        target_type="knowledge_article",
+        target_id=article.id,
+        request=request,
+        details={"fields": sorted(updates.keys())},
+    )
+    return article
+
+
+@router.post("/feedback", response_model=KnowledgeFeedbackRead)
+async def submit_knowledge_feedback(
+    payload: KnowledgeFeedbackCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(KnowledgeArticleFeedback)
+        .where(
+            KnowledgeArticleFeedback.article_id == payload.article_id,
+            KnowledgeArticleFeedback.message_id == payload.message_id,
+        )
+        .limit(1)
+    )
+    feedback = result.scalar_one_or_none()
+    if feedback is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge feedback target not found",
+        )
+
+    conversation = await db.get(Conversation, feedback.conversation_id)
+    if conversation is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversation not found",
+        )
+    if current_user.role != "admin" and conversation.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge feedback target not found",
+        )
+
+    article = await db.get(KnowledgeArticle, payload.article_id)
+    if article is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge article not found",
+        )
+
+    previous_feedback = feedback.feedback
+    if previous_feedback == payload.feedback:
+        return feedback
+
+    _apply_feedback_counter(article, previous_feedback, -1)
+    _apply_feedback_counter(article, payload.feedback, 1)
+    feedback.feedback = payload.feedback
+    await db.flush()
+    await db.refresh(feedback)
+    return feedback
+
+
+def _apply_feedback_counter(
+    article: KnowledgeArticle,
+    feedback: str | None,
+    delta: int,
+) -> None:
+    if feedback == "helped":
+        article.helped_count = max(0, article.helped_count + delta)
+    elif feedback == "not_helped":
+        article.not_helped_count = max(0, article.not_helped_count + delta)
+    elif feedback == "not_relevant":
+        article.not_relevant_count = max(0, article.not_relevant_count + delta)

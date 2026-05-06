@@ -11,6 +11,13 @@ logger = logging.getLogger(__name__)
 
 AI_SERVICE_URL = settings.AI_SERVICE_URL
 
+
+def _candidate_ai_service_urls() -> list[str]:
+    urls = [AI_SERVICE_URL.rstrip("/")]
+    if urls[0] == "http://ai-service:8001":
+        urls.append("http://localhost:8001")
+    return urls
+
 _CLASSIFICATION_FALLBACK = {
     "category": "other",
     "department": "IT",
@@ -103,38 +110,48 @@ async def classify_ticket(ticket_id: int, title: str, body: str) -> dict:
     среднее время 1,01 сек — честно считаем по этому полю).
     """
     started = time.perf_counter()
-    try:
-        async with httpx.AsyncClient(timeout=settings.AI_SERVICE_TIMEOUT_SECONDS) as client:
-            response = await client.post(
-                f"{AI_SERVICE_URL}/ai/classify",
-                json={
-                    "ticket_id": ticket_id,
-                    "title": title,
-                    "body": body,
-                },
-            )
-            response.raise_for_status()
-            try:
-                data = response.json()
-            except (json.JSONDecodeError, ValueError):
-                logger.warning(
-                    "AI Service вернул невалидный JSON для classify",
-                    extra={"ticket_id": ticket_id},
-                    exc_info=True,
+    data: dict | object | None = None
+    last_error: Exception | None = None
+    for service_url in _candidate_ai_service_urls():
+        try:
+            async with httpx.AsyncClient(timeout=settings.AI_SERVICE_TIMEOUT_SECONDS) as client:
+                response = await client.post(
+                    f"{service_url}/ai/classify",
+                    json={
+                        "ticket_id": ticket_id,
+                        "title": title,
+                        "body": body,
+                    },
                 )
-                data = dict(_CLASSIFICATION_FALLBACK)
-
-    except (
-        httpx.ConnectError,
-        httpx.TimeoutException,
-        httpx.HTTPStatusError,
-        httpx.UnsupportedProtocol,
-    ) as e:
-        logger.warning(
-            "AI Service недоступен или ответ с ошибкой: %s",
-            e,
-            extra={"ticket_id": ticket_id},
-        )
+                response.raise_for_status()
+                try:
+                    data = response.json()
+                except (json.JSONDecodeError, ValueError):
+                    logger.warning(
+                        "AI Service вернул невалидный JSON для classify",
+                        extra={"ticket_id": ticket_id, "ai_service_url": service_url},
+                        exc_info=True,
+                    )
+                    data = dict(_CLASSIFICATION_FALLBACK)
+                break
+        except (
+            httpx.ConnectError,
+            httpx.TimeoutException,
+            httpx.HTTPStatusError,
+            httpx.UnsupportedProtocol,
+        ) as e:
+            last_error = e
+            logger.warning(
+                "AI Service недоступен или ответ с ошибкой: %s",
+                e,
+                extra={"ticket_id": ticket_id, "ai_service_url": service_url},
+            )
+    if data is None:
+        if last_error is not None:
+            logger.warning(
+                "Все адреса AI Service недоступны",
+                extra={"ticket_id": ticket_id},
+            )
         data = dict(_CLASSIFICATION_FALLBACK)
 
     if not isinstance(data, dict):

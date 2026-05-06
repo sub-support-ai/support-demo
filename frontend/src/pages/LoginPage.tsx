@@ -61,7 +61,7 @@ export function LoginPage() {
     try {
       const result =
         mode === "login"
-          ? await login.mutateAsync({ username, password })
+          ? await login.mutateAsync({ username: username.trim(), password })
           : await register.mutateAsync({
               email: email.trim(),
               username: username.trim(),
@@ -141,7 +141,6 @@ export function LoginPage() {
               value={username}
               required
               maxLength={USERNAME_MAX_LENGTH}
-              description="3-32 символа: латиница, цифры, . _ -"
               error={fieldErrors.username}
               onBlur={() =>
                 setFieldErrors((current) => ({

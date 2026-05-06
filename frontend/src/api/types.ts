@@ -11,6 +11,18 @@ export interface UserMe {
   username: string;
   role: UserRole;
   is_active: boolean;
+  agent_id?: number | null;
+  agent_department?: string | null;
+  request_context?: RequestContextDefaults | null;
+}
+
+export interface RequestContextDefaults {
+  requester_name: string;
+  requester_email: string;
+  office?: string | null;
+  office_source?: string | null;
+  office_options: string[];
+  affected_item_options: string[];
 }
 
 export interface Conversation {
@@ -24,6 +36,9 @@ export interface Conversation {
 export interface Source {
   title: string;
   url?: string | null;
+  article_id?: number | null;
+  score?: number | null;
+  decision?: "answer" | "clarify" | "escalate" | string | null;
 }
 
 export interface Message {
@@ -48,8 +63,20 @@ export interface Ticket {
   status: string;
   department: string;
   ticket_source: string;
+  requester_name?: string | null;
+  requester_email?: string | null;
+  office?: string | null;
+  affected_item?: string | null;
+  request_type?: string | null;
+  request_details?: string | null;
   steps_tried?: string | null;
   confirmed_by_user: boolean;
+  sla_started_at?: string | null;
+  sla_deadline_at?: string | null;
+  sla_escalated_at?: string | null;
+  sla_escalation_count?: number;
+  is_sla_breached?: boolean;
+  reopen_count?: number;
   ai_category?: string | null;
   ai_priority?: string | null;
   ai_confidence?: number | null;
@@ -63,8 +90,23 @@ export interface TicketDraftUpdate {
   title?: string;
   body?: string;
   department?: "IT" | "HR" | "finance";
-  ai_priority?: "низкий" | "средний" | "высокий" | "критический";
+  ai_priority?: "низкий" | "средний" | "высокий";
+  requester_name?: string | null;
+  requester_email?: string | null;
   steps_tried?: string | null;
+  office?: string | null;
+  affected_item?: string | null;
+  request_type?: string | null;
+  request_details?: string | null;
+}
+
+export interface EscalationContext {
+  requester_name: string;
+  requester_email: string;
+  office: string;
+  affected_item: string;
+  request_type?: string | null;
+  request_details?: string | null;
 }
 
 export interface EscalateResponse {
@@ -73,5 +115,74 @@ export interface EscalateResponse {
 }
 
 export interface ApiErrorPayload {
-  detail?: string | Array<{ loc?: Array<string | number>; msg?: string; type?: string }>;
+  detail?:
+    | string
+    | { message?: string; fields?: string[] }
+    | Array<{ loc?: Array<string | number>; msg?: string; type?: string }>;
+}
+
+export interface TicketComment {
+  id: number;
+  ticket_id: number;
+  author_id: number;
+  author_username: string;
+  author_role: string;
+  content: string;
+  internal: boolean;
+  created_at: string;
+}
+
+export interface TicketCommentCreate {
+  content: string;
+  internal?: boolean;
+}
+
+export interface TicketFeedbackPayload {
+  feedback: "helped" | "not_helped";
+  reopen?: boolean;
+}
+
+export interface KnowledgeFeedbackPayload {
+  message_id: number;
+  article_id: number;
+  feedback: "helped" | "not_helped" | "not_relevant";
+}
+
+export interface ResponseTemplate {
+  id: number;
+  department?: "IT" | "HR" | "finance" | null;
+  request_type?: string | null;
+  title: string;
+  body: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at?: string | null;
+}
+
+export interface TicketStats {
+  total: number;
+  by_status: Record<string, number>;
+  by_department: Record<string, number>;
+  by_source: Record<string, number>;
+  sla_overdue_count: number;
+  sla_escalated_count: number;
+  reopen_count: number;
+}
+
+export interface AIStats {
+  total_processed: number;
+  avg_confidence: number;
+  low_confidence_count: number;
+  routing_correct_count: number;
+  routing_incorrect_count: number;
+  routing_accuracy_pct: number;
+  resolved_by_ai_count: number;
+  escalated_count: number;
+  user_feedback_helped: number;
+  user_feedback_not_helped: number;
+}
+
+export interface StatsResponse {
+  tickets: TicketStats;
+  ai: AIStats;
 }

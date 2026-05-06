@@ -1,6 +1,12 @@
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.agent import Agent
+from app.models.ai_log import AILog
+from app.models.ticket import Ticket
+from app.security import hash_password
 from app.services.ai_classifier import _choose_priority, _infer_priority_from_text
 
 
@@ -34,6 +40,33 @@ async def register_user(client: AsyncClient, suffix: str = "") -> tuple[int, str
     return me.json()["id"], token
 
 
+async def register_admin(client: AsyncClient, suffix: str = "") -> tuple[int, str]:
+    from app.config import get_settings
+
+    settings = get_settings()
+    admin_email = f"ticketadmin{suffix}@example.com"
+    previous_bootstrap_email = settings.BOOTSTRAP_ADMIN_EMAIL
+    settings.BOOTSTRAP_ADMIN_EMAIL = admin_email
+    try:
+        response = await client.post("/api/v1/auth/register", json={
+            "email": admin_email,
+            "username": f"ticketadmin{suffix}",
+            "password": "Secret123!",
+        })
+    finally:
+        settings.BOOTSTRAP_ADMIN_EMAIL = previous_bootstrap_email
+    assert response.status_code == 201
+    token = response.json()["access_token"]
+
+    me = await client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert me.status_code == 200
+    assert me.json()["role"] == "admin"
+    return me.json()["id"], token
+
+
 @pytest.mark.asyncio
 async def test_create_ticket(client: AsyncClient):
     user_id, token = await register_user(client, suffix="create")
@@ -55,6 +88,8 @@ async def test_create_ticket(client: AsyncClient):
     assert data["title"] == "не могу войти в систему"
     assert data["user_id"] == user_id
     assert data["user_priority"] == 4
+    assert data["requester_name"] == "ticketusercreate"
+    assert data["requester_email"] == "ticketusercreate@example.com"
 
     assert "id" in data
     assert data["id"] is not None
@@ -85,6 +120,43 @@ async def test_urgent_broken_hardware_gets_high_priority(client: AsyncClient):
 
     assert response.status_code == 201
     assert response.json()["ai_priority"] == "высокий"
+
+
+@pytest.mark.asyncio
+async def test_mass_outage_gets_critical_priority(client: AsyncClient):
+    """Критический приоритет выдаётся системно для массовых сбоев."""
+    _, token = await register_user(client, suffix="criticaloutage")
+
+    response = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "У всех не работает 1С",
+            "body": "Весь отдел не может оформить заказы, простой продаж.",
+            "user_priority": 3,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["ai_priority"] == "критический"
+
+
+@pytest.mark.asyncio
+async def test_manual_ticket_cannot_use_critical_user_priority(client: AsyncClient):
+    _, token = await register_user(client, suffix="manualusercritical")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    response = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "Не работает ноутбук",
+            "body": "Пользователь просит проверить устройство",
+            "user_priority": 1,
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 422
 
 
 @pytest.mark.asyncio
@@ -131,6 +203,10 @@ async def test_pending_ticket_draft_can_be_edited_before_confirm(client: AsyncCl
             "body": "РќСѓР¶РЅР° РїСЂРѕРІРµСЂРєР° РїСЂРёРЅС‚РµСЂР° Рё РґСЂР°Р№РІРµСЂР°.",
             "department": "IT",
             "ai_priority": low_priority,
+            "requester_name": "Анна Иванова",
+            "requester_email": "anna.ivanova@example.com",
+            "office": "Главный офис",
+            "affected_item": "Принтер/МФУ",
             "steps_tried": "РџРµСЂРµР·Р°РїСѓСЃРєР°Р»Рё РїСЂРёРЅС‚РµСЂ Рё РЅРѕСѓС‚Р±СѓРє.",
         },
         headers=headers,
@@ -142,7 +218,162 @@ async def test_pending_ticket_draft_can_be_edited_before_confirm(client: AsyncCl
     assert updated["body"] == "РќСѓР¶РЅР° РїСЂРѕРІРµСЂРєР° РїСЂРёРЅС‚РµСЂР° Рё РґСЂР°Р№РІРµСЂР°."
     assert updated["department"] == "IT"
     assert updated["ai_priority"] == low_priority
+    assert updated["requester_name"] == "Анна Иванова"
+    assert updated["requester_email"] == "anna.ivanova@example.com"
+    assert updated["office"] == "Главный офис"
+    assert updated["affected_item"] == "Принтер/МФУ"
     assert updated["steps_tried"] == "РџРµСЂРµР·Р°РїСѓСЃРєР°Р»Рё РїСЂРёРЅС‚РµСЂ Рё РЅРѕСѓС‚Р±СѓРє."
+
+
+@pytest.mark.asyncio
+async def test_draft_context_fields_refresh_context_block(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    user_id, token = await register_user(client, suffix="contextblock")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    ticket = Ticket(
+        user_id=user_id,
+        title="Не работает VPN",
+        body=(
+            "Контекст обращения:\n"
+            "Автор: Старый Автор <old@example.com>\n"
+            "Создал: ticketusercontextblock <ticketusercontextblock@example.com>\n"
+            "Офис: Старый офис\n"
+            "Объект: Старый объект\n\n"
+            "Пользователь: Не работает VPN"
+        ),
+        user_priority=3,
+        department="IT",
+        status="pending_user",
+        confirmed_by_user=False,
+        ai_priority="средний",
+        ai_confidence=0.95,
+        requester_name="Старый Автор",
+        requester_email="old@example.com",
+        office="Старый офис",
+        affected_item="Старый объект",
+    )
+    db_session.add(ticket)
+    await db_session.flush()
+
+    update_resp = await client.patch(
+        f"/api/v1/tickets/{ticket.id}/draft",
+        json={
+            "requester_name": "Новый Автор",
+            "requester_email": "new@example.com",
+            "office": "Главный офис",
+            "affected_item": "VPN",
+        },
+        headers=headers,
+    )
+
+    assert update_resp.status_code == 200
+    body = update_resp.json()["body"]
+    assert "Автор: Новый Автор <new@example.com>" in body
+    assert "Создал: ticketusercontextblock <ticketusercontextblock@example.com>" in body
+    assert "Офис: Главный офис" in body
+    assert "Объект: VPN" in body
+    assert "Старый Автор" not in body
+    assert "Старый офис" not in body
+    assert "Пользователь: Не работает VPN" in body
+
+
+@pytest.mark.asyncio
+async def test_draft_priority_change_reroutes_ticket(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    user_id, token = await register_user(client, suffix="reroutepriority")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    free_agent = Agent(
+        email="free-reroute@example.com",
+        username="free-reroute",
+        hashed_password=hash_password("Secret123!"),
+        department="IT",
+        active_ticket_count=2,
+        ai_routing_score=0.1,
+        is_active=True,
+    )
+    senior_agent = Agent(
+        email="senior-reroute@example.com",
+        username="senior-reroute",
+        hashed_password=hash_password("Secret123!"),
+        department="IT",
+        active_ticket_count=0,
+        ai_routing_score=0.9,
+        is_active=True,
+    )
+    db_session.add_all([free_agent, senior_agent])
+    await db_session.flush()
+
+    ticket = Ticket(
+        user_id=user_id,
+        title="Нужно обновить приложение",
+        body="Плановый запрос",
+        user_priority=3,
+        department="IT",
+        status="pending_user",
+        confirmed_by_user=False,
+        ai_priority="низкий",
+        ai_confidence=0.95,
+        agent_id=free_agent.id,
+    )
+    db_session.add(ticket)
+    await db_session.flush()
+
+    update_resp = await client.patch(
+        f"/api/v1/tickets/{ticket.id}/draft",
+        json={"ai_priority": "высокий"},
+        headers=headers,
+    )
+
+    assert update_resp.status_code == 200
+    assert update_resp.json()["agent_id"] == senior_agent.id
+
+    await db_session.refresh(free_agent)
+    await db_session.refresh(senior_agent)
+    assert free_agent.active_ticket_count == 1
+    assert senior_agent.active_ticket_count == 1
+
+    refreshed = await db_session.execute(select(Ticket).where(Ticket.id == ticket.id))
+    assert refreshed.scalar_one().agent_id == senior_agent.id
+
+
+@pytest.mark.asyncio
+async def test_draft_priority_cannot_be_set_to_critical(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    user_id, token = await register_user(client, suffix="manualcritical")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    ticket = Ticket(
+        user_id=user_id,
+        title="Не работает ноутбук",
+        body="Пользователь просит проверить устройство",
+        user_priority=3,
+        department="IT",
+        status="pending_user",
+        confirmed_by_user=False,
+        ai_priority="средний",
+        ai_confidence=0.95,
+    )
+    db_session.add(ticket)
+    await db_session.flush()
+
+    update_resp = await client.patch(
+        f"/api/v1/tickets/{ticket.id}/draft",
+        json={"ai_priority": "критический"},
+        headers=headers,
+    )
+
+    assert update_resp.status_code == 422
+
+    await db_session.refresh(ticket)
+    assert ticket.ai_priority == "средний"
 
 
 @pytest.mark.asyncio
@@ -156,6 +387,8 @@ async def test_confirmed_ticket_draft_cannot_be_edited(client: AsyncClient):
             "title": "РЅРµ РѕС‚РєСЂС‹РІР°РµС‚СЃСЏ VPN",
             "body": "РѕС€РёР±РєР° РїРѕРґРєР»СЋС‡РµРЅРёСЏ",
             "user_priority": 3,
+            "office": "HQ",
+            "affected_item": "VPN",
         },
         headers=headers,
     )
@@ -325,6 +558,8 @@ async def test_confirm_ticket_marks_user_confirmation(client: AsyncClient):
             "title": "черновик из AI",
             "body": "нужно отправить в поддержку",
             "user_priority": 3,
+            "office": "HQ",
+            "affected_item": "VPN",
         },
         headers=headers,
     )
@@ -345,7 +580,35 @@ async def test_confirm_ticket_marks_user_confirmation(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_confirm_ticket_rejects_non_pending_draft(client: AsyncClient):
+async def test_confirm_ticket_requires_request_context(client: AsyncClient):
+    _, token = await register_user(client, suffix="confirmcontext")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    create = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "draft without context",
+            "body": "office and affected item must be required",
+            "user_priority": 3,
+        },
+        headers=headers,
+    )
+    assert create.status_code == 201
+
+    confirm = await client.patch(
+        f"/api/v1/tickets/{create.json()['id']}/confirm",
+        headers=headers,
+    )
+
+    assert confirm.status_code == 422
+    assert set(confirm.json()["detail"]["fields"]) == {"office", "affected_item"}
+
+
+@pytest.mark.asyncio
+async def test_confirm_ticket_rejects_non_pending_draft(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
     """Confirm не должен откатывать уже активный тикет в status=confirmed."""
     _, token = await register_user(client, suffix="confirmreject")
     headers = {"Authorization": f"Bearer {token}"}
@@ -356,19 +619,18 @@ async def test_confirm_ticket_rejects_non_pending_draft(client: AsyncClient):
             "title": "уже в работе",
             "body": "агент уже взял тикет",
             "user_priority": 3,
+            "office": "HQ",
+            "affected_item": "VPN",
         },
         headers=headers,
     )
     assert create.status_code == 201
     ticket_id = create.json()["id"]
 
-    update = await client.patch(
-        f"/api/v1/tickets/{ticket_id}",
-        json={"status": "in_progress"},
-        headers=headers,
-    )
-    assert update.status_code == 200
-    assert update.json()["status"] == "in_progress"
+    result = await db_session.execute(select(Ticket).where(Ticket.id == ticket_id))
+    ticket = result.scalar_one()
+    ticket.status = "in_progress"
+    await db_session.flush()
 
     confirm = await client.patch(
         f"/api/v1/tickets/{ticket_id}/confirm",
@@ -383,3 +645,166 @@ async def test_confirm_ticket_rejects_non_pending_draft(client: AsyncClient):
     assert current.status_code == 200
     assert current.json()["status"] == "in_progress"
     assert current.json()["confirmed_by_user"] is False
+
+
+@pytest.mark.asyncio
+async def test_user_cannot_update_ticket_status_after_confirm(client: AsyncClient):
+    _, token = await register_user(client, suffix="userstatus")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    create = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "confirmed ticket",
+            "body": "regular user must not act as operator",
+            "user_priority": 3,
+            "office": "HQ",
+            "affected_item": "VPN",
+        },
+        headers=headers,
+    )
+    assert create.status_code == 201
+    ticket_id = create.json()["id"]
+
+    confirm = await client.patch(
+        f"/api/v1/tickets/{ticket_id}/confirm",
+        headers=headers,
+    )
+    assert confirm.status_code == 200
+
+    update = await client.patch(
+        f"/api/v1/tickets/{ticket_id}",
+        json={"status": "closed"},
+        headers=headers,
+    )
+
+    assert update.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_confirm_ticket_sets_sla_deadline(client: AsyncClient):
+    _, token = await register_user(client, suffix="sla")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    create = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "не работает VPN",
+            "body": "ошибка подключения",
+            "user_priority": 3,
+            "office": "HQ",
+            "affected_item": "VPN",
+        },
+        headers=headers,
+    )
+    assert create.status_code == 201
+
+    confirm = await client.patch(
+        f"/api/v1/tickets/{create.json()['id']}/confirm",
+        headers=headers,
+    )
+
+    assert confirm.status_code == 200
+    data = confirm.json()
+    assert data["sla_started_at"] is not None
+    assert data["sla_deadline_at"] is not None
+    assert data["is_sla_breached"] is False
+
+
+@pytest.mark.asyncio
+async def test_admin_can_add_comment_to_confirmed_ticket(client: AsyncClient):
+    _, user_token = await register_user(client, suffix="comment")
+    _, admin_token = await register_admin(client, suffix="comment")
+    user_headers = {"Authorization": f"Bearer {user_token}"}
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+    create = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "сломано оборудование",
+            "body": "не включается монитор",
+            "user_priority": 3,
+            "office": "HQ",
+            "affected_item": "Монитор",
+        },
+        headers=user_headers,
+    )
+    assert create.status_code == 201
+    ticket_id = create.json()["id"]
+
+    confirm = await client.patch(
+        f"/api/v1/tickets/{ticket_id}/confirm",
+        headers=user_headers,
+    )
+    assert confirm.status_code == 200
+
+    comment = await client.post(
+        f"/api/v1/tickets/{ticket_id}/comments",
+        json={"content": "Взяли в диагностику", "internal": True},
+        headers=admin_headers,
+    )
+    assert comment.status_code == 201
+    assert comment.json()["content"] == "Взяли в диагностику"
+
+    comments = await client.get(
+        f"/api/v1/tickets/{ticket_id}/comments",
+        headers=admin_headers,
+    )
+    assert comments.status_code == 200
+    assert len(comments.json()) == 1
+
+
+@pytest.mark.asyncio
+async def test_negative_feedback_can_reopen_closed_ticket(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    _, user_token = await register_user(client, suffix="reopen")
+    _, admin_token = await register_admin(client, suffix="reopen")
+    user_headers = {"Authorization": f"Bearer {user_token}"}
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+    create = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "не работает почта",
+            "body": "письма не отправляются",
+            "user_priority": 3,
+            "office": "HQ",
+            "affected_item": "Почта",
+        },
+        headers=user_headers,
+    )
+    assert create.status_code == 201
+    ticket_id = create.json()["id"]
+    assert (await client.patch(
+        f"/api/v1/tickets/{ticket_id}/confirm",
+        headers=user_headers,
+    )).status_code == 200
+
+    resolve = await client.patch(
+        f"/api/v1/tickets/{ticket_id}/resolve",
+        json={"agent_accepted_ai_response": False},
+        headers=admin_headers,
+    )
+    assert resolve.status_code == 200
+    assert resolve.json()["status"] == "closed"
+
+    feedback = await client.patch(
+        f"/api/v1/tickets/{ticket_id}/feedback",
+        json={"feedback": "not_helped", "reopen": True},
+        headers=user_headers,
+    )
+    assert feedback.status_code == 200
+    data = feedback.json()
+    assert data["status"] == "confirmed"
+    assert data["reopen_count"] == 1
+    assert data["resolved_at"] is None
+
+    result = await db_session.execute(
+        select(AILog)
+        .where(AILog.ticket_id == ticket_id)
+        .order_by(AILog.id.desc())
+        .limit(1)
+    )
+    assert result.scalar_one().user_feedback == "not_helped"
