@@ -1,4 +1,4 @@
-import { Anchor, Collapse, Group, Text, UnstyledButton } from "@mantine/core";
+import { Anchor, Collapse, Group, Stack, Text, UnstyledButton } from "@mantine/core";
 import { IconChevronDown, IconChevronRight, IconFileText } from "@tabler/icons-react";
 import { useDisclosure } from "@mantine/hooks";
 
@@ -24,16 +24,28 @@ export function Sources({ sources }: { sources?: Source[] | null }) {
       <Collapse in={opened}>
         <div className="sources-list">
           {sources.map((source, index) => (
-            <Group key={`${source.title}-${index}`} gap={8} wrap="nowrap">
-              <IconFileText size={14} />
-              {source.url ? (
-                <Anchor href={source.url} target="_blank" size="xs">
-                  {source.title}
-                </Anchor>
-              ) : (
-                <Text size="xs">{source.title}</Text>
+            <Stack key={`${source.title}-${index}`} gap={4} className="source-item">
+              <Group gap={8} wrap="nowrap">
+                <IconFileText size={14} />
+                {source.url ? (
+                  <Anchor href={source.url} target="_blank" size="xs">
+                    {source.title}
+                  </Anchor>
+                ) : (
+                  <Text size="xs">{source.title}</Text>
+                )}
+                {source.retrieval && (
+                  <Text size="xs" c="dimmed">
+                    {source.retrieval}
+                  </Text>
+                )}
+              </Group>
+              {source.snippet && (
+                <Text size="xs" c="dimmed" className="source-snippet">
+                  {source.snippet}
+                </Text>
               )}
-            </Group>
+            </Stack>
           ))}
         </div>
       </Collapse>

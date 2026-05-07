@@ -83,12 +83,23 @@ py -m scripts.seed_response_templates
 py -m scripts.seed_knowledge_articles
 ```
 
+Для подготовки semantic/RAG индекса после запуска AI-service можно посчитать embeddings для чанков:
+
+```bash
+py -m scripts.backfill_knowledge_embeddings --batch-size 16
+```
+
+Скрипт обновляет `knowledge_chunks.embedding_model`, `embedding_updated_at`, `token_count`.
+Если в Postgres установлен pgvector, он также заполнит `knowledge_chunks.embedding`.
+Если pgvector не установлен, скрипт не ломает локальный запуск и оставляет full-text поиск рабочим.
+
 База знаний использует PostgreSQL full-text search в production:
 
 - `knowledge_articles.search_vector` создаётся миграцией как generated `tsvector`;
 - GIN-индекс ускоряет поиск по статьям;
 - ранжирование сочетает `ts_rank_cd`, фильтры по контексту, свежесть статьи и feedback пользователей;
 - в тестах на SQLite используется переносимый fallback без PostgreSQL-специфичных операторов.
+- pgvector-миграция добавляет vector-колонки и HNSW-индексы только если расширение `vector` доступно в Postgres.
 
 6) Запустите API:
 

@@ -22,11 +22,16 @@ export function ShellLayout() {
   const { token, logout } = useAuth();
   const { data: me } = useMe(Boolean(token));
   const location = useLocation();
+  const isChatPage = location.pathname.startsWith("/chat");
   const requestsLabel =
     me?.role === "admin" || me?.role === "agent" ? "Запросы" : "Мои запросы";
 
   return (
-    <AppShell header={{ height: 58 }} navbar={{ width: 240, breakpoint: "sm" }}>
+    <AppShell
+      className={isChatPage ? "app-shell chat-shell" : "app-shell"}
+      header={{ height: 58 }}
+      navbar={{ width: 240, breakpoint: 0 }}
+    >
       <AppShell.Header className="app-header">
         <Group justify="space-between" h="100%" px="md">
           <Group gap="sm">
@@ -75,7 +80,7 @@ export function ShellLayout() {
         />
       </AppShell.Navbar>
 
-      <AppShell.Main>
+      <AppShell.Main className={`app-main${isChatPage ? " chat-main" : ""}`}>
         <Outlet />
       </AppShell.Main>
     </AppShell>

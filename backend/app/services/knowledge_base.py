@@ -3,16 +3,20 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Iterable
 
-from sqlalchemy import bindparam, func, literal_column, or_, select
+from sqlalchemy import bindparam, func, literal_column, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.models.knowledge_article import KnowledgeArticle
+from app.services.knowledge_embeddings import embed_texts, vector_literal
 
 TOKEN_RE = re.compile(r"[a-zA-Zа-яА-ЯёЁ0-9]+")
 MEDIUM_SCORE_THRESHOLD = 4.0
 HIGH_SCORE_THRESHOLD = 8.0
 POSTGRES_FTS_SCORE_WEIGHT = 20.0
 POSTGRES_FTS_CANDIDATE_MULTIPLIER = 8
+POSTGRES_SEMANTIC_SCORE_WEIGHT = 12.0
+POSTGRES_SEMANTIC_CANDIDATE_MULTIPLIER = 8
 
 STOP_WORDS = {
     "для",
@@ -49,6 +53,9 @@ class KnowledgeMatch:
     article: KnowledgeArticle
     score: float
     decision: str
+    snippet: str | None = None
+    chunk_id: int | None = None
+    retrieval: str = "keyword"
 
 
 def tokenize(text: str) -> set[str]:
@@ -168,6 +175,45 @@ def _text_score(query: str, query_tokens: set[str], article: KnowledgeArticle) -
     return score
 
 
+def _compact_text(value: str) -> str:
+    return " ".join(value.split())
+
+
+def _excerpt_from_text(
+    text: str,
+    query_tokens: set[str],
+    max_length: int = 360,
+) -> str | None:
+    text = _compact_text(text)
+    if not text:
+        return None
+
+    lower_text = text.lower()
+    start = 0
+    for token in query_tokens:
+        index = lower_text.find(token)
+        if index >= 0:
+            start = max(0, index - 90)
+            break
+
+    excerpt = text[start : start + max_length].strip()
+    if start > 0:
+        excerpt = f"...{excerpt}"
+    if start + max_length < len(text):
+        excerpt = f"{excerpt}..."
+    return excerpt
+
+
+def _article_snippet(article: KnowledgeArticle, query_tokens: set[str]) -> str | None:
+    parts = [
+        article.problem or "",
+        article.body,
+        "\n".join(article.steps or []),
+        article.when_to_escalate or "",
+    ]
+    return _excerpt_from_text("\n".join(part for part in parts if part), query_tokens)
+
+
 def _decision_for_score(score: float) -> str:
     if score >= HIGH_SCORE_THRESHOLD:
         return "answer"
@@ -243,6 +289,8 @@ def _build_matches(
                     article=article,
                     score=score,
                     decision=_decision_for_score(score),
+                    snippet=_article_snippet(article, query_tokens),
+                    retrieval="full_text" if postgres_fts_score is not None else "keyword",
                 )
             )
     matches.sort(key=lambda match: (-match.score, match.article.id))
@@ -252,6 +300,64 @@ def _build_matches(
 def _session_dialect_name(db: AsyncSession) -> str:
     bind = db.get_bind()
     return bind.dialect.name
+
+
+def _merge_matches(
+    first: list[KnowledgeMatch],
+    second: list[KnowledgeMatch],
+    limit: int,
+) -> list[KnowledgeMatch]:
+    by_article_id: dict[int, KnowledgeMatch] = {}
+    for match in first + second:
+        current = by_article_id.get(match.article.id)
+        if current is None or match.score > current.score:
+            by_article_id[match.article.id] = match
+    matches = sorted(
+        by_article_id.values(),
+        key=lambda match: (-match.score, match.article.id),
+    )
+    return matches[:limit]
+
+
+async def _pgvector_available(db: AsyncSession) -> bool:
+    result = await db.execute(
+        text(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_name = 'knowledge_chunks'
+                  AND column_name = 'embedding'
+            )
+            """
+        )
+    )
+    return bool(result.scalar_one())
+
+
+def _semantic_filter_sql(filters: KnowledgeSearchFilters) -> tuple[str, dict[str, object]]:
+    clauses: list[str] = []
+    params: dict[str, object] = {}
+
+    if filters.access_scopes:
+        placeholders = []
+        for index, scope in enumerate(filters.access_scopes):
+            key = f"scope_{index}"
+            placeholders.append(f":{key}")
+            params[key] = scope
+        clauses.append(f"ka.access_scope IN ({', '.join(placeholders)})")
+
+    if filters.department:
+        clauses.append("(ka.department = :department OR ka.department IS NULL)")
+        params["department"] = filters.department
+
+    if filters.request_type:
+        clauses.append("(ka.request_type = :request_type OR ka.request_type IS NULL)")
+        params["request_type"] = filters.request_type
+
+    if not clauses:
+        return "", params
+    return " AND " + " AND ".join(clauses), params
 
 
 async def _search_knowledge_articles_postgres(
@@ -294,6 +400,132 @@ async def _search_knowledge_articles_postgres(
     )[:limit]
 
 
+async def _search_knowledge_articles_semantic_postgres(
+    db: AsyncSession,
+    query: str,
+    query_tokens: set[str],
+    limit: int,
+    filters: KnowledgeSearchFilters,
+) -> list[KnowledgeMatch]:
+    if not get_settings().KNOWLEDGE_SEMANTIC_SEARCH_ENABLED:
+        return []
+    if not await _pgvector_available(db):
+        return []
+
+    embedding_batch = await embed_texts([query])
+    if not embedding_batch.embeddings:
+        return []
+
+    filter_sql, params = _semantic_filter_sql(filters)
+    candidate_limit = max(limit * POSTGRES_SEMANTIC_CANDIDATE_MULTIPLIER, limit)
+    result = await db.execute(
+        text(
+            f"""
+            WITH ranked_chunks AS (
+                SELECT
+                    ka.id AS article_id,
+                    kc.id AS chunk_id,
+                    kc.content AS chunk_content,
+                    1 - (kc.embedding <=> CAST(:embedding AS vector)) AS semantic_score,
+                    row_number() OVER (
+                        PARTITION BY ka.id
+                        ORDER BY 1 - (kc.embedding <=> CAST(:embedding AS vector)) DESC, kc.id ASC
+                    ) AS rank
+                FROM knowledge_chunks kc
+                JOIN knowledge_articles ka ON ka.id = kc.article_id
+                WHERE ka.is_active IS TRUE
+                  AND kc.is_active IS TRUE
+                  AND kc.embedding IS NOT NULL
+                  {filter_sql}
+            )
+            SELECT
+                article_id,
+                chunk_id,
+                chunk_content,
+                semantic_score
+            FROM ranked_chunks
+            WHERE rank = 1
+            ORDER BY semantic_score DESC, article_id ASC
+            LIMIT :candidate_limit
+            """
+        ),
+        {
+            **params,
+            "embedding": vector_literal(embedding_batch.embeddings[0]),
+            "candidate_limit": candidate_limit,
+        },
+    )
+    scored_chunks = {
+        int(article_id): {
+            "chunk_id": int(chunk_id),
+            "content": str(chunk_content or ""),
+            "score": float(score or 0.0),
+        }
+        for article_id, chunk_id, chunk_content, score in result.all()
+        if score is not None
+    }
+    if not scored_chunks:
+        return []
+
+    articles_result = await db.execute(
+        select(KnowledgeArticle)
+        .where(KnowledgeArticle.id.in_(scored_chunks.keys()))
+        .order_by(KnowledgeArticle.id.asc())
+    )
+    now = datetime.now(timezone.utc)
+    matches: list[KnowledgeMatch] = []
+    for article in articles_result.scalars().all():
+        chunk = scored_chunks[article.id]
+        score = _score_article(
+            query,
+            query_tokens,
+            article,
+            filters,
+            now,
+            text_score=float(chunk["score"]) * POSTGRES_SEMANTIC_SCORE_WEIGHT,
+        )
+        if score >= MEDIUM_SCORE_THRESHOLD:
+            matches.append(
+                KnowledgeMatch(
+                    article=article,
+                    score=score,
+                    decision=_decision_for_score(score),
+                    snippet=_excerpt_from_text(str(chunk["content"]), query_tokens),
+                    chunk_id=int(chunk["chunk_id"]),
+                    retrieval="semantic",
+                )
+            )
+    matches.sort(key=lambda match: (-match.score, match.article.id))
+    return matches[:limit]
+
+
+async def _search_knowledge_articles_hybrid_postgres(
+    db: AsyncSession,
+    query: str,
+    query_tokens: set[str],
+    limit: int,
+    filters: KnowledgeSearchFilters,
+) -> list[KnowledgeMatch]:
+    fts_matches = await _search_knowledge_articles_postgres(
+        db,
+        query,
+        query_tokens,
+        limit,
+        filters,
+    )
+    try:
+        semantic_matches = await _search_knowledge_articles_semantic_postgres(
+            db,
+            query,
+            query_tokens,
+            limit,
+            filters,
+        )
+    except Exception:
+        semantic_matches = []
+    return _merge_matches(fts_matches, semantic_matches, limit)
+
+
 async def _search_knowledge_articles_fallback(
     db: AsyncSession,
     query: str,
@@ -328,7 +560,7 @@ async def search_knowledge_articles(
         return []
 
     if _session_dialect_name(db) == "postgresql":
-        return await _search_knowledge_articles_postgres(
+        return await _search_knowledge_articles_hybrid_postgres(
             db,
             query,
             query_tokens,
@@ -365,6 +597,9 @@ def build_knowledge_answer(match: KnowledgeMatch, query: str) -> dict:
         "title": article.title,
         "url": article.source_url,
         "article_id": article.id,
+        "chunk_id": match.chunk_id,
+        "snippet": match.snippet,
+        "retrieval": match.retrieval,
         "score": match.score,
         "decision": match.decision,
     }

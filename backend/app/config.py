@@ -34,6 +34,13 @@ class Settings:
     AI_MODEL_VERSION_FALLBACK: str = os.getenv(
         "AI_MODEL_VERSION_FALLBACK", "mistral-unspecified"
     )
+    KNOWLEDGE_SEMANTIC_SEARCH_ENABLED: bool = (
+        os.getenv("KNOWLEDGE_SEMANTIC_SEARCH_ENABLED", "false").strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
+    KNOWLEDGE_EMBEDDING_DIMENSION: int = int(
+        os.getenv("KNOWLEDGE_EMBEDDING_DIMENSION", "768")
+    )
 
     # Секретный ключ для подписи JWT токенов
     # В продакшне — длинная случайная строка, хранится в .env

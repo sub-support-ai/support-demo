@@ -289,7 +289,7 @@ export function ChatPage() {
       </Paper>
 
       <div className="side-panel">
-        <Paper withBorder p="md" className="quiet-panel">
+        <Paper withBorder p="md" className="quiet-panel conversations-panel">
           <Group justify="space-between" mb="sm">
             <Title order={4}>Диалоги</Title>
             <Badge variant="light">{conversations.data?.length ?? 0}</Badge>

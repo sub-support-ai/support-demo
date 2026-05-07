@@ -59,6 +59,9 @@ export interface Source {
   title: string;
   url?: string | null;
   article_id?: number | null;
+  chunk_id?: number | null;
+  snippet?: string | null;
+  retrieval?: "keyword" | "full_text" | "semantic" | string | null;
   score?: number | null;
   decision?: "answer" | "clarify" | "escalate" | string | null;
 }

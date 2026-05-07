@@ -4,10 +4,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.ai_log import AILog
 from app.models.conversation import Conversation
-from app.models.knowledge_article import KnowledgeArticle, KnowledgeArticleFeedback
+from app.models.knowledge_article import KnowledgeArticle, KnowledgeArticleFeedback, KnowledgeChunk
 from app.models.message import Message
 from app.models.user import User
+from app.services.knowledge_embeddings import (
+    estimate_token_count,
+    mark_chunk_embedded,
+    needs_embedding,
+    vector_literal,
+)
 from app.services.knowledge_base import find_knowledge_answer, search_knowledge_articles
+from app.services.knowledge_base import KnowledgeMatch, _merge_matches
 
 
 @pytest.mark.asyncio
@@ -41,6 +48,57 @@ async def test_search_knowledge_articles_ranks_matching_article(db_session: Asyn
     assert matches[0].score > 0
 
 
+def test_knowledge_embedding_helpers_mark_chunk_ready():
+    chunk = KnowledgeChunk(
+        article_id=1,
+        chunk_index=0,
+        content="vpn profile mfa error",
+        is_active=True,
+    )
+
+    assert needs_embedding(chunk, "nomic-embed-text") is True
+
+    mark_chunk_embedded(chunk, "nomic-embed-text")
+
+    assert chunk.embedding_model == "nomic-embed-text"
+    assert chunk.embedding_updated_at is not None
+    assert chunk.token_count == estimate_token_count(chunk.content)
+    assert needs_embedding(chunk, "nomic-embed-text") is False
+    assert vector_literal([0.1, -0.25, 1.0]) == "[0.10000000,-0.25000000,1.00000000]"
+
+
+def test_merge_knowledge_matches_deduplicates_by_highest_score():
+    low = KnowledgeArticle(title="VPN", body="low")
+    low.id = 1
+    high = KnowledgeArticle(title="VPN", body="high")
+    high.id = 1
+    other = KnowledgeArticle(title="Printer", body="other")
+    other.id = 2
+
+    matches = _merge_matches(
+        [KnowledgeMatch(article=low, score=5.0, decision="clarify")],
+        [
+            KnowledgeMatch(
+                article=high,
+                score=9.0,
+                decision="answer",
+                snippet="best chunk",
+                chunk_id=10,
+                retrieval="semantic",
+            ),
+            KnowledgeMatch(article=other, score=7.0, decision="clarify"),
+        ],
+        limit=2,
+    )
+
+    assert [match.article.id for match in matches] == [1, 2]
+    assert matches[0].score == 9.0
+    assert matches[0].decision == "answer"
+    assert matches[0].snippet == "best chunk"
+    assert matches[0].chunk_id == 10
+    assert matches[0].retrieval == "semantic"
+
+
 @pytest.mark.asyncio
 async def test_find_knowledge_answer_builds_sources(db_session: AsyncSession):
     article = KnowledgeArticle(
@@ -65,6 +123,8 @@ async def test_find_knowledge_answer_builds_sources(db_session: AsyncSession):
     assert answer["sources"][0]["title"] == article.title
     assert answer["sources"][0]["article_id"] == article.id
     assert answer["sources"][0]["decision"] == "answer"
+    assert answer["sources"][0]["retrieval"] == "keyword"
+    assert answer["sources"][0]["snippet"]
     assert "Проверьте раскладку" in answer["answer"]
 
 
