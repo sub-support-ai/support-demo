@@ -1,5 +1,26 @@
 # Support Demo
 
+# Точка поддержки
+
+AI-сервис для автоматизации внутренних обращений сотрудников в службу поддержки.
+
+## Возможности
+
+- чат сотрудника с AI-ассистентом;
+- поиск по базе знаний;
+- автоматическая классификация обращений;
+- создание тикета при неуверенности AI;
+- маршрутизация по отделам;
+- локальный запуск LLM через Ollama;
+- self-hosted архитектура.
+
+## Архитектура
+
+Frontend: React + Vite + Mantine  
+Backend: FastAPI + PostgreSQL + SQLAlchemy + Alembic  
+AI-service: FastAPI + Ollama + Mistral + nomic-embed-text  
+RAG: база знаний + full-text search + semantic search через embeddings
+
 ## Start
 
 Выполните одну команду из корневой директории репозитория:
