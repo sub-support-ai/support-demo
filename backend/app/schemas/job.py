@@ -13,6 +13,7 @@ class AIJobRead(BaseModel):
     max_attempts: int
     error: str | None = None
     run_after: datetime
+    locked_at: datetime | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
     created_at: datetime
@@ -32,6 +33,7 @@ class KnowledgeEmbeddingJobRead(BaseModel):
     embedding_model: str | None = None
     error: str | None = None
     run_after: datetime
+    locked_at: datetime | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
     created_at: datetime

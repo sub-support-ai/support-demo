@@ -16,12 +16,18 @@ from app.schemas.job import (
     JobsResponse,
     KnowledgeEmbeddingJobRead,
 )
-from app.services.ai_jobs import ACTIVE_AI_JOB_STATUSES, AI_JOB_FAILED, AI_JOB_QUEUED
+from app.services.ai_jobs import (
+    ACTIVE_AI_JOB_STATUSES,
+    AI_JOB_FAILED,
+    AI_JOB_QUEUED,
+    AI_JOB_RUNNING,
+)
 from app.services.audit import log_event
 from app.services.knowledge_embedding_jobs import (
     ACTIVE_KNOWLEDGE_EMBEDDING_JOB_STATUSES,
     KNOWLEDGE_EMBEDDING_JOB_FAILED,
     KNOWLEDGE_EMBEDDING_JOB_QUEUED,
+    KNOWLEDGE_EMBEDDING_JOB_RUNNING,
 )
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
@@ -162,6 +168,40 @@ async def retry_ai_job(
     return job
 
 
+@router.post("/ai/{job_id}/requeue", response_model=AIJobRead)
+async def requeue_ai_job(
+    job_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_role("admin")),
+):
+    job = await db.get(AIJob, job_id)
+    if job is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="AI job not found",
+        )
+    if job.status != AI_JOB_RUNNING:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only running AI jobs can be requeued",
+        )
+
+    _requeue_running_ai_job(job)
+    await log_event(
+        db,
+        action="job.requeue",
+        user_id=admin.id,
+        target_type="ai_job",
+        target_id=job.id,
+        request=request,
+        details={"conversation_id": job.conversation_id},
+    )
+    await db.flush()
+    await db.refresh(job)
+    return job
+
+
 @router.post("/knowledge-embeddings/{job_id}/retry", response_model=KnowledgeEmbeddingJobRead)
 async def retry_knowledge_embedding_job(
     job_id: int,
@@ -211,6 +251,43 @@ async def retry_knowledge_embedding_job(
     return job
 
 
+@router.post(
+    "/knowledge-embeddings/{job_id}/requeue",
+    response_model=KnowledgeEmbeddingJobRead,
+)
+async def requeue_knowledge_embedding_job(
+    job_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_role("admin")),
+):
+    job = await db.get(KnowledgeEmbeddingJob, job_id)
+    if job is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge embedding job not found",
+        )
+    if job.status != KNOWLEDGE_EMBEDDING_JOB_RUNNING:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only running knowledge embedding jobs can be requeued",
+        )
+
+    _requeue_running_knowledge_embedding_job(job)
+    await log_event(
+        db,
+        action="job.requeue",
+        user_id=admin.id,
+        target_type="knowledge_embedding_job",
+        target_id=job.id,
+        request=request,
+        details={"article_id": job.article_id},
+    )
+    await db.flush()
+    await db.refresh(job)
+    return job
+
+
 def _reset_ai_job(job: AIJob) -> None:
     now = datetime.now(timezone.utc)
     job.status = AI_JOB_QUEUED
@@ -222,6 +299,16 @@ def _reset_ai_job(job: AIJob) -> None:
     job.error = None
 
 
+def _requeue_running_ai_job(job: AIJob) -> None:
+    now = datetime.now(timezone.utc)
+    job.status = AI_JOB_QUEUED
+    job.run_after = now
+    job.locked_at = None
+    job.started_at = None
+    job.finished_at = None
+    job.error = "Job was manually returned to queue"
+
+
 def _reset_knowledge_embedding_job(job: KnowledgeEmbeddingJob) -> None:
     now = datetime.now(timezone.utc)
     job.status = KNOWLEDGE_EMBEDDING_JOB_QUEUED
@@ -231,3 +318,13 @@ def _reset_knowledge_embedding_job(job: KnowledgeEmbeddingJob) -> None:
     job.started_at = None
     job.finished_at = None
     job.error = None
+
+
+def _requeue_running_knowledge_embedding_job(job: KnowledgeEmbeddingJob) -> None:
+    now = datetime.now(timezone.utc)
+    job.status = KNOWLEDGE_EMBEDDING_JOB_QUEUED
+    job.run_after = now
+    job.locked_at = None
+    job.started_at = None
+    job.finished_at = None
+    job.error = "Job was manually returned to queue"

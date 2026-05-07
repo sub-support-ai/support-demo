@@ -68,6 +68,21 @@ export function useRetryAIJob() {
   });
 }
 
+export function useRequeueAIJob() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (jobId: number) => {
+      const { data } = await api.post<AIJob>(`/jobs/ai/${jobId}/requeue`);
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["stats"] });
+      queryClient.invalidateQueries({ queryKey: ["conversations"] });
+    },
+  });
+}
+
 export function useRetryKnowledgeEmbeddingJob() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -79,6 +94,23 @@ export function useRetryKnowledgeEmbeddingJob() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["jobs", "failed"] });
+      queryClient.invalidateQueries({ queryKey: ["stats"] });
+      queryClient.invalidateQueries({ queryKey: ["knowledge", "articles"] });
+    },
+  });
+}
+
+export function useRequeueKnowledgeEmbeddingJob() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (jobId: number) => {
+      const { data } = await api.post<KnowledgeEmbeddingJob>(
+        `/jobs/knowledge-embeddings/${jobId}/requeue`,
+      );
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
       queryClient.invalidateQueries({ queryKey: ["stats"] });
       queryClient.invalidateQueries({ queryKey: ["knowledge", "articles"] });
     },

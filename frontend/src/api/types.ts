@@ -243,6 +243,7 @@ export interface KnowledgeEmbeddingJob {
   embedding_model?: string | null;
   error?: string | null;
   run_after?: string | null;
+  locked_at?: string | null;
   started_at?: string | null;
   finished_at?: string | null;
   created_at: string;
@@ -257,6 +258,7 @@ export interface AIJob {
   max_attempts: number;
   error?: string | null;
   run_after: string;
+  locked_at?: string | null;
   started_at?: string | null;
   finished_at?: string | null;
   created_at: string;

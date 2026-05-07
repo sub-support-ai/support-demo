@@ -215,3 +215,76 @@ async def test_admin_can_retry_failed_knowledge_embedding_job(
     assert data["status"] == "queued"
     assert data["attempts"] == 0
     assert data["error"] is None
+
+
+@pytest.mark.asyncio
+async def test_admin_can_requeue_running_ai_job(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    admin_id, token = await _register_user_with_id(client, "requeueai")
+    admin = await db_session.get(User, admin_id)
+    assert admin is not None
+    admin.role = "admin"
+
+    conversation = Conversation(user_id=admin_id, status="ai_processing")
+    db_session.add(conversation)
+    await db_session.flush()
+    job = AIJob(
+        conversation_id=conversation.id,
+        status="running",
+        attempts=1,
+        max_attempts=3,
+        run_after=datetime.now(timezone.utc),
+        locked_at=datetime.now(timezone.utc),
+        started_at=datetime.now(timezone.utc),
+    )
+    db_session.add(job)
+    await db_session.flush()
+
+    response = await client.post(
+        f"/api/v1/jobs/ai/{job.id}/requeue",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "queued"
+    assert data["locked_at"] is None
+    assert data["started_at"] is None
+    assert data["error"] == "Job was manually returned to queue"
+
+
+@pytest.mark.asyncio
+async def test_admin_can_requeue_running_knowledge_embedding_job(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    admin_id, token = await _register_user_with_id(client, "requeueknowledge")
+    admin = await db_session.get(User, admin_id)
+    assert admin is not None
+    admin.role = "admin"
+    job = KnowledgeEmbeddingJob(
+        article_id=None,
+        requested_by_user_id=admin_id,
+        status="running",
+        attempts=1,
+        max_attempts=3,
+        run_after=datetime.now(timezone.utc),
+        locked_at=datetime.now(timezone.utc),
+        started_at=datetime.now(timezone.utc),
+    )
+    db_session.add(job)
+    await db_session.flush()
+
+    response = await client.post(
+        f"/api/v1/jobs/knowledge-embeddings/{job.id}/requeue",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "queued"
+    assert data["locked_at"] is None
+    assert data["started_at"] is None
+    assert data["error"] == "Job was manually returned to queue"

@@ -17,6 +17,8 @@ import { useState } from "react";
 import { getApiError } from "../api/client";
 import {
   useJobs,
+  useRequeueAIJob,
+  useRequeueKnowledgeEmbeddingJob,
   useRetryAIJob,
   useRetryKnowledgeEmbeddingJob,
 } from "../api/stats";
@@ -47,6 +49,8 @@ type JobRow =
   | { kind: "ai"; job: AIJob }
   | { kind: "knowledge_embeddings"; job: KnowledgeEmbeddingJob };
 
+const STALE_RUNNING_MINUTES = 5;
+
 function statusColor(status: string): string {
   if (status === "failed") return "red";
   if (status === "running") return "blue";
@@ -64,6 +68,14 @@ function formatDate(value?: string | null): string {
   });
 }
 
+function isStaleRunning(job: AIJob | KnowledgeEmbeddingJob): boolean {
+  if (job.status !== "running" || !job.locked_at) {
+    return false;
+  }
+  const lockedAt = new Date(job.locked_at).getTime();
+  return Date.now() - lockedAt > STALE_RUNNING_MINUTES * 60 * 1000;
+}
+
 function jobTarget(row: JobRow): string {
   if (row.kind === "ai") {
     return `Диалог #${row.job.conversation_id}`;
@@ -79,7 +91,9 @@ export function JobsPage() {
   const [status, setStatus] = useState<JobStatusFilter>("all");
   const jobs = useJobs({ enabled: isAdmin, kind, status });
   const retryAIJob = useRetryAIJob();
+  const requeueAIJob = useRequeueAIJob();
   const retryKnowledgeJob = useRetryKnowledgeEmbeddingJob();
+  const requeueKnowledgeJob = useRequeueKnowledgeEmbeddingJob();
 
   const rows: JobRow[] = [
     ...(jobs.data?.ai.map((job) => ({ kind: "ai" as const, job })) ?? []),
@@ -173,9 +187,16 @@ export function JobsPage() {
                     </Text>
                   </Table.Td>
                   <Table.Td>
-                    <Badge color={statusColor(row.job.status)} variant="light">
-                      {row.job.status}
-                    </Badge>
+                    <Stack gap={4}>
+                      <Badge color={statusColor(row.job.status)} variant="light">
+                        {row.job.status}
+                      </Badge>
+                      {isStaleRunning(row.job) && (
+                        <Badge color="orange" variant="light">
+                          зависла
+                        </Badge>
+                      )}
+                    </Stack>
                   </Table.Td>
                   <Table.Td>
                     {row.job.attempts}/{row.job.max_attempts}
@@ -185,6 +206,11 @@ export function JobsPage() {
                     <Text size="xs" c="dimmed">
                       создана: {formatDate(row.job.created_at)}
                     </Text>
+                    {row.job.locked_at && (
+                      <Text size="xs" c="dimmed">
+                        lock: {formatDate(row.job.locked_at)}
+                      </Text>
+                    )}
                   </Table.Td>
                   <Table.Td className="jobs-error-cell">
                     <Text size="sm" c={row.job.error ? "red" : "dimmed"} lineClamp={2}>
@@ -192,30 +218,57 @@ export function JobsPage() {
                     </Text>
                   </Table.Td>
                   <Table.Td>
-                    {row.job.status === "failed" && (
-                      <Button
-                        size="xs"
-                        variant="light"
-                        loading={
-                          row.kind === "ai"
-                            ? retryAIJob.isPending
-                            : retryKnowledgeJob.isPending
-                        }
-                        onClick={() => {
-                          if (row.kind === "ai") {
-                            retryAIJob.mutate(row.job.id, {
+                    <Group gap="xs" justify="flex-end">
+                      {row.job.status === "failed" && (
+                        <Button
+                          size="xs"
+                          variant="light"
+                          loading={
+                            row.kind === "ai"
+                              ? retryAIJob.isPending
+                              : retryKnowledgeJob.isPending
+                          }
+                          onClick={() => {
+                            if (row.kind === "ai") {
+                              retryAIJob.mutate(row.job.id, {
+                                onSuccess: () => jobs.refetch(),
+                              });
+                              return;
+                            }
+                            retryKnowledgeJob.mutate(row.job.id, {
                               onSuccess: () => jobs.refetch(),
                             });
-                            return;
+                          }}
+                        >
+                          Повторить
+                        </Button>
+                      )}
+                      {isStaleRunning(row.job) && (
+                        <Button
+                          size="xs"
+                          color="orange"
+                          variant="light"
+                          loading={
+                            row.kind === "ai"
+                              ? requeueAIJob.isPending
+                              : requeueKnowledgeJob.isPending
                           }
-                          retryKnowledgeJob.mutate(row.job.id, {
-                            onSuccess: () => jobs.refetch(),
-                          });
-                        }}
-                      >
-                        Повторить
-                      </Button>
-                    )}
+                          onClick={() => {
+                            if (row.kind === "ai") {
+                              requeueAIJob.mutate(row.job.id, {
+                                onSuccess: () => jobs.refetch(),
+                              });
+                              return;
+                            }
+                            requeueKnowledgeJob.mutate(row.job.id, {
+                              onSuccess: () => jobs.refetch(),
+                            });
+                          }}
+                        >
+                          В очередь
+                        </Button>
+                      )}
+                    </Group>
                   </Table.Td>
                 </Table.Tr>
               ))}
