@@ -51,6 +51,20 @@
       - .:/app
     command: python -m app.workers.sla_worker
 
+  knowledge-embedding-worker:
+    build: .
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: db
+      AI_SERVICE_URL: http://host.docker.internal:8001
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    command: python -m app.workers.knowledge_embedding_worker
+
   # ── ai-service ─────────────────────────────────────────────────────────────
   # Локальный AI-сервис с Mistral (через Ollama / llama.cpp). По требованию
   # заказчика (СИБИНТЕК-СОФТ / Роснефть) данные не покидают периметр —
@@ -67,6 +81,8 @@
   #
   # ai-service:
   #   image: <registry>/<ai-service>:<tag>
+  #   env_file:
+  #     - .env
   #   ports:
   #     - "8001:8001"
   #   # volumes: РјРѕРЅС‚РёСЂСѓРµРј РјРѕРґРµР»СЊ, С‡С‚РѕР±С‹ РЅРµ СЃРєР°С‡РёРІР°С‚СЊ РµС‘ РЅР° РєР°Р¶РґРѕРј СЃС‚Р°СЂС‚Рµ РєРѕРЅС‚РµР№РЅРµСЂР°

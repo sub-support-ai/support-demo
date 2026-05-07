@@ -49,7 +49,7 @@ async def assign_agent(
         select(Agent)
         .where(Agent.department == department)
         .where(Agent.is_active == True)
-        .with_for_update()
+        .with_for_update(skip_locked=True)
         .limit(1)
     )
 

@@ -142,6 +142,30 @@ body {
   min-height: 220px;
 }
 
+.knowledge-page {
+  max-width: 1440px;
+  margin: 0 auto;
+}
+
+.knowledge-list-panel,
+.knowledge-editor-panel {
+  position: relative;
+  min-height: 520px;
+  padding: 14px;
+}
+
+.knowledge-list-panel {
+  overflow: auto;
+}
+
+.knowledge-row {
+  cursor: pointer;
+}
+
+.knowledge-row.active td {
+  background: #e8f7f3;
+}
+
 .breakdown-row {
   min-width: 0;
 }
@@ -392,10 +416,6 @@ body {
   .page-grid {
     grid-template-columns: 1fr;
     grid-template-rows: minmax(0, 1fr) minmax(220px, 38vh);
-  }
-
-  .ticket-filters {
-    grid-template-columns: 1fr 1fr;
   }
 
   .ticket-filters {

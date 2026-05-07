@@ -202,11 +202,15 @@ export function ChatPage() {
     if (!activeTicket) {
       return;
     }
-    const ticket = await updateTicketDraft.mutateAsync({
-      ticketId: activeTicket.id,
-      payload,
-    });
-    setDraftTicket(ticket);
+    try {
+      const ticket = await updateTicketDraft.mutateAsync({
+        ticketId: activeTicket.id,
+        payload,
+      });
+      setDraftTicket(ticket);
+    } catch {
+      // Ошибка уже хранится в mutation state и показывается в Alert.
+    }
   }
 
   const error =

@@ -9,6 +9,18 @@ MODEL_VERSION = os.getenv("AI_MODEL_VERSION", "mistral-7b-instruct-q4_K_M-2026-0
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", os.getenv("OLLAMA_URL", "http://localhost:11434")).rstrip("/")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
 OLLAMA_TIMEOUT_SECONDS = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "180"))
+MAX_CONTEXT_MESSAGES = int(os.getenv("AI_MAX_CONTEXT_MESSAGES", "10"))
+MAX_MESSAGE_CHARS = int(os.getenv("AI_MAX_MESSAGE_CHARS", "4000"))
+
+
+def _fallback_response() -> dict:
+    return {
+        "answer": "Сервис ответов временно недоступен. Я сохранил сообщение и предложу создать запрос специалисту.",
+        "confidence": 0.0,
+        "escalate": True,
+        "sources": [],
+        "model_version": MODEL_VERSION,
+    }
 
 SYSTEM_PROMPT = """Ты — AI-ассистент службы поддержки сотрудников компании.
 Отвечай вежливо, по делу, на русском языке.
@@ -66,37 +78,40 @@ def generate_answer(conversation_id: int, messages: list) -> dict:
     ]
 
     # Добавляем историю диалога
-    for msg in messages:
+    for msg in messages[-MAX_CONTEXT_MESSAGES:]:
         # Дополнительная защита от system сообщений
         # (основная фильтрация в main.py, это страховка)
         if msg.role == "system":
             continue
         ollama_messages.append({
             "role": msg.role,
-            "content": msg.content
+            "content": msg.content[:MAX_MESSAGE_CHARS]
         })
 
-    r = requests.post(
-        f"{OLLAMA_BASE_URL}/api/chat",
-        json={
-            "model": OLLAMA_MODEL,
-            "messages": ollama_messages,
-            "stream": False,
-            "options": {"temperature": 0}
-        },
-        timeout=OLLAMA_TIMEOUT_SECONDS,
-    )
-    r.raise_for_status()
+    try:
+        r = requests.post(
+            f"{OLLAMA_BASE_URL}/api/chat",
+            json={
+                "model": OLLAMA_MODEL,
+                "messages": ollama_messages,
+                "stream": False,
+                "options": {"temperature": 0}
+            },
+            timeout=OLLAMA_TIMEOUT_SECONDS,
+        )
+        r.raise_for_status()
 
-    raw = r.json()["message"]["content"].strip()
+        raw = r.json()["message"]["content"].strip()
 
-    # Чистим если вдруг модель обернула в ```json
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
+        # Чистим если вдруг модель обернула в ```json
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
 
-    result = json.loads(raw)
+        result = json.loads(raw)
+    except (requests.RequestException, KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError):
+        return _fallback_response()
 
     # Если confidence < 0.6 — принудительно ставим escalate
     confidence = result.get("confidence", 0.5)

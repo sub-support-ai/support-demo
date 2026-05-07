@@ -146,6 +146,9 @@ class KnowledgeArticleRead(KnowledgeArticleBase):
 class KnowledgeArticleMatch(KnowledgeArticleRead):
     score: float
     decision: KnowledgeDecisionLiteral = "answer"
+    chunk_id: int | None = None
+    snippet: str | None = None
+    retrieval: str | None = None
 
 
 class KnowledgeFeedbackCreate(BaseModel):
@@ -165,5 +168,21 @@ class KnowledgeFeedbackRead(BaseModel):
     decision: str
     feedback: str | None = None
     escalated_ticket_id: int | None = None
+    created_at: datetime
+    updated_at: datetime | None = None
+
+
+class KnowledgeEmbeddingJobRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    article_id: int | None = None
+    requested_by_user_id: int | None = None
+    status: str
+    attempts: int = 0
+    max_attempts: int = 3
+    updated_chunks: int = 0
+    embedding_model: str | None = None
+    error: str | None = None
     created_at: datetime
     updated_at: datetime | None = None

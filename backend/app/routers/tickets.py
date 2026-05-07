@@ -39,6 +39,13 @@ from app.services.ticket_body import clean_optional_text, replace_context_block_
 
 router = APIRouter(prefix="/tickets", tags=["tickets"])
 
+ALLOWED_OPERATOR_STATUS_TRANSITIONS = {
+    "confirmed": {"in_progress", "resolved", "closed"},
+    "in_progress": {"confirmed", "resolved", "closed"},
+    "resolved": {"in_progress", "closed"},
+    "closed": set(),
+}
+
 
 async def _load_ticket(ticket_id: int, db: AsyncSession) -> Ticket:
     result = await db.execute(select(Ticket).where(Ticket.id == ticket_id))
@@ -195,6 +202,7 @@ class ResolvePayload(BaseModel):
         Нужно для метрик скорости работы.
     """
     agent_accepted_ai_response: bool
+    routing_was_correct: bool = True
     correction_lag_seconds: int | None = None
 
 
@@ -217,7 +225,7 @@ async def create_ticket(
     from app.services.ai_classifier import classify_ticket
 
     ai_result = await classify_ticket(
-        ticket_id=0,
+        ticket_id=None,
         title=payload.title,
         body=payload.body,
     )
@@ -248,6 +256,8 @@ async def create_ticket(
     await db.flush()
 
     await assign_agent(db, ticket)
+    if ticket.sla_started_at is None:
+        start_ticket_sla(ticket)
     # flush до refresh — иначе SELECT из refresh() затрёт agent_id в памяти
     await db.flush()
 
@@ -321,7 +331,7 @@ async def list_tickets(
 
     if department:
         query = query.where(Ticket.department == department)
-    query = query.offset(skip).limit(limit)
+    query = query.order_by(Ticket.created_at.desc(), Ticket.id.desc()).offset(skip).limit(limit)
 
     result = await db.execute(query)
     return result.scalars().all()
@@ -359,6 +369,7 @@ async def update_ticket_status(
     _require_confirmed_ticket_for_operator(ticket)
 
     old_status = ticket.status
+    _require_valid_operator_status_transition(old_status, payload.status)
     ticket.status = payload.status
     if payload.status in OPEN_STATUSES and ticket.sla_started_at is None:
         start_ticket_sla(ticket)
@@ -401,6 +412,21 @@ async def update_ticket_draft(
     update_data = payload.model_dump(exclude_unset=True)
     old_department = ticket.department
     old_ai_priority = ticket.ai_priority
+    user_edited_fields = {
+        "title",
+        "body",
+        "department",
+        "ai_priority",
+        "requester_name",
+        "requester_email",
+        "steps_tried",
+        "office",
+        "affected_item",
+        "request_type",
+        "request_details",
+    }
+    if ticket.ticket_source == "ai_generated" and user_edited_fields.intersection(update_data):
+        ticket.ticket_source = "ai_assisted"
 
     if "title" in update_data and update_data["title"] is not None:
         ticket.title = update_data["title"].strip()
@@ -502,8 +528,6 @@ async def confirm_ticket(
 
     if ticket.agent_id is None:
         await assign_agent(db, ticket)
-    if ticket.sla_started_at is None:
-        start_ticket_sla(ticket)
 
     await db.flush()
     await db.refresh(ticket)
@@ -611,7 +635,7 @@ async def resolve_ticket(
 
     if ai_log:
         ai_log.agent_accepted_ai_response = payload.agent_accepted_ai_response
-        ai_log.routing_was_correct = True
+        ai_log.routing_was_correct = payload.routing_was_correct
         ai_log.reviewed_at = datetime.now(timezone.utc)
         if payload.correction_lag_seconds is not None:
             ai_log.correction_lag_seconds = payload.correction_lag_seconds
@@ -623,7 +647,7 @@ async def resolve_ticket(
             predicted_priority=ticket.ai_priority or "средний",
             confidence_score=ticket.ai_confidence or 0.0,
             agent_accepted_ai_response=payload.agent_accepted_ai_response,
-            routing_was_correct=True,
+            routing_was_correct=payload.routing_was_correct,
             reviewed_at=datetime.now(timezone.utc),
             correction_lag_seconds=payload.correction_lag_seconds,
         )
@@ -632,6 +656,22 @@ async def resolve_ticket(
     await db.flush()
     await db.refresh(ticket)
     return ticket
+
+
+def _require_valid_operator_status_transition(old_status: str, new_status: str) -> None:
+    if old_status == new_status:
+        return
+    allowed = ALLOWED_OPERATOR_STATUS_TRANSITIONS.get(old_status, set())
+    if new_status not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "Invalid ticket status transition",
+                "from": old_status,
+                "to": new_status,
+                "allowed": sorted(allowed),
+            },
+        )
 
 
 @router.get(

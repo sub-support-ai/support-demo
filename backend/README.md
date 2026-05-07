@@ -92,6 +92,8 @@ py -m scripts.backfill_knowledge_embeddings --batch-size 16
 Скрипт обновляет `knowledge_chunks.embedding_model`, `embedding_updated_at`, `token_count`.
 Если в Postgres установлен pgvector, он также заполнит `knowledge_chunks.embedding`.
 Если pgvector не установлен, скрипт не ломает локальный запуск и оставляет full-text поиск рабочим.
+Для регулярной переиндексации можно задать `KNOWLEDGE_REINDEX_INTERVAL_SECONDS`.
+По умолчанию `0`, то есть периодический reindex выключен.
 
 База знаний использует PostgreSQL full-text search в production:
 
@@ -124,11 +126,20 @@ py -m app.workers.sla_worker
 
 Он периодически проверяет просроченные подтверждённые запросы и эскалирует их старшему специалисту отдела.
 
+9) Для фонового заполнения RAG embeddings запустите worker базы знаний:
+
+```bash
+py -m app.workers.knowledge_embedding_worker
+```
+
+Админский endpoint `POST /api/v1/knowledge/{article_id}/reindex` пересобирает `search_text` и чанки статьи, затем ставит задачу в `knowledge_embedding_jobs`. Worker забирает задачу, вызывает AI-service `/ai/embed` и заполняет metadata чанков. Если в Postgres доступен pgvector, также заполняется vector-колонка `knowledge_chunks.embedding`.
+
 Для локального запуска рядом с AI-service обычно нужно переопределить:
 
 ```env
 POSTGRES_HOST=localhost
 AI_SERVICE_URL=http://localhost:8001
+AI_SERVICE_API_KEY=
 ```
 
 ## Миграции БД (Alembic)
@@ -193,6 +204,7 @@ py -m pytest -q
 Смотрите `.env.example`:
 - `POSTGRES_HOST=db` — для запуска в Docker Compose (приложение обращается к сервису `db`)
 - `AI_SERVICE_URL` — адрес локального AI-сервиса (Mistral через Ollama/llama.cpp). По требованию заказчика данные не покидают периметр предприятия, облачные API не используются.
+- `AI_SERVICE_API_KEY` — общий секрет между backend и AI-service. В локальной разработке можно оставить пустым; для staging/prod задавайте длинную случайную строку в обоих сервисах.
 - `JWT_SECRET_KEY` — длинная случайная строка. Генерация: `python -c "import secrets; print(secrets.token_urlsafe(64))"`. В `APP_ENV=production` дефолт запрещён — приложение упадёт на старте.
 - `CORS_ORIGINS` — список источников фронта через запятую. Пусто — CORS выключен.
 - `BOOTSTRAP_ADMIN_EMAIL` — email первого админа (нужно один раз, потом убрать).

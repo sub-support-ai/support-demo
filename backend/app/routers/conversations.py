@@ -25,7 +25,6 @@
 
 import logging
 from datetime import datetime
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
@@ -54,39 +53,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
-# ── Бизнес-константы ──────────────────────────────────────────────────────────
-#
-# RED_ZONE_THRESHOLD: уверенность модели, ниже которой ответ AI считается
-# ненадёжным и НЕ показывается пользователю как окончательный — клиент
-# обязан предложить эскалацию на агента (1-click тикет).
-#
-# Значение 0.6 задаётся планом проекта ("точка поддержки", iteration 1).
-# Это НЕ та же 0.8, что в routing.py: там порог решает, какому агенту
-# дать тикет (свободному vs старшему); здесь — показывать ли draft вообще.
-RED_ZONE_THRESHOLD = 0.6
-
-# Сколько последних сообщений отдавать в AI как контекст. Защита от
-# "разрастания контекста": длинный диалог → большой prompt → таймауты,
-# деньги, ухудшение качества (модель путается). 20 — компромисс между
-# сохранением темы и стоимостью.
-MAX_HISTORY_MESSAGES = 20
-
-SUPPORT_DRAFT_INTENT_TERMS = (
-    "тикет", "заявк", "черновик", "обращен", "запрос", "техподдерж", "тех поддерж",
-    "специалист", "саппорт", "support",
-)
-SUPPORT_DRAFT_ACTION_TERMS = (
-    "созда", "сформир", "оформ", "заведи", "завести", "отправ", "эскал",
-)
-URGENT_TERMS = (
-    "срочно", "авар", "критич", "опасн", "горит", "дым", "искр",
-)
-PHYSICAL_INCIDENT_TERMS = (
-    "провод", "кабел", "розетк", "удлинител", "электр", "питани", "сломал",
-    "сломался", "порвал", "порвался", "оторвал", "поврежд",
-)
-
-
 # ── Схемы запросов/ответов (определены здесь чтобы не плодить файлы) ──────────
 
 class ConversationRead(BaseModel):
@@ -110,6 +76,9 @@ class SourceRead(BaseModel):
     title: str
     url: str | None = None
     article_id: int | None = None
+    chunk_id: int | None = None
+    snippet: str | None = None
+    retrieval: str | None = None
     score: float | None = None
     decision: str | None = None
 
@@ -122,8 +91,8 @@ class MessageRead(BaseModel):
       - ai_confidence        — насколько модель уверена;
       - ai_escalate          — модель сама попросила эскалацию;
       - requires_escalation  — итоговый флаг "красной зоны": True, если
-                               уверенность < RED_ZONE_THRESHOLD или AI
-                               выставил escalate. Клиент использует этот
+                               фоновая обработка решила, что нужна эскалация.
+                               Клиент использует этот
                                флаг, чтобы НЕ показывать ответ как
                                окончательный, а предложить 1-click
                                эскалацию через POST /escalate.
@@ -281,11 +250,6 @@ async def add_message(
             status_code=status.HTTP_409_CONFLICT,
             detail="Дождитесь ответа перед созданием черновика.",
         )
-    if conversation.status == "ai_processing":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Дождитесь ответа по предыдущему сообщению.",
-        )
 
     # Сохраняем сообщение пользователя
     user_message = Message(
@@ -411,7 +375,7 @@ async def escalate_conversation(
 
     # Классифицируем
     ai_result = await classify_ticket(
-        ticket_id=0,  # ещё не создан
+        ticket_id=None,
         title=title,
         body=classify_body,
     )
@@ -549,180 +513,6 @@ async def escalate_conversation(
 
 
 # ── Внутренние функции ────────────────────────────────────────────────────────
-
-async def _load_history_for_ai(
-    db: AsyncSession,
-    conversation_id: int,
-) -> list[dict[str, str]]:
-    """Загрузить последние MAX_HISTORY_MESSAGES сообщений в формате AI-Lead.
-
-    AI-Lead принимает messages вида [{"role": "user"|"assistant", "content": "..."}].
-    Наша внутренняя роль "ai" мапится в "assistant" — это стандарт OpenAI/Ollama,
-    AI-Lead на нём построен (см. ai_module/answerer.py).
-
-    role="system" мы НЕ отдаём — на стороне AI-Lead такие сообщения от
-    клиента отбрасываются ради защиты от prompt injection (см. тест
-    test_generate_answer_filters_client_system_messages в AI-Lead).
-
-    Сортируем по (created_at, id) DESC — id гарантирует детерминированный
-    порядок, когда несколько сообщений вставлены в одну транзакцию и имеют
-    одинаковый created_at (server_default=func.now() возвращает время
-    начала транзакции, а не каждой вставки).
-    """
-    result = await db.execute(
-        select(Message)
-        .where(Message.conversation_id == conversation_id)
-        .order_by(Message.created_at.desc(), Message.id.desc())
-        .limit(MAX_HISTORY_MESSAGES)
-    )
-    rows = list(result.scalars().all())
-    rows.reverse()  # снова в хронологический порядок
-
-    history: list[dict[str, str]] = []
-    for m in rows:
-        if m.role == "user":
-            role = "user"
-        elif m.role == "ai":
-            role = "assistant"
-        else:
-            # Любой другой role (включая случайно попавший "system") пропускаем.
-            continue
-        history.append({"role": role, "content": m.content})
-    return history
-
-
-async def _get_ai_answer(
-    conversation_id: int,
-    messages: list[dict[str, str]],
-) -> dict[str, Any]:
-    """
-    Запрашивает ответ у AI Service.
-
-    Возвращает dict с ключами answer/confidence/escalate/sources/model_version.
-    Если сервис недоступен — возвращает безопасный fallback с requires_escalation,
-    чтобы клиент сразу предложил пользователю эскалацию вместо тишины.
-
-    Контракт (то, что мы ожидаем от AI-Lead — см. docs/ai-lead-contract.md):
-      Запрос:
-        {"conversation_id": int, "messages": list[{role, content}]}
-      Ответ:
-        {answer, confidence, escalate, sources?, model_version?}
-
-      AI-Lead — внешний сервис, его поддерживает другая команда. На текущий
-      момент (origin/ml1/AI-Lead) он ещё принимает старую single-message
-      схему {"message": str}. Запрос на обновление контракта зафиксирован
-      в docs/ai-lead-contract.md. До тех пор интеграция вернёт 422 от
-      AI-Lead → отработает наш fallback ниже, пользователь сразу попадёт
-      в красную зону и увидит кнопку эскалации.
-
-      sources / model_version читаются через setdefault — отсутствие любого
-      из них не ломает RestAPI.
-    """
-    import httpx
-    from app.config import get_settings
-
-    settings = get_settings()
-    fallback = {
-        "answer": "[AI Service временно недоступен. "
-                  "Ваше сообщение сохранено, агент ответит вручную.]",
-        "confidence": 0.0,  # принудительно красная зона → escalation
-        "escalate": True,
-        "sources": [],
-        "model_version": settings.AI_MODEL_VERSION_FALLBACK,
-    }
-
-    service_urls = [settings.AI_SERVICE_URL.rstrip("/")]
-    if service_urls[0] == "http://ai-service:8001":
-        service_urls.append("http://localhost:8001")
-
-    try:
-        data: Any = None
-        for service_url in service_urls:
-            try:
-                async with httpx.AsyncClient(timeout=settings.AI_SERVICE_TIMEOUT_SECONDS) as client:
-                    response = await client.post(
-                        f"{service_url}/ai/answer",
-                        json={
-                            "conversation_id": conversation_id,
-                            "messages": messages,
-                        },
-                    )
-                    response.raise_for_status()
-                    data = response.json()
-                    break
-            except (
-                httpx.ConnectError,
-                httpx.TimeoutException,
-                httpx.HTTPStatusError,
-                httpx.UnsupportedProtocol,
-            ) as e:
-                logger.warning(
-                    "AI Service недоступен или ответ с ошибкой: %s",
-                    e,
-                    extra={
-                        "conversation_id": conversation_id,
-                        "ai_service_url": service_url,
-                    },
-                )
-        if data is None:
-            return fallback
-    except (
-        ValueError
-    ) as e:
-        logger.warning(
-            "AI Service вернул невалидный JSON: %s",
-            e,
-            extra={"conversation_id": conversation_id},
-            exc_info=True,
-        )
-        return fallback
-
-    # Если AI-Lead вернул не dict (защита от случайного String/None) — fallback.
-    if not isinstance(data, dict):
-        return fallback
-
-    # Подставляем безопасные дефолты, чтобы вызывающий код не падал на None.
-    data.setdefault("answer", "")
-    data.setdefault("confidence", 0.5)
-    data.setdefault("escalate", False)
-    data.setdefault("sources", [])
-    data.setdefault("model_version", settings.AI_MODEL_VERSION_FALLBACK)
-    return data
-
-
-def _should_offer_support_draft(messages: list[dict[str, str]]) -> bool:
-    """Определяет, нужно ли показывать сбор контекста и создание черновика."""
-    user_messages = [
-        message.get("content", "").strip().lower()
-        for message in messages
-        if message.get("role") == "user" and message.get("content", "").strip()
-    ]
-    if not user_messages:
-        return False
-
-    latest = user_messages[-1]
-    combined = "\n".join(user_messages)
-
-    has_draft_action = any(term in latest for term in SUPPORT_DRAFT_ACTION_TERMS)
-    has_draft_object = any(term in latest for term in SUPPORT_DRAFT_INTENT_TERMS)
-    if has_draft_action and has_draft_object:
-        return True
-
-    has_urgent_context = any(term in combined for term in URGENT_TERMS)
-    has_physical_incident = any(term in combined for term in PHYSICAL_INCIDENT_TERMS)
-    if has_urgent_context and has_physical_incident:
-        return True
-
-    return False
-
-
-def _build_intake_answer() -> str:
-    return (
-        "Соберу данные для черновика обращения. Из истории возьму описание проблемы "
-        "и уже упомянутые действия. Уточните тип запроса, заявителя, офис, затронутый объект "
-        "и конкретные детали по форме; после этого сформирую черновик для специалиста."
-    )
-
 
 def _extract_steps_tried(messages: list[Message]) -> str | None:
     """Эвристика: достаём из user-сообщений то, что похоже на "уже пробовал".

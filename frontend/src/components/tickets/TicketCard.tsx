@@ -88,6 +88,8 @@ export function TicketCard({
   const [commentText, setCommentText] = useState("");
   const [internalComment, setInternalComment] = useState(true);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
+  const [acceptedAiResponse, setAcceptedAiResponse] = useState(true);
+  const [routingWasCorrect, setRoutingWasCorrect] = useState(true);
 
   const comments = useTicketComments(ticket.id, commentsOpen);
   const createComment = useCreateTicketComment();
@@ -215,7 +217,26 @@ export function TicketCard({
         )}
 
         {canOperate && (
-          <Group gap="xs" justify="flex-end">
+          <Stack gap="xs">
+            <Group gap="md" justify="flex-end">
+              <Checkbox
+                size="xs"
+                label="Ответ AI подошёл"
+                checked={acceptedAiResponse}
+                onChange={(event) =>
+                  setAcceptedAiResponse(event.currentTarget.checked)
+                }
+              />
+              <Checkbox
+                size="xs"
+                label="Роутинг верный"
+                checked={routingWasCorrect}
+                onChange={(event) =>
+                  setRoutingWasCorrect(event.currentTarget.checked)
+                }
+              />
+            </Group>
+            <Group gap="xs" justify="flex-end">
             {ticket.status !== "in_progress" && (
               <Button
                 size="xs"
@@ -241,7 +262,8 @@ export function TicketCard({
                 resolveTicket.mutate({
                   ticketId: ticket.id,
                   payload: {
-                    agent_accepted_ai_response: true,
+                    agent_accepted_ai_response: acceptedAiResponse,
+                    routing_was_correct: routingWasCorrect,
                     correction_lag_seconds: getCorrectionLagSeconds(
                       ticket.created_at,
                     ),
@@ -251,7 +273,8 @@ export function TicketCard({
             >
               Закрыть
             </Button>
-          </Group>
+            </Group>
+          </Stack>
         )}
 
         {isOwner && isClosed && (

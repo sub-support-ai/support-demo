@@ -10,43 +10,84 @@ load_dotenv()
 _DEFAULT_JWT_SECRET = "supersecretkey_change_in_production"
 
 
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be an integer") from exc
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be a number") from exc
+
+
 class Settings:
-    APP_ENV: str = os.getenv("APP_ENV", "development")
-    APP_HOST: str = os.getenv("APP_HOST", "0.0.0.0")
-    APP_PORT: int = int(os.getenv("APP_PORT", 8000))
+    def __init__(self) -> None:
+        self.APP_ENV = os.getenv("APP_ENV", "development")
+        self.APP_HOST = os.getenv("APP_HOST", "0.0.0.0")
+        self.APP_PORT = _env_int("APP_PORT", 8000)
+        self.POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
+        self.POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "postgres")
+        self.POSTGRES_DB = os.getenv("POSTGRES_DB", "app_db")
+        self.POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
+        self.POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
+        self.AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "http://localhost:8001")
+        self.AI_SERVICE_API_KEY = os.getenv("AI_SERVICE_API_KEY") or None
+        self.AI_SERVICE_TIMEOUT_SECONDS = _env_float(
+            "AI_SERVICE_TIMEOUT_SECONDS", 180.0
+        )
+        self.AI_MODEL_VERSION_FALLBACK = os.getenv(
+            "AI_MODEL_VERSION_FALLBACK", "mistral-unspecified"
+        )
+        self.KNOWLEDGE_SEMANTIC_SEARCH_ENABLED = (
+            os.getenv("KNOWLEDGE_SEMANTIC_SEARCH_ENABLED", "false").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+        self.KNOWLEDGE_EMBEDDING_DIMENSION = _env_int(
+            "KNOWLEDGE_EMBEDDING_DIMENSION", 768
+        )
+        self.JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", _DEFAULT_JWT_SECRET)
+        self.JWT_EXPIRE_MINUTES = _env_int("JWT_EXPIRE_MINUTES", 60)
+        self.BOOTSTRAP_ADMIN_EMAIL = os.getenv("BOOTSTRAP_ADMIN_EMAIL") or None
+        self.CORS_ORIGINS_RAW = os.getenv("CORS_ORIGINS", "")
 
-    POSTGRES_USER: str = os.getenv("POSTGRES_USER", "postgres")
-    POSTGRES_PASSWORD: str = os.getenv("POSTGRES_PASSWORD", "postgres")
-    POSTGRES_DB: str = os.getenv("POSTGRES_DB", "app_db")
-    POSTGRES_HOST: str = os.getenv("POSTGRES_HOST", "localhost")
-    POSTGRES_PORT: str = os.getenv("POSTGRES_PORT", "5432")
+    APP_ENV: str
+    APP_HOST: str
+    APP_PORT: int
 
-    AI_SERVICE_URL: str = os.getenv("AI_SERVICE_URL", "http://localhost:8001")
-    AI_SERVICE_TIMEOUT_SECONDS: float = float(
-        os.getenv("AI_SERVICE_TIMEOUT_SECONDS", "180")
-    )
+    POSTGRES_USER: str
+    POSTGRES_PASSWORD: str
+    POSTGRES_DB: str
+    POSTGRES_HOST: str
+    POSTGRES_PORT: str
+
+    AI_SERVICE_URL: str
+    AI_SERVICE_API_KEY: str | None
+    AI_SERVICE_TIMEOUT_SECONDS: float
     # Версия модели по умолчанию — fallback для AILog.model_version, когда
     # AI Service по какой-то причине не вернул это поле. Раньше использовался
     # литерал "unknown", но он отравлял датасет для дообучения: разные версии
     # модели сваливались в одну "unknown"-корзину, и метрики по версиям ломались.
     # Теперь fallback — это конкретная строка из .env, которая обновляется
     # вместе с деплоем (например, "mistral-7b-instruct-q4_K_M-2026-04").
-    AI_MODEL_VERSION_FALLBACK: str = os.getenv(
-        "AI_MODEL_VERSION_FALLBACK", "mistral-unspecified"
-    )
-    KNOWLEDGE_SEMANTIC_SEARCH_ENABLED: bool = (
-        os.getenv("KNOWLEDGE_SEMANTIC_SEARCH_ENABLED", "false").strip().lower()
-        in {"1", "true", "yes", "on"}
-    )
-    KNOWLEDGE_EMBEDDING_DIMENSION: int = int(
-        os.getenv("KNOWLEDGE_EMBEDDING_DIMENSION", "768")
-    )
+    AI_MODEL_VERSION_FALLBACK: str
+    KNOWLEDGE_SEMANTIC_SEARCH_ENABLED: bool
+    KNOWLEDGE_EMBEDDING_DIMENSION: int
 
     # Секретный ключ для подписи JWT токенов
     # В продакшне — длинная случайная строка, хранится в .env
-    JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", _DEFAULT_JWT_SECRET)
+    JWT_SECRET_KEY: str
     JWT_ALGORITHM: str = "HS256"
-    JWT_EXPIRE_MINUTES: int = int(os.getenv("JWT_EXPIRE_MINUTES", 60))
+    JWT_EXPIRE_MINUTES: int
 
     # Bootstrap-администратор: если email пользователя, который регистрируется
     # через POST /auth/register, совпадает с этим значением — он получает
@@ -57,14 +98,14 @@ class Settings:
     # Сравнение case-insensitive (email'ы нечувствительны к регистру).
     # Если переменная не задана — bootstrap отключён, все регистрируются
     # как обычные пользователи.
-    BOOTSTRAP_ADMIN_EMAIL: str | None = os.getenv("BOOTSTRAP_ADMIN_EMAIL") or None
+    BOOTSTRAP_ADMIN_EMAIL: str | None
 
     # CORS: список origins через запятую, откуда браузер может стучаться.
     # Пример: "http://localhost:3000,https://support.acme.com"
     # Не используй "*" — это отключает credentials и открывает API всему интернету.
     # Если переменная пустая — CORS выключен (полезно для чисто server-to-server
     # сценариев без браузерного фронта).
-    CORS_ORIGINS_RAW: str = os.getenv("CORS_ORIGINS", "")
+    CORS_ORIGINS_RAW: str
 
     @property
     def CORS_ORIGINS(self) -> list[str]:

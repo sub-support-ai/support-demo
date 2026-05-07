@@ -4,8 +4,8 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 
 from app.database import AsyncSessionLocal
-from app.models.knowledge_article import KnowledgeArticle, KnowledgeChunk
-from app.services.knowledge_base import build_search_text
+from app.models.knowledge_article import KnowledgeArticle
+from app.services.knowledge_base import sync_knowledge_article_index
 
 
 def _reviewed_now() -> datetime:
@@ -168,16 +168,6 @@ DEFAULT_ARTICLES = [
 ]
 
 
-def _build_chunk(article: KnowledgeArticle) -> str:
-    parts = [
-        article.problem or "",
-        article.body,
-        "\n".join(article.steps or []),
-        article.when_to_escalate or "",
-    ]
-    return "\n".join(part for part in parts if part)
-
-
 async def seed_knowledge_articles() -> None:
     created = 0
     updated = 0
@@ -207,26 +197,7 @@ async def seed_knowledge_articles() -> None:
                 updated += 1
 
             await db.flush()
-            article.search_text = build_search_text(article)
-            existing_chunk = await db.execute(
-                select(KnowledgeChunk)
-                .where(KnowledgeChunk.article_id == article.id)
-                .where(KnowledgeChunk.chunk_index == 0)
-                .limit(1)
-            )
-            chunk = existing_chunk.scalar_one_or_none()
-            if chunk is None:
-                db.add(
-                    KnowledgeChunk(
-                        article_id=article.id,
-                        chunk_index=0,
-                        content=_build_chunk(article),
-                        is_active=True,
-                    )
-                )
-            else:
-                chunk.content = _build_chunk(article)
-                chunk.is_active = True
+            await sync_knowledge_article_index(db, article)
 
         await db.commit()
 

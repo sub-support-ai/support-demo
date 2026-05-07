@@ -8,9 +8,13 @@ export type TicketStatus =
   | "resolved"
   | "closed"
   | "ai_processing"
-  | "declined"
+  | "declined";
+
+export type ConversationStatus =
+  | "active"
+  | "ai_processing"
   | "escalated"
-  | "active";
+  | "closed";
 
 export type TicketMutableStatus =
   | "new"
@@ -50,7 +54,7 @@ export interface RequestContextDefaults {
 export interface Conversation {
   id: number;
   user_id: number;
-  status: string;
+  status: ConversationStatus | string;
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -131,6 +135,7 @@ export interface TicketStatusUpdate {
 
 export interface ResolveTicketPayload {
   agent_accepted_ai_response: boolean;
+  routing_was_correct?: boolean;
   correction_lag_seconds?: number | null;
 }
 
@@ -180,6 +185,64 @@ export interface KnowledgeFeedbackPayload {
   message_id: number;
   article_id: number;
   feedback: "helped" | "not_helped" | "not_relevant";
+}
+
+export interface KnowledgeArticle {
+  id: number;
+  department?: "IT" | "HR" | "finance" | null;
+  request_type?: string | null;
+  title: string;
+  body: string;
+  problem?: string | null;
+  symptoms?: string[] | null;
+  applies_to?: Record<string, string[]> | null;
+  steps?: string[] | null;
+  when_to_escalate?: string | null;
+  required_context?: string[] | null;
+  keywords?: string | null;
+  source_url?: string | null;
+  owner?: string | null;
+  access_scope: "public" | "internal";
+  version: number;
+  reviewed_at?: string | null;
+  expires_at?: string | null;
+  is_active: boolean;
+  view_count: number;
+  helped_count: number;
+  not_helped_count: number;
+  not_relevant_count: number;
+  created_at: string;
+  updated_at?: string | null;
+}
+
+export interface KnowledgeArticlePayload {
+  department?: "IT" | "HR" | "finance" | null;
+  request_type?: string | null;
+  title: string;
+  body: string;
+  problem?: string | null;
+  symptoms?: string[] | null;
+  steps?: string[] | null;
+  when_to_escalate?: string | null;
+  required_context?: string[] | null;
+  keywords?: string | null;
+  source_url?: string | null;
+  owner?: string | null;
+  access_scope?: "public" | "internal";
+  is_active?: boolean;
+}
+
+export interface KnowledgeEmbeddingJob {
+  id: number;
+  article_id?: number | null;
+  status: string;
+  attempts: number;
+  max_attempts: number;
+  updated_chunks: number;
+  embedding_model?: string | null;
+  error?: string | null;
+  created_at: string;
+  updated_at?: string | null;
 }
 
 export interface ResponseTemplate {

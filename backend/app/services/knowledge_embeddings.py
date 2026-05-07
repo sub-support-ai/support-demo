@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import httpx
 
 from app.config import get_settings
+from app.services.ai_service_client import ai_service_headers
 from app.models.knowledge_article import KnowledgeChunk
 
 DEFAULT_EMBEDDING_BATCH_SIZE = 16
@@ -41,6 +42,7 @@ async def embed_texts(texts: list[str]) -> EmbeddingBatch:
     async with httpx.AsyncClient(timeout=settings.AI_SERVICE_TIMEOUT_SECONDS) as client:
         response = await client.post(
             f"{settings.AI_SERVICE_URL.rstrip('/')}/ai/embed",
+            headers=ai_service_headers(),
             json={"texts": clean_texts},
         )
         response.raise_for_status()

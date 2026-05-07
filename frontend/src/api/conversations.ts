@@ -16,6 +16,9 @@ export function useConversations() {
       return data;
     },
     refetchInterval: (query) => {
+      if (document.visibilityState !== "visible") {
+        return false;
+      }
       const data = query.state.data;
       return data?.some((conversation) => conversation.status === "ai_processing")
         ? 2000

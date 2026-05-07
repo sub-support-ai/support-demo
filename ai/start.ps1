@@ -2,7 +2,33 @@ $ErrorActionPreference = 'Stop'
 
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $serviceRoot = Join-Path $root 'ai-service'
+$repoRoot = Split-Path -Parent $root
+$backendEnv = Join-Path $repoRoot 'backend\.env'
 Set-Location $serviceRoot
+
+function Import-EnvFile {
+    param([Parameter(Mandatory = $true)][string] $Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+
+    Get-Content -LiteralPath $Path | ForEach-Object {
+        $line = $_.Trim()
+        if (-not $line -or $line.StartsWith('#') -or -not $line.Contains('=')) {
+            return
+        }
+
+        $parts = $line.Split('=', 2)
+        $name = $parts[0].Trim()
+        $value = $parts[1].Trim().Trim('"').Trim("'")
+        if ($name -and -not [Environment]::GetEnvironmentVariable($name, 'Process')) {
+            [Environment]::SetEnvironmentVariable($name, $value, 'Process')
+        }
+    }
+}
+
+Import-EnvFile -Path $backendEnv
 
 function Wait-ForHttp {
     param(

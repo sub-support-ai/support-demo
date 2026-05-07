@@ -9,6 +9,7 @@ from app.models.ai_log import AILog
 from app.models.conversation import Conversation
 from app.models.knowledge_article import KnowledgeArticle, KnowledgeArticleFeedback
 from app.models.message import Message
+from app.services.ai_service_client import ai_service_headers
 from app.services.knowledge_base import find_knowledge_answer
 
 logger = logging.getLogger(__name__)
@@ -83,6 +84,7 @@ async def get_ai_answer(
                 async with httpx.AsyncClient(timeout=settings.AI_SERVICE_TIMEOUT_SECONDS) as client:
                     response = await client.post(
                         f"{service_url}/ai/answer",
+                        headers=ai_service_headers(),
                         json={
                             "conversation_id": conversation_id,
                             "messages": messages,

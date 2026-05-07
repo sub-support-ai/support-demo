@@ -7,8 +7,8 @@ from sqlalchemy import bindparam, func, literal_column, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.models.knowledge_article import KnowledgeArticle
-from app.services.knowledge_embeddings import embed_texts, vector_literal
+from app.models.knowledge_article import KnowledgeArticle, KnowledgeChunk
+from app.services.knowledge_embeddings import embed_texts, estimate_token_count, vector_literal
 
 TOKEN_RE = re.compile(r"[a-zA-Zа-яА-ЯёЁ0-9]+")
 MEDIUM_SCORE_THRESHOLD = 4.0
@@ -17,6 +17,8 @@ POSTGRES_FTS_SCORE_WEIGHT = 20.0
 POSTGRES_FTS_CANDIDATE_MULTIPLIER = 8
 POSTGRES_SEMANTIC_SCORE_WEIGHT = 12.0
 POSTGRES_SEMANTIC_CANDIDATE_MULTIPLIER = 8
+KNOWLEDGE_CHUNK_TARGET_TOKENS = 220
+KNOWLEDGE_CHUNK_OVERLAP_TOKENS = 40
 
 STOP_WORDS = {
     "для",
@@ -97,6 +99,92 @@ def build_search_text(article: KnowledgeArticle) -> str:
     parts.extend(_iter_json_values(article.steps))
     parts.extend(_iter_json_values(article.required_context))
     return "\n".join(part for part in parts if part)
+
+
+def _section_text(title: str, value: object) -> str | None:
+    values = [item.strip() for item in _iter_json_values(value) if item.strip()]
+    if not values:
+        return None
+    return f"{title}:\n" + "\n".join(values)
+
+
+def build_knowledge_chunk_text(article: KnowledgeArticle) -> str:
+    sections = [
+        _section_text("Title", article.title),
+        _section_text("Problem", article.problem),
+        _section_text("Symptoms", article.symptoms),
+        _section_text("Applies to", article.applies_to),
+        _section_text("Solution", article.steps or article.body),
+        _section_text("Escalate when", article.when_to_escalate),
+        _section_text("Required context", article.required_context),
+        _section_text("Keywords", article.keywords),
+    ]
+    return "\n\n".join(section for section in sections if section)
+
+
+def split_knowledge_text(
+    text: str,
+    target_tokens: int = KNOWLEDGE_CHUNK_TARGET_TOKENS,
+    overlap_tokens: int = KNOWLEDGE_CHUNK_OVERLAP_TOKENS,
+) -> list[str]:
+    words = text.split()
+    if not words:
+        return []
+    if len(words) <= target_tokens:
+        return [" ".join(words)]
+
+    chunks: list[str] = []
+    step = max(1, target_tokens - overlap_tokens)
+    start = 0
+    while start < len(words):
+        chunk_words = words[start : start + target_tokens]
+        chunks.append(" ".join(chunk_words))
+        if start + target_tokens >= len(words):
+            break
+        start += step
+    return chunks
+
+
+async def sync_knowledge_article_index(
+    db: AsyncSession,
+    article: KnowledgeArticle,
+) -> None:
+    article.search_text = build_search_text(article)
+
+    desired_chunks = split_knowledge_text(build_knowledge_chunk_text(article))
+    result = await db.execute(
+        select(KnowledgeChunk)
+        .where(KnowledgeChunk.article_id == article.id)
+        .order_by(KnowledgeChunk.chunk_index.asc(), KnowledgeChunk.id.asc())
+    )
+    existing_by_index = {chunk.chunk_index: chunk for chunk in result.scalars().all()}
+
+    for index, content in enumerate(desired_chunks):
+        chunk = existing_by_index.get(index)
+        if chunk is None:
+            db.add(
+                KnowledgeChunk(
+                    article_id=article.id,
+                    chunk_index=index,
+                    content=content,
+                    token_count=estimate_token_count(content),
+                    is_active=True,
+                )
+            )
+            continue
+
+        if chunk.content != content:
+            chunk.content = content
+            chunk.embedding_model = None
+            chunk.embedding_updated_at = None
+        chunk.token_count = estimate_token_count(content)
+        chunk.is_active = True
+
+    for index, chunk in existing_by_index.items():
+        if index >= len(desired_chunks):
+            chunk.is_active = False
+            chunk.embedding_model = None
+            chunk.embedding_updated_at = None
 
 
 def _feedback_score(article: KnowledgeArticle) -> float:

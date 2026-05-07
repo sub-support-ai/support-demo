@@ -5,6 +5,7 @@ import time
 import httpx
 
 from app.config import get_settings
+from app.services.ai_service_client import ai_service_headers
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -101,7 +102,7 @@ def _choose_priority(current: object, inferred: str | None) -> str:
     )
 
 
-async def classify_ticket(ticket_id: int, title: str, body: str) -> dict:
+async def classify_ticket(ticket_id: int | None, title: str, body: str) -> dict:
     """
     Отправляет тикет в AI Service, получает классификацию от Mistral.
 
@@ -117,6 +118,7 @@ async def classify_ticket(ticket_id: int, title: str, body: str) -> dict:
             async with httpx.AsyncClient(timeout=settings.AI_SERVICE_TIMEOUT_SECONDS) as client:
                 response = await client.post(
                     f"{service_url}/ai/classify",
+                    headers=ai_service_headers(),
                     json={
                         "ticket_id": ticket_id,
                         "title": title,

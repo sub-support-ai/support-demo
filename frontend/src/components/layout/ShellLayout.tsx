@@ -9,6 +9,7 @@ import {
 } from "@mantine/core";
 import {
   IconChartBar,
+  IconDatabaseSearch,
   IconFileText,
   IconLogout,
   IconMessageCircle,
@@ -78,6 +79,15 @@ export function ShellLayout() {
           leftSection={<IconFileText size={18} />}
           active={location.pathname.startsWith("/tickets")}
         />
+        {me?.role === "admin" && (
+          <NavLink
+            component={RouterNavLink}
+            to="/knowledge"
+            label="База знаний"
+            leftSection={<IconDatabaseSearch size={18} />}
+            active={location.pathname.startsWith("/knowledge")}
+          />
+        )}
       </AppShell.Navbar>
 
       <AppShell.Main className={`app-main${isChatPage ? " chat-main" : ""}`}>

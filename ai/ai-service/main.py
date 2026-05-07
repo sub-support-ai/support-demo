@@ -1,8 +1,8 @@
 import os
 
 import requests
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from fastapi import Depends, Header, HTTPException, FastAPI, status
+from pydantic import BaseModel, Field
 from typing import Literal
 from classifier import classify_ticket
 from answerer import generate_answer
@@ -13,14 +13,25 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
 OLLAMA_EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 OLLAMA_HEALTH_TIMEOUT_SECONDS = float(os.getenv("OLLAMA_HEALTH_TIMEOUT_SECONDS", "3"))
 OLLAMA_EMBED_TIMEOUT_SECONDS = float(os.getenv("OLLAMA_EMBED_TIMEOUT_SECONDS", "60"))
+AI_SERVICE_API_KEY = os.getenv("AI_SERVICE_API_KEY")
+
+
+def require_api_key(x_ai_service_key: str | None = Header(default=None)) -> None:
+    if not AI_SERVICE_API_KEY:
+        return
+    if x_ai_service_key != AI_SERVICE_API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="invalid AI service key",
+        )
 
 # ========================
 # Схемы для /ai/classify
 # ========================
 class TicketRequest(BaseModel):
-    ticket_id: int
-    title: str
-    body: str
+    ticket_id: int | None = Field(default=None, ge=1)
+    title: str = Field(..., min_length=1, max_length=255)
+    body: str = Field(..., min_length=1, max_length=20000)
 
 class ClassifyResponse(BaseModel):
     category: Literal[
@@ -40,11 +51,11 @@ class ClassifyResponse(BaseModel):
 # ========================
 class ChatMessage(BaseModel):
     role: Literal["user", "assistant"]
-    content: str
+    content: str = Field(..., min_length=1, max_length=10000)
 
 class AnswerRequest(BaseModel):
-    conversation_id: int
-    messages: list[ChatMessage]
+    conversation_id: int = Field(..., ge=1)
+    messages: list[ChatMessage] = Field(..., min_length=1, max_length=20)
 
 class Source(BaseModel):
     title: str
@@ -59,7 +70,7 @@ class AnswerResponse(BaseModel):
 
 
 class EmbedRequest(BaseModel):
-    texts: list[str]
+    texts: list[str] = Field(..., min_length=1, max_length=64)
 
 
 class EmbedResponse(BaseModel):
@@ -69,7 +80,7 @@ class EmbedResponse(BaseModel):
 # ========================
 # Эндпоинты
 # ========================
-@app.post("/ai/classify", response_model=ClassifyResponse)
+@app.post("/ai/classify", response_model=ClassifyResponse, dependencies=[Depends(require_api_key)])
 async def classify(request: TicketRequest):
     try:
         result = classify_ticket(
@@ -81,7 +92,7 @@ async def classify(request: TicketRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/ai/answer", response_model=AnswerResponse)
+@app.post("/ai/answer", response_model=AnswerResponse, dependencies=[Depends(require_api_key)])
 async def answer(request: AnswerRequest):
     try:
         # Фильтруем system сообщения — защита от prompt injection
@@ -96,7 +107,7 @@ async def answer(request: AnswerRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/ai/embed", response_model=EmbedResponse)
+@app.post("/ai/embed", response_model=EmbedResponse, dependencies=[Depends(require_api_key)])
 async def embed(request: EmbedRequest):
     texts = [text.strip() for text in request.texts if text.strip()]
     if not texts:

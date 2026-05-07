@@ -1,20 +1,34 @@
+from datetime import datetime, timezone
+
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.ai_log import AILog
 from app.models.conversation import Conversation
 from app.models.knowledge_article import KnowledgeArticle, KnowledgeArticleFeedback, KnowledgeChunk
+from app.models.knowledge_embedding_job import KnowledgeEmbeddingJob
 from app.models.message import Message
 from app.models.user import User
 from app.services.knowledge_embeddings import (
+    EmbeddingBatch,
     estimate_token_count,
     mark_chunk_embedded,
     needs_embedding,
     vector_literal,
 )
 from app.services.knowledge_base import find_knowledge_answer, search_knowledge_articles
-from app.services.knowledge_base import KnowledgeMatch, _merge_matches
+from app.services.knowledge_base import (
+    KnowledgeMatch,
+    split_knowledge_text,
+    sync_knowledge_article_index,
+    _merge_matches,
+)
+from app.services.knowledge_embedding_jobs import (
+    enqueue_knowledge_embedding_job,
+    process_knowledge_embedding_job,
+)
 
 
 @pytest.mark.asyncio
@@ -97,6 +111,65 @@ def test_merge_knowledge_matches_deduplicates_by_highest_score():
     assert matches[0].snippet == "best chunk"
     assert matches[0].chunk_id == 10
     assert matches[0].retrieval == "semantic"
+
+
+def test_split_knowledge_text_uses_overlap_for_long_content():
+    text = " ".join(f"token-{index}" for index in range(12))
+
+    chunks = split_knowledge_text(text, target_tokens=5, overlap_tokens=2)
+
+    assert chunks == [
+        "token-0 token-1 token-2 token-3 token-4",
+        "token-3 token-4 token-5 token-6 token-7",
+        "token-6 token-7 token-8 token-9 token-10",
+        "token-9 token-10 token-11",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_sync_knowledge_article_index_rebuilds_chunks_and_resets_embeddings(
+    db_session: AsyncSession,
+):
+    article = KnowledgeArticle(
+        department="IT",
+        request_type="VPN",
+        title="VPN troubleshooting",
+        body=" ".join(f"initial-{index}" for index in range(260)),
+        problem="VPN cannot connect",
+        symptoms=["connection timeout"],
+        required_context=["office", "login", "error code"],
+        is_active=True,
+    )
+    db_session.add(article)
+    await db_session.flush()
+
+    await sync_knowledge_article_index(db_session, article)
+    await db_session.flush()
+
+    chunks = (
+        await db_session.execute(
+            select(KnowledgeChunk)
+            .where(KnowledgeChunk.article_id == article.id)
+            .order_by(KnowledgeChunk.chunk_index.asc())
+        )
+    ).scalars().all()
+    assert len(chunks) >= 2
+    assert all(chunk.is_active for chunk in chunks)
+    assert all(chunk.token_count for chunk in chunks)
+
+    first_chunk = chunks[0]
+    first_chunk.embedding_model = "nomic-embed-text"
+    first_chunk.embedding_updated_at = datetime.now(timezone.utc)
+    first_chunk.content = "stale content"
+    await db_session.flush()
+
+    await sync_knowledge_article_index(db_session, article)
+    await db_session.flush()
+    await db_session.refresh(first_chunk)
+
+    assert first_chunk.content != "stale content"
+    assert first_chunk.embedding_model is None
+    assert first_chunk.embedding_updated_at is None
 
 
 @pytest.mark.asyncio
@@ -235,6 +308,8 @@ async def test_knowledge_search_endpoint_requires_auth_and_returns_matches(
     assert data[0]["title"] == "VPN не подключается"
     assert data[0]["score"] > 0
     assert data[0]["decision"] == "answer"
+    assert data[0]["retrieval"] == "keyword"
+    assert data[0]["snippet"]
 
 
 @pytest.mark.asyncio
@@ -278,6 +353,139 @@ async def test_admin_can_update_knowledge_article_and_rebuild_search_text(
     assert article.search_text is not None
     assert "ошибка 809" in article.search_text
     assert "код ошибки" in article.search_text
+    chunks = (
+        await db_session.execute(
+            select(KnowledgeChunk).where(KnowledgeChunk.article_id == article.id)
+        )
+    ).scalars().all()
+    assert chunks
+    assert chunks[0].is_active is True
+
+
+@pytest.mark.asyncio
+async def test_admin_can_enqueue_knowledge_article_reindex_job(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    admin_id, token = await _register_user_with_id(client, "adminreindex")
+    admin = await db_session.get(User, admin_id)
+    assert admin is not None
+    admin.role = "admin"
+    article = KnowledgeArticle(
+        department="IT",
+        request_type="VPN",
+        title="VPN reindex",
+        body="VPN troubleshooting content",
+        keywords="vpn",
+        is_active=True,
+    )
+    db_session.add(article)
+    await db_session.flush()
+
+    response = await client.post(
+        f"/api/v1/knowledge/{article.id}/reindex",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["article_id"] == article.id
+    assert data["requested_by_user_id"] == admin_id
+    assert data["status"] == "queued"
+
+    jobs = (
+        await db_session.execute(
+            select(KnowledgeEmbeddingJob).where(KnowledgeEmbeddingJob.article_id == article.id)
+        )
+    ).scalars().all()
+    assert len(jobs) == 1
+
+    chunks = (
+        await db_session.execute(
+            select(KnowledgeChunk).where(KnowledgeChunk.article_id == article.id)
+        )
+    ).scalars().all()
+    assert chunks
+
+
+@pytest.mark.asyncio
+async def test_admin_can_enqueue_full_knowledge_reindex_job(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    admin_id, token = await _register_user_with_id(client, "adminreindexall")
+    admin = await db_session.get(User, admin_id)
+    assert admin is not None
+    admin.role = "admin"
+
+    response = await client.post(
+        "/api/v1/knowledge/reindex",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["article_id"] is None
+    assert data["requested_by_user_id"] == admin_id
+    assert data["status"] == "queued"
+
+    jobs = (
+        await db_session.execute(
+            select(KnowledgeEmbeddingJob).where(KnowledgeEmbeddingJob.article_id.is_(None))
+        )
+    ).scalars().all()
+    assert len(jobs) == 1
+
+
+@pytest.mark.asyncio
+async def test_process_knowledge_embedding_job_marks_chunks_embedded(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    article = KnowledgeArticle(
+        department="IT",
+        request_type="VPN",
+        title="VPN embedding job",
+        body="VPN troubleshooting content",
+        keywords="vpn",
+        is_active=True,
+    )
+    db_session.add(article)
+    await db_session.flush()
+    await sync_knowledge_article_index(db_session, article)
+    job = await enqueue_knowledge_embedding_job(
+        db_session,
+        article_id=article.id,
+        requested_by_user_id=None,
+    )
+    await db_session.flush()
+
+    async def fake_embed_texts(texts: list[str]) -> EmbeddingBatch:
+        return EmbeddingBatch(
+            model="test-embedding",
+            embeddings=[[0.1, 0.2, 0.3] for _ in texts],
+        )
+
+    monkeypatch.setattr(
+        "app.services.knowledge_embedding_jobs.embed_texts",
+        fake_embed_texts,
+    )
+
+    await process_knowledge_embedding_job(db_session, job, batch_size=4)
+    await db_session.flush()
+
+    assert job.status == "done"
+    assert job.updated_chunks >= 1
+    assert job.embedding_model == "test-embedding"
+
+    chunks = (
+        await db_session.execute(
+            select(KnowledgeChunk).where(KnowledgeChunk.article_id == article.id)
+        )
+    ).scalars().all()
+    assert chunks
+    assert all(chunk.embedding_model == "test-embedding" for chunk in chunks)
+    assert all(chunk.embedding_updated_at is not None for chunk in chunks)
 
 
 @pytest.mark.asyncio

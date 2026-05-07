@@ -30,6 +30,18 @@ CATEGORY_TO_DEPARTMENT = {
 VALID_CATEGORIES = list(CATEGORY_TO_DEPARTMENT.keys())
 VALID_PRIORITIES = ["критический", "высокий", "средний", "низкий"]
 
+
+def _fallback_response() -> dict:
+    return {
+        "category": "other",
+        "department": "other",
+        "priority": "средний",
+        "confidence": 0.0,
+        "draft_response": "",
+        "model_version": MODEL_VERSION,
+    }
+
+
 PROMPT = """Ты — система автоматической классификации обращений сотрудников в службу поддержки.
 
 КАТЕГОРИИ (выбери ровно одну):
@@ -77,7 +89,7 @@ PROMPT = """Ты — система автоматической классиф�
 Текст: {body}
 """
 
-def classify_ticket(ticket_id: int, title: str, body: str) -> dict:
+def classify_ticket(ticket_id: int | None, title: str, body: str) -> dict:
     """
     Классифицирует тикет поддержки.
 
@@ -91,18 +103,21 @@ def classify_ticket(ticket_id: int, title: str, body: str) -> dict:
     """
     prompt = PROMPT.replace("{title}", title).replace("{body}", body)
 
-    r = requests.post(
-        f"{OLLAMA_BASE_URL}/api/chat",
-        json={
-            "model": OLLAMA_MODEL,
-            "messages": [{"role": "user", "content": prompt}],
-            "stream": False,
-            "options": {"temperature": 0}
-        },
-        timeout=OLLAMA_TIMEOUT_SECONDS,
-    )
-    r.raise_for_status()
-    result = json.loads(r.json()["message"]["content"])
+    try:
+        r = requests.post(
+            f"{OLLAMA_BASE_URL}/api/chat",
+            json={
+                "model": OLLAMA_MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "stream": False,
+                "options": {"temperature": 0}
+            },
+            timeout=OLLAMA_TIMEOUT_SECONDS,
+        )
+        r.raise_for_status()
+        result = json.loads(r.json()["message"]["content"])
+    except (requests.RequestException, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return _fallback_response()
 
     # Защита от неверных значений модели
     category = result.get("category", "other")

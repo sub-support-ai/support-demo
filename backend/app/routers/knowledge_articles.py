@@ -9,6 +9,7 @@ from app.models.knowledge_article import KnowledgeArticle, KnowledgeArticleFeedb
 from app.models.user import User
 from app.schemas.knowledge_article import (
     KnowledgeArticleCreate,
+    KnowledgeEmbeddingJobRead,
     KnowledgeFeedbackCreate,
     KnowledgeFeedbackRead,
     KnowledgeArticleMatch,
@@ -19,9 +20,10 @@ from app.services.agents import get_active_agent_for_user
 from app.services.audit import log_event
 from app.services.knowledge_base import (
     KnowledgeSearchFilters,
-    build_search_text,
     search_knowledge_articles,
+    sync_knowledge_article_index,
 )
+from app.services.knowledge_embedding_jobs import enqueue_knowledge_embedding_job
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
@@ -121,6 +123,9 @@ async def search_knowledge(
                 **article.model_dump(),
                 score=match.score,
                 decision=match.decision,
+                chunk_id=match.chunk_id,
+                snippet=match.snippet,
+                retrieval=match.retrieval,
             )
         )
     return response
@@ -159,7 +164,7 @@ async def create_knowledge_article(
     )
     db.add(article)
     await db.flush()
-    article.search_text = build_search_text(article)
+    await sync_knowledge_article_index(db, article)
     await db.flush()
     await db.refresh(article)
 
@@ -176,6 +181,67 @@ async def create_knowledge_article(
         },
     )
     return article
+
+
+@router.post("/reindex", response_model=KnowledgeEmbeddingJobRead)
+async def reindex_all_knowledge_articles(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_role("admin")),
+):
+    job = await enqueue_knowledge_embedding_job(
+        db,
+        article_id=None,
+        requested_by_user_id=admin.id,
+    )
+    await db.flush()
+    await db.refresh(job)
+
+    await log_event(
+        db,
+        action="knowledge_article.reindex_all",
+        user_id=admin.id,
+        target_type="knowledge_article",
+        target_id=None,
+        request=request,
+        details={"job_id": job.id, "status": job.status},
+    )
+    return job
+
+
+@router.post("/{article_id}/reindex", response_model=KnowledgeEmbeddingJobRead)
+async def reindex_knowledge_article(
+    article_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_role("admin")),
+):
+    article = await db.get(KnowledgeArticle, article_id)
+    if article is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge article not found",
+        )
+
+    await sync_knowledge_article_index(db, article)
+    job = await enqueue_knowledge_embedding_job(
+        db,
+        article_id=article.id,
+        requested_by_user_id=admin.id,
+    )
+    await db.flush()
+    await db.refresh(job)
+
+    await log_event(
+        db,
+        action="knowledge_article.reindex",
+        user_id=admin.id,
+        target_type="knowledge_article",
+        target_id=article.id,
+        request=request,
+        details={"job_id": job.id, "status": job.status},
+    )
+    return job
 
 
 @router.patch("/{article_id}", response_model=KnowledgeArticleRead)
@@ -201,7 +267,7 @@ async def update_knowledge_article(
         setattr(article, field, value)
     if "version" not in updates:
         article.version = (article.version or 1) + 1
-    article.search_text = build_search_text(article)
+    await sync_knowledge_article_index(db, article)
     await db.flush()
     await db.refresh(article)
 

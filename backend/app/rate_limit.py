@@ -76,6 +76,9 @@ def rate_limit(max_calls: int, window_seconds: int):
         cutoff = now - window_seconds
         while q and q[0] < cutoff:
             q.popleft()
+        if not q:
+            hits.pop(key, None)
+            q = hits[key]
 
         # Если в окне уже накопилось max_calls запросов — отказываем.
         if len(q) >= max_calls:
