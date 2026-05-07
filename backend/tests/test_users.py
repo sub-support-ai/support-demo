@@ -255,6 +255,38 @@ async def test_stats_requires_auth(client: AsyncClient):
     assert response.status_code == 401
 
 
+@pytest.mark.asyncio
+async def test_stats_includes_job_queue_counters(client: AsyncClient):
+    reg = await client.post("/api/v1/auth/register", json={
+        "email": "statsjobs@example.com",
+        "username": "statsjobs",
+        "password": "Secret123!",
+    })
+    token = reg.json()["access_token"]
+
+    response = await client.get(
+        "/api/v1/stats/",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["jobs"]["ai"] == {
+        "total": 0,
+        "queued": 0,
+        "running": 0,
+        "done": 0,
+        "failed": 0,
+    }
+    assert data["jobs"]["knowledge_embeddings"] == {
+        "total": 0,
+        "queued": 0,
+        "running": 0,
+        "done": 0,
+        "failed": 0,
+    }
+
+
 # ── Bootstrap-admin ───────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio

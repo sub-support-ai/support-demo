@@ -11,6 +11,7 @@ import {
   IconChartBar,
   IconDatabaseSearch,
   IconFileText,
+  IconListCheck,
   IconLogout,
   IconMessageCircle,
 } from "@tabler/icons-react";
@@ -86,6 +87,15 @@ export function ShellLayout() {
             label="База знаний"
             leftSection={<IconDatabaseSearch size={18} />}
             active={location.pathname.startsWith("/knowledge")}
+          />
+        )}
+        {me?.role === "admin" && (
+          <NavLink
+            component={RouterNavLink}
+            to="/jobs"
+            label="Очереди"
+            leftSection={<IconListCheck size={18} />}
+            active={location.pathname.startsWith("/jobs")}
           />
         )}
       </AppShell.Navbar>

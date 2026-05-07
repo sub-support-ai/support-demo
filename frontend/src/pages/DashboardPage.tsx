@@ -1,6 +1,7 @@
 import {
   Alert,
   Badge,
+  Button,
   Group,
   LoadingOverlay,
   Paper,
@@ -12,8 +13,16 @@ import {
 } from "@mantine/core";
 
 import { getApiError } from "../api/client";
-import { useStats } from "../api/stats";
+import {
+  useFailedJobs,
+  useRetryAIJob,
+  useRetryKnowledgeEmbeddingJob,
+  useStats,
+} from "../api/stats";
+import { useMe } from "../api/auth";
+import type { AIJob, KnowledgeEmbeddingJob } from "../api/types";
 import { getStatusLabel } from "../lib/ticketLabels";
+import { useAuth } from "../stores/auth";
 
 function percent(value: number): string {
   return `${Math.round(value)}%`;
@@ -80,9 +89,73 @@ function BreakdownList({
   );
 }
 
+function formatDate(value?: string | null): string {
+  if (!value) return "нет даты";
+  return new Date(value).toLocaleString("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function JobFailureRow({
+  label,
+  details,
+  error,
+  attempts,
+  maxAttempts,
+  finishedAt,
+  onRetry,
+  retrying,
+}: {
+  label: string;
+  details: string;
+  error?: string | null;
+  attempts: number;
+  maxAttempts: number;
+  finishedAt?: string | null;
+  onRetry: () => void;
+  retrying: boolean;
+}) {
+  return (
+    <Paper className="job-failure-row" withBorder>
+      <Group justify="space-between" align="flex-start" gap="md">
+        <Stack gap={4} className="job-failure-body">
+          <Group gap="xs">
+            <Badge color="red" variant="light">
+              {label}
+            </Badge>
+            <Text size="sm" fw={700}>
+              {details}
+            </Text>
+          </Group>
+          <Text size="sm" c="dimmed">
+            попыток: {attempts}/{maxAttempts} · завершено: {formatDate(finishedAt)}
+          </Text>
+          {error && (
+            <Text size="sm" c="red" lineClamp={2}>
+              {error}
+            </Text>
+          )}
+        </Stack>
+        <Button size="xs" variant="light" onClick={onRetry} loading={retrying}>
+          Повторить
+        </Button>
+      </Group>
+    </Paper>
+  );
+}
+
 export function DashboardPage() {
+  const { token } = useAuth();
+  const { data: me } = useMe(Boolean(token));
   const stats = useStats();
   const data = stats.data;
+  const isAdmin = me?.role === "admin";
+  const failedJobs = useFailedJobs(isAdmin);
+  const retryAIJob = useRetryAIJob();
+  const retryKnowledgeJob = useRetryKnowledgeEmbeddingJob();
   const activeRequests =
     (data?.tickets.by_status.confirmed ?? 0) +
     (data?.tickets.by_status.in_progress ?? 0) +
@@ -124,6 +197,20 @@ export function DashboardPage() {
                 tone={data.tickets.sla_escalated_count > 0 ? "warning" : "neutral"}
               />
               <MetricCard
+                label="Очередь AI"
+                value={`${data.jobs.ai.queued} / ${data.jobs.ai.running}`}
+                hint={`ошибок: ${data.jobs.ai.failed}`}
+                tone={data.jobs.ai.failed > 0 ? "warning" : "neutral"}
+              />
+              <MetricCard
+                label="Очередь RAG"
+                value={`${data.jobs.knowledge_embeddings.queued} / ${data.jobs.knowledge_embeddings.running}`}
+                hint={`ошибок: ${data.jobs.knowledge_embeddings.failed}`}
+                tone={
+                  data.jobs.knowledge_embeddings.failed > 0 ? "warning" : "neutral"
+                }
+              />
+              <MetricCard
                 label="Повторно открыто"
                 value={data.tickets.reopen_count}
               />
@@ -143,6 +230,75 @@ export function DashboardPage() {
                 hint="подтверждено агентами"
               />
             </SimpleGrid>
+
+            {isAdmin && (
+              <Paper className="quiet-panel dashboard-section" withBorder>
+                <Group justify="space-between" mb="sm">
+                  <div>
+                    <Title order={4}>Ошибки фоновых задач</Title>
+                    <Text size="sm" c="dimmed">
+                      Последние сбои AI-ответов и индексации базы знаний.
+                    </Text>
+                  </div>
+                  <Button
+                    size="xs"
+                    variant="subtle"
+                    onClick={() => failedJobs.refetch()}
+                    loading={failedJobs.isFetching}
+                  >
+                    Обновить
+                  </Button>
+                </Group>
+
+                {failedJobs.error && (
+                  <Alert color="red" variant="light" mb="sm">
+                    {getApiError(failedJobs.error)}
+                  </Alert>
+                )}
+
+                <Stack gap="sm">
+                  {failedJobs.data?.ai.map((job: AIJob) => (
+                    <JobFailureRow
+                      key={`ai-${job.id}`}
+                      label="AI"
+                      details={`диалог #${job.conversation_id}, задача #${job.id}`}
+                      error={job.error}
+                      attempts={job.attempts}
+                      maxAttempts={job.max_attempts}
+                      finishedAt={job.finished_at}
+                      retrying={retryAIJob.isPending}
+                      onRetry={() => retryAIJob.mutate(job.id)}
+                    />
+                  ))}
+                  {failedJobs.data?.knowledge_embeddings.map(
+                    (job: KnowledgeEmbeddingJob) => (
+                      <JobFailureRow
+                        key={`knowledge-${job.id}`}
+                        label="RAG"
+                        details={
+                          job.article_id
+                            ? `статья #${job.article_id}, задача #${job.id}`
+                            : `полный reindex, задача #${job.id}`
+                        }
+                        error={job.error}
+                        attempts={job.attempts}
+                        maxAttempts={job.max_attempts}
+                        finishedAt={job.finished_at}
+                        retrying={retryKnowledgeJob.isPending}
+                        onRetry={() => retryKnowledgeJob.mutate(job.id)}
+                      />
+                    ),
+                  )}
+                  {!failedJobs.isLoading &&
+                    failedJobs.data?.ai.length === 0 &&
+                    failedJobs.data.knowledge_embeddings.length === 0 && (
+                      <Text size="sm" c="dimmed">
+                        Ошибок фоновых задач нет.
+                      </Text>
+                    )}
+                </Stack>
+              </Paper>
+            )}
 
             <SimpleGrid cols={{ base: 1, md: 3 }} spacing="md">
               <Paper className="quiet-panel dashboard-section" withBorder>

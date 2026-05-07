@@ -26,7 +26,21 @@ class AIStats(BaseModel):
     user_feedback_not_helped: int   # пользователь сказал "не помогло"
 
 
+class JobQueueStats(BaseModel):
+    total: int = 0
+    queued: int = 0
+    running: int = 0
+    done: int = 0
+    failed: int = 0
+
+
+class JobsStats(BaseModel):
+    ai: JobQueueStats
+    knowledge_embeddings: JobQueueStats
+
+
 class StatsResponse(BaseModel):
     """Полный ответ эндпоинта GET /api/v1/stats/."""
     tickets: TicketStats
     ai: AIStats
+    jobs: JobsStats

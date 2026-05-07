@@ -235,14 +235,45 @@ export interface KnowledgeArticlePayload {
 export interface KnowledgeEmbeddingJob {
   id: number;
   article_id?: number | null;
+  requested_by_user_id?: number | null;
   status: string;
   attempts: number;
   max_attempts: number;
   updated_chunks: number;
   embedding_model?: string | null;
   error?: string | null;
+  run_after?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
   created_at: string;
   updated_at?: string | null;
+}
+
+export interface AIJob {
+  id: number;
+  conversation_id: number;
+  status: string;
+  attempts: number;
+  max_attempts: number;
+  error?: string | null;
+  run_after: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  created_at: string;
+  updated_at?: string | null;
+}
+
+export interface FailedJobsResponse {
+  ai: AIJob[];
+  knowledge_embeddings: KnowledgeEmbeddingJob[];
+}
+
+export type JobKind = "all" | "ai" | "knowledge_embeddings";
+export type JobStatusFilter = "all" | "queued" | "running" | "done" | "failed";
+
+export interface JobsResponse {
+  ai: AIJob[];
+  knowledge_embeddings: KnowledgeEmbeddingJob[];
 }
 
 export interface ResponseTemplate {
@@ -282,4 +313,18 @@ export interface AIStats {
 export interface StatsResponse {
   tickets: TicketStats;
   ai: AIStats;
+  jobs: JobsStats;
+}
+
+export interface JobQueueStats {
+  total: number;
+  queued: number;
+  running: number;
+  done: number;
+  failed: number;
+}
+
+export interface JobsStats {
+  ai: JobQueueStats;
+  knowledge_embeddings: JobQueueStats;
 }

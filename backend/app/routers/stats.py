@@ -22,15 +22,28 @@ from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.ticket import Ticket
 from app.models.ai_log import AILog
+from app.models.ai_job import AIJob
 from app.models.conversation import Conversation
+from app.models.knowledge_embedding_job import KnowledgeEmbeddingJob
 from app.models.user import User
-from app.schemas.stats import StatsResponse, TicketStats, AIStats
+from app.schemas.stats import AIStats, JobQueueStats, JobsStats, StatsResponse, TicketStats
 from app.services.agents import get_active_agent_for_user
 from app.services.sla import OPEN_STATUSES
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/stats", tags=["stats"])
+
+
+def _queue_stats(rows) -> JobQueueStats:
+    by_status = {row.status: row.cnt for row in rows}
+    return JobQueueStats(
+        total=sum(by_status.values()),
+        queued=by_status.get("queued", 0),
+        running=by_status.get("running", 0),
+        done=by_status.get("done", 0),
+        failed=by_status.get("failed", 0),
+    )
 
 
 async def _ticket_scope_filters(
@@ -211,9 +224,21 @@ async def get_stats(
         user_feedback_not_helped=ai_row.feedback_not_helped or 0,
     )
 
+    ai_jobs_result = await db.execute(
+        select(AIJob.status, func.count().label("cnt")).group_by(AIJob.status)
+    )
+    knowledge_jobs_result = await db.execute(
+        select(KnowledgeEmbeddingJob.status, func.count().label("cnt"))
+        .group_by(KnowledgeEmbeddingJob.status)
+    )
+    jobs_stats = JobsStats(
+        ai=_queue_stats(ai_jobs_result),
+        knowledge_embeddings=_queue_stats(knowledge_jobs_result),
+    )
+
     logger.info(
         "Статистика собрана",
         extra={"total_tickets": total_tickets, "total_ai_processed": total_processed}
     )
 
-    return StatsResponse(tickets=ticket_stats, ai=ai_stats)
+    return StatsResponse(tickets=ticket_stats, ai=ai_stats, jobs=jobs_stats)

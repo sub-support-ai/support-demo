@@ -142,9 +142,35 @@ body {
   min-height: 220px;
 }
 
+.job-failure-row {
+  padding: 12px;
+  border-radius: 8px;
+  background: #fffafa;
+}
+
+.job-failure-body {
+  min-width: 0;
+  flex: 1;
+}
+
 .knowledge-page {
   max-width: 1440px;
   margin: 0 auto;
+}
+
+.jobs-page {
+  max-width: 1480px;
+  margin: 0 auto;
+}
+
+.jobs-table-panel {
+  position: relative;
+  overflow-x: auto;
+}
+
+.jobs-error-cell {
+  min-width: 240px;
+  max-width: 420px;
 }
 
 .knowledge-list-panel,
