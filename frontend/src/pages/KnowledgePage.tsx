@@ -14,6 +14,7 @@ import {
   TextInput,
   Textarea,
   Title,
+  Tooltip,
 } from "@mantine/core";
 import { IconDatabaseSearch, IconRefresh, IconSettings } from "@tabler/icons-react";
 import { useEffect, useMemo, useState } from "react";
@@ -55,6 +56,36 @@ type KnowledgeFormState = {
   access_scope: "public" | "internal";
   is_active: boolean;
 };
+
+// «Полезность» статьи: процент полезных ответов из всех оценок + сырой
+// разбивкой в tooltip. Считаем здесь, а не в формуле пользователя глазами:
+//
+//   helped       — пользователь отметил «помогло»
+//   not_helped   — статья нашлась, но не помогла (контент устарел / неполный)
+//   not_relevant — статья не подходила к запросу (RAG ошибся, не контент)
+//
+// Без not_relevant в показе админ не увидит проблем поиска и будет винить
+// автора статьи; поэтому tooltip показывает все три цифры явно.
+type FeedbackStats = {
+  total: number;
+  helpedRatio: number; // 0..1, NaN если total==0
+};
+
+function summarizeFeedback(article: KnowledgeArticle): FeedbackStats {
+  const total =
+    article.helped_count + article.not_helped_count + article.not_relevant_count;
+  return {
+    total,
+    helpedRatio: total === 0 ? Number.NaN : article.helped_count / total,
+  };
+}
+
+function feedbackBadgeColor(ratio: number, total: number): string {
+  if (total === 0) return "gray";
+  if (ratio >= 0.7) return "green";
+  if (ratio >= 0.4) return "yellow";
+  return "red";
+}
 
 const emptyForm: KnowledgeFormState = {
   department: "",
@@ -253,9 +284,35 @@ export function KnowledgePage() {
                         </Badge>
                       </Table.Td>
                       <Table.Td>
-                        <Text size="xs">
-                          {article.helped_count} / {article.not_helped_count}
-                        </Text>
+                        {(() => {
+                          const stats = summarizeFeedback(article);
+                          if (stats.total === 0) {
+                            return (
+                              <Text size="xs" c="dimmed">
+                                нет оценок
+                              </Text>
+                            );
+                          }
+                          const percent = Math.round(stats.helpedRatio * 100);
+                          return (
+                            <Tooltip
+                              withArrow
+                              label={
+                                `Помогло: ${article.helped_count}` +
+                                ` · Не помогло: ${article.not_helped_count}` +
+                                ` · Не подошло: ${article.not_relevant_count}`
+                              }
+                            >
+                              <Badge
+                                size="sm"
+                                variant="light"
+                                color={feedbackBadgeColor(stats.helpedRatio, stats.total)}
+                              >
+                                {percent}% · {stats.total}
+                              </Badge>
+                            </Tooltip>
+                          );
+                        })()}
                       </Table.Td>
                     </Table.Tr>
                   ))}

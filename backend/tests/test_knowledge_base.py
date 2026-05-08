@@ -593,6 +593,79 @@ async def test_knowledge_feedback_updates_article_counters(
 
 
 @pytest.mark.asyncio
+async def test_knowledge_list_exposes_aggregated_feedback_counts(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    """GET /api/v1/knowledge/ должен отдавать helped/not_helped/not_relevant
+    счётчики, чтобы админка показывала «полезность» статьи без N+1 запросов.
+
+    Проверяем end-to-end: три разных feedback'а через POST /knowledge/feedback,
+    счётчики на статье обновлены, GET /knowledge/ возвращает их в JSON.
+    """
+    user_id, token = await _register_user_with_id(client, "kbagg")
+    article = KnowledgeArticle(
+        department="IT",
+        request_type="VPN не работает",
+        title="VPN agg-test",
+        body="agg body",
+        keywords="vpn agg",
+        is_active=True,
+    )
+    db_session.add(article)
+    await db_session.flush()
+
+    # Три отдельных диалога, по одному feedback'у каждого типа — реалистичный
+    # сценарий, в котором три разных пользователя оценили одну и ту же статью.
+    feedbacks_to_send = ("helped", "not_helped", "not_relevant")
+    for kind in feedbacks_to_send:
+        conversation = Conversation(user_id=user_id, status="active")
+        db_session.add(conversation)
+        await db_session.flush()
+        message = Message(
+            conversation_id=conversation.id,
+            role="ai",
+            content=f"Ответ для feedback={kind}",
+        )
+        db_session.add(message)
+        await db_session.flush()
+        # Базовая запись feedback без оценки — её апдейтит POST /knowledge/feedback.
+        db_session.add(
+            KnowledgeArticleFeedback(
+                article_id=article.id,
+                conversation_id=conversation.id,
+                message_id=message.id,
+                user_id=user_id,
+                query="vpn",
+                score=10.0,
+                decision="answer",
+            )
+        )
+        await db_session.flush()
+        response = await client.post(
+            "/api/v1/knowledge/feedback",
+            json={
+                "message_id": message.id,
+                "article_id": article.id,
+                "feedback": kind,
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert response.status_code == 200, response.text
+
+    # Проверяем агрегаты в API списка — именно их потребляет админка
+    listing = await client.get(
+        "/api/v1/knowledge/",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert listing.status_code == 200
+    [item] = [a for a in listing.json() if a["id"] == article.id]
+    assert item["helped_count"] == 1
+    assert item["not_helped_count"] == 1
+    assert item["not_relevant_count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_unreachable_high_threshold_forces_escalate(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
