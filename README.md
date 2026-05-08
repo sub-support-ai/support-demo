@@ -29,6 +29,11 @@ RAG: база знаний + full-text search + semantic search через embed
 powershell -ExecutionPolicy Bypass -File .\start.ps1
 ```
 
+```powershell
+powershell -ExecutionPolicy Bypass -File .\stop.ps1
+```
+
+
 Запускает:
 
 - Ollama, если ещё не запущена
