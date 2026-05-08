@@ -10,6 +10,11 @@ uvicorn[standard]>=0.42,<1
 sqlalchemy[asyncio]>=2.0,<3
 asyncpg>=0.31,<1
 pydantic[email]>=2.12,<3
+# pydantic-settings 2.x — backend для класса Settings (BaseSettings).
+# До этого Settings собирался вручную через os.getenv(); миграция дала
+# нам типобезопасность через field_validator'ы и SecretStr для секретов
+# (JWT_SECRET_KEY, AI_SERVICE_API_KEY) — теперь они не уезжают в repr/log.
+pydantic-settings>=2.5,<3
 python-dotenv>=1.2,<2
 bcrypt>=5,<6
 email-validator>=2.3,<3

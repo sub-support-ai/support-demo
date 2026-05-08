@@ -389,11 +389,15 @@ def test_settings_requires_ai_service_key_in_production():
     на старте бэкенда с понятным сообщением, чем на первом /ai/answer
     в проде получить тихую 401-цепочку, спрятанную в логах.
     """
+    from pydantic import SecretStr
+
     from app.config import Settings
 
     s = Settings()
     s.APP_ENV = "production"
-    s.JWT_SECRET_KEY = "a" * 64  # валидный ключ — изолируем проверку AI
+    # SecretStr — теперь поле обёрнуто, чтобы значение не светилось в логе
+    # Pydantic-модели; см. config.py / Блок 12.
+    s.JWT_SECRET_KEY = SecretStr("a" * 64)  # валидный ключ — изолируем проверку AI
     s.AI_SERVICE_API_KEY = None
 
     with pytest.raises(RuntimeError, match="AI_SERVICE_API_KEY"):
@@ -402,12 +406,14 @@ def test_settings_requires_ai_service_key_in_production():
 
 def test_settings_allows_production_when_ai_key_set():
     """Production с заданным AI_SERVICE_API_KEY проходит валидацию."""
+    from pydantic import SecretStr
+
     from app.config import Settings
 
     s = Settings()
     s.APP_ENV = "production"
-    s.JWT_SECRET_KEY = "a" * 64
-    s.AI_SERVICE_API_KEY = "prod-secret"
+    s.JWT_SECRET_KEY = SecretStr("a" * 64)
+    s.AI_SERVICE_API_KEY = SecretStr("prod-secret")
 
     # Не должно бросать
     s.__post_init_check__()
@@ -423,6 +429,24 @@ def test_settings_allows_development_without_ai_key():
 
     # Не должно бросать
     s.__post_init_check__()
+
+
+def test_secret_str_does_not_leak_in_repr():
+    """Регрессия Блока 12: SecretStr(JWT_SECRET_KEY) не должен светиться
+    в repr(settings) — иначе любой log.exception() с settings в extra или
+    Sentry breadcrumb потечёт ключом подписи токенов в дампе.
+    """
+    from pydantic import SecretStr
+
+    from app.config import Settings
+
+    s = Settings()
+    s.JWT_SECRET_KEY = SecretStr("super-real-secret-12345")
+    s.AI_SERVICE_API_KEY = SecretStr("ai-real-secret-67890")
+
+    rendered = repr(s) + " " + str(s) + " " + str(s.model_dump())
+    assert "super-real-secret-12345" not in rendered
+    assert "ai-real-secret-67890" not in rendered
 
 
 # ── Блок 4: валидация RAG-порогов ─────────────────────────────────────────────

@@ -70,7 +70,11 @@ def create_access_token(user_id: int, role: str) -> str:
         "role": role,
         "exp": expire,         # exp = expiration, когда токен истекает
     }
-    return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+    return jwt.encode(
+        payload,
+        settings.JWT_SECRET_KEY.get_secret_value(),
+        algorithm=settings.JWT_ALGORITHM,
+    )
 
 
 def decode_access_token(token: str) -> dict:
@@ -78,4 +82,8 @@ def decode_access_token(token: str) -> dict:
     Расшифровать токен и вернуть данные внутри.
     Если токен неверный или истёк — выбросит JWTError.
     """
-    return jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+    return jwt.decode(
+        token,
+        settings.JWT_SECRET_KEY.get_secret_value(),
+        algorithms=[settings.JWT_ALGORITHM],
+    )
