@@ -1,0 +1,169 @@
+# Production-compose для self-hosted развёртывания у заказчика.
+#
+# Отличия от docker-compose.dev.yml — каждое отличие осмысленно:
+#
+#   1. Нет --reload и нет bind-mount исходников. Образ собирается один раз,
+#      содержимое /app фиксированное. --reload в проде утечка памяти и
+#      непредсказуемые рестарты.
+#   2. restart: unless-stopped на каждом сервисе. Поднимется обратно после
+#      OOM-killer, рестарта хоста, неожиданного exit'а — без участия админа.
+#   3. healthcheck на app + db + ai-service. depends_on:condition=service_healthy
+#      на воркерах: воркер не стартует, пока app не подтвердил, что схема
+#      БД накатана и сервис отвечает.
+#   4. db не экспонирует порт наружу. В prod к нему ходят только сервисы
+#      внутри compose-сети; внешний доступ — через psql exec в контейнере.
+#   5. Redis включён — RATE_LIMIT_BACKEND=redis даёт общий счётчик попыток
+#      на N инстансов. См. app/rate_limit.py и .env.example.
+#   6. ai-service раскомментирован с image-tag placeholder (заменяется при
+#      релизе на конкретный SHA). Volumes для модели — чтобы Mistral не
+#      качался при каждом перезапуске.
+#
+# Backup БД — через отдельный CronJob на хосте (pg_dump в подмонтированный
+# каталог), не через docker-compose. Это решение деплой-инженера заказчика;
+# здесь оставлен только healthy-Postgres, чтобы было на чём делать pg_dump.
+#
+# Запуск:    docker compose -f docker-compose.prod.yml up -d
+# Логи:      docker compose -f docker-compose.prod.yml logs -f app
+# Миграции:  выполняются в command app перед стартом uvicorn (alembic upgrade head)
+
+services:
+  app:
+    build: .
+    image: support-demo-backend:latest
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: db
+      AI_SERVICE_URL: http://ai-service:8001
+      REDIS_URL: redis://redis:6379/0
+      RATE_LIMIT_BACKEND: redis
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Без bind-mount: код фиксируется на сборке образа, не подменяется в runtime.
+    # Миграции прогоняются при старте — alembic upgrade head идемпотентен,
+    # повторные запуски при rolling-restart не страшны.
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://localhost:8000/healthcheck', timeout=3).status==200 else sys.exit(1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  ai-worker:
+    build: .
+    image: support-demo-backend:latest
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: db
+      AI_SERVICE_URL: http://ai-service:8001
+      REDIS_URL: redis://redis:6379/0
+      RATE_LIMIT_BACKEND: redis
+    depends_on:
+      app:
+        condition: service_healthy
+    command: python -m app.workers.ai_worker
+
+  sla-worker:
+    build: .
+    image: support-demo-backend:latest
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: db
+    depends_on:
+      app:
+        condition: service_healthy
+    command: python -m app.workers.sla_worker
+
+  knowledge-embedding-worker:
+    build: .
+    image: support-demo-backend:latest
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: db
+      AI_SERVICE_URL: http://ai-service:8001
+    depends_on:
+      app:
+        condition: service_healthy
+    command: python -m app.workers.knowledge_embedding_worker
+
+  ai-service:
+    # Образ собирается отдельным репозиторием AI-команды; здесь подставляется
+    # конкретный SHA при релизе. Заглушка `:prod` — placeholder, который
+    # деплой-инженер обязан заменить (CI этому учит через make deploy).
+    image: support-demo/ai-service:prod
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      APP_ENV: production
+    # Не публикуем порт наружу: AI-сервис обращается только через app/worker.
+    # Publish порта — это прямая дыра в безопасности, см. ai-service/main.py
+    # (AI_SERVICE_API_KEY обязателен в production).
+    expose:
+      - "8001"
+    volumes:
+      # Mistral 7B весит ~4 ГБ в q4_K_M. Без volume каждый pull образа
+      # перетянет модель — десятки минут даже на гигабите.
+      - ai_models:/models
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://localhost:8001/healthcheck', timeout=3).status==200 else sys.exit(1)\""]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      # Mistral на CPU прогревается ~60-120 сек при первом старте.
+      # На GPU ощутимо быстрее, но прогрев всё равно есть.
+      start_period: 120s
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in production}
+      POSTGRES_DB: ${POSTGRES_DB:-app_db}
+    # Без `ports:` — порт доступен только внутри compose-сети. Внешний доступ
+    # к БД из prod — это утечка данных через скан портов или brute-force.
+    expose:
+      - "5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    expose:
+      - "6379"
+    volumes:
+      - redis_data:/data
+    # appendonly=yes даёт persistence для счётчиков rate-limiter после
+    # restart'а redis-контейнера. Без этого после перезагрузки хоста
+    # все счётчики обнулятся, и брутфорс получит «свежие» 5 попыток.
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  postgres_data:
+  redis_data:
+  ai_models:

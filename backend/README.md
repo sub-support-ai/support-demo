@@ -28,7 +28,7 @@ copy .env.example .env
 2) Поднимите Postgres и приложение:
 
 ```bash
-docker compose up --build
+docker compose -f docker-compose.dev.yml up --build
 ```
 
 После старта:
@@ -36,7 +36,11 @@ docker compose up --build
 - Swagger UI: `http://localhost:8000/docs`
 
 Миграции БД накатываются автоматически при старте контейнера
-(`alembic upgrade head` в `docker-compose.yml`).
+(`alembic upgrade head` в `docker-compose.dev.yml`).
+
+Production-развёртывание — отдельный compose-файл с healthcheck'ами и
+restart-policy: см. [`docs/deployment.md`](./docs/deployment.md) и
+`docker-compose.prod.yml`.
 
 ## Быстрый старт (локально на Windows)
 
