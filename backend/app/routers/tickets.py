@@ -32,6 +32,10 @@ from app.schemas.ticket import (
     TicketStatusUpdate,
 )
 from app.services.agents import get_active_agent_for_user
+from app.services.ai_fallback import (
+    FALLBACK_REASON_PAYLOAD_KEY,
+    record_ai_fallback,
+)
 from app.services.audit import log_event
 from app.services.routing import assign_agent, unassign_agent
 from app.services.sla import OPEN_STATUSES, start_ticket_sla
@@ -284,6 +288,18 @@ async def create_ticket(
     ))
 
     await db.refresh(ticket)
+
+    # Если AI-классификатор ушёл в fallback — фиксируем причину для дашборда
+    # «Сбои AI». ticket_id уже известен (refresh выше), conversation_id у
+    # тикета может отсутствовать — связь идёт через ticket_id.
+    classify_fallback_reason = ai_result.get(FALLBACK_REASON_PAYLOAD_KEY)
+    if classify_fallback_reason:
+        await record_ai_fallback(
+            db,
+            service="classify",
+            reason=classify_fallback_reason,
+            ticket_id=ticket.id,
+        )
 
     await log_event(
         db,

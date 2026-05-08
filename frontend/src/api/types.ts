@@ -332,3 +332,14 @@ export interface JobsStats {
   ai: JobQueueStats;
   knowledge_embeddings: JobQueueStats;
 }
+
+export interface AIFallbacksStats {
+  // ISO8601 — окно начинается отсюда, эхом от запроса
+  since: string;
+  total: number;
+  // Свёртки одинаковых событий в двух разрезах:
+  //   by_reason  — timeout / connect / http_5xx / broken_json / empty_response
+  //   by_service — answer (chat) / classify (intake)
+  by_reason: Record<string, number>;
+  by_service: Record<string, number>;
+}

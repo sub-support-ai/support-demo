@@ -44,3 +44,17 @@ class StatsResponse(BaseModel):
     tickets: TicketStats
     ai: AIStats
     jobs: JobsStats
+
+
+class AIFallbacksStats(BaseModel):
+    """Агрегат fallback-событий за окно времени.
+
+    by_reason / by_service — две независимые свёртки одних и тех же событий.
+    UI на дашборде показывает их рядом: причина (timeout/connect/...) и
+    источник (answer-чат / classify-тикет). Сумма в каждой свёртке == total.
+    """
+
+    since: str  # ISO8601 — начало окна, эхом от запроса
+    total: int = 0
+    by_reason: dict[str, int] = {}
+    by_service: dict[str, int] = {}

@@ -10,6 +10,10 @@ from app.models.ai_log import AILog
 from app.models.conversation import Conversation
 from app.models.knowledge_article import KnowledgeArticle, KnowledgeArticleFeedback
 from app.models.message import Message
+from app.services.ai_fallback import (
+    FALLBACK_REASON_PAYLOAD_KEY,
+    record_ai_fallback,
+)
 from app.services.ai_service_client import ai_service_headers
 from app.services.knowledge_base import LATENCY_PAYLOAD_KEY, find_knowledge_answer
 
@@ -91,6 +95,7 @@ async def get_ai_answer(
         service_urls.append("http://localhost:8001")
 
     data: Any = None
+    last_reason: str | None = None
     try:
         for service_url in service_urls:
             try:
@@ -106,21 +111,29 @@ async def get_ai_answer(
                     response.raise_for_status()
                     data = response.json()
                     break
-            except (
-                httpx.ConnectError,
-                httpx.TimeoutException,
-                httpx.HTTPStatusError,
-                httpx.UnsupportedProtocol,
-            ) as exc:
+            except httpx.TimeoutException as exc:
+                last_reason = "timeout"
                 logger.warning(
-                    "AI Service unavailable or returned an error: %s",
+                    "AI Service timeout: %s",
                     exc,
-                    extra={
-                        "conversation_id": conversation_id,
-                        "ai_service_url": service_url,
-                    },
+                    extra={"conversation_id": conversation_id, "ai_service_url": service_url},
+                )
+            except (httpx.ConnectError, httpx.UnsupportedProtocol) as exc:
+                last_reason = "connect"
+                logger.warning(
+                    "AI Service connect error: %s",
+                    exc,
+                    extra={"conversation_id": conversation_id, "ai_service_url": service_url},
+                )
+            except httpx.HTTPStatusError as exc:
+                last_reason = "http_5xx"
+                logger.warning(
+                    "AI Service HTTP error: %s",
+                    exc,
+                    extra={"conversation_id": conversation_id, "ai_service_url": service_url},
                 )
         if data is None:
+            fallback[FALLBACK_REASON_PAYLOAD_KEY] = last_reason or "connect"
             return _with_latency(fallback)
     except ValueError as exc:
         logger.warning(
@@ -129,9 +142,11 @@ async def get_ai_answer(
             extra={"conversation_id": conversation_id},
             exc_info=True,
         )
+        fallback[FALLBACK_REASON_PAYLOAD_KEY] = "broken_json"
         return _with_latency(fallback)
 
     if not isinstance(data, dict):
+        fallback[FALLBACK_REASON_PAYLOAD_KEY] = "empty_response"
         return _with_latency(fallback)
 
     data.setdefault("answer", "")
@@ -172,6 +187,17 @@ async def generate_ai_message(db: AsyncSession, conversation_id: int) -> Message
         ai_payload = await find_knowledge_answer(db, history)
         if ai_payload is None:
             ai_payload = await get_ai_answer(conversation_id, history)
+
+    # Если AI ушёл в fallback — фиксируем причину для дашборда «Сбои AI».
+    # KB-ответ и intake-rules сюда не попадают (там reason не выставляется).
+    fallback_reason = ai_payload.get(FALLBACK_REASON_PAYLOAD_KEY)
+    if fallback_reason:
+        await record_ai_fallback(
+            db,
+            service="answer",
+            reason=fallback_reason,
+            conversation_id=conversation_id,
+        )
 
     confidence = ai_payload.get("confidence")
     escalate = bool(ai_payload.get("escalate"))

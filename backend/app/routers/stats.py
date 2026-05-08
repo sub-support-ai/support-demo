@@ -12,21 +12,29 @@
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select, case, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, require_role
+from app.models.ai_fallback_event import AIFallbackEvent
 from app.models.ticket import Ticket
 from app.models.ai_log import AILog
 from app.models.ai_job import AIJob
 from app.models.conversation import Conversation
 from app.models.knowledge_embedding_job import KnowledgeEmbeddingJob
 from app.models.user import User
-from app.schemas.stats import AIStats, JobQueueStats, JobsStats, StatsResponse, TicketStats
+from app.schemas.stats import (
+    AIFallbacksStats,
+    AIStats,
+    JobQueueStats,
+    JobsStats,
+    StatsResponse,
+    TicketStats,
+)
 from app.services.agents import get_active_agent_for_user
 from app.services.sla import OPEN_STATUSES
 
@@ -242,3 +250,71 @@ async def get_stats(
     )
 
     return StatsResponse(tickets=ticket_stats, ai=ai_stats, jobs=jobs_stats)
+
+
+# ── Fallback-события AI ─────────────────────────────────────────────────────
+
+
+# Дефолтное окно — 24 часа: за этот период обычно успевают набраться значимые
+# цифры (если в час идёт <1 события, недельный график был бы полезнее, но
+# на демо кейс «AI лёг полчаса назад» важнее, чем недельный тренд).
+DEFAULT_FALLBACKS_WINDOW = timedelta(hours=24)
+MAX_FALLBACKS_WINDOW_DAYS = 30
+
+
+@router.get(
+    "/ai/fallbacks",
+    response_model=AIFallbacksStats,
+    summary="Агрегат fallback-событий AI за окно времени",
+    description=(
+        "Возвращает количество событий fallback'а AI-сервиса за указанное окно "
+        "с группировкой по причинам (timeout/connect/http_5xx/broken_json/"
+        "empty_response) и источникам (answer/classify). Только админам — "
+        "содержит чувствительную информацию о работе инфраструктуры."
+    ),
+)
+async def get_ai_fallbacks_stats(
+    since: datetime | None = Query(
+        default=None,
+        description=(
+            "Начало окна (ISO8601 с таймзоной). По умолчанию — 24 часа назад. "
+            "Окно ограничено {0} днями для защиты от scan'а всей таблицы."
+        ).format(MAX_FALLBACKS_WINDOW_DAYS),
+    ),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_role("admin")),
+):
+    now = datetime.now(timezone.utc)
+    if since is None:
+        since_dt = now - DEFAULT_FALLBACKS_WINDOW
+    else:
+        # Ограничиваем глубину окна: запрос «всё за всё время» по таблице
+        # без LIMIT'а на больших объёмах съест диск IO.
+        earliest_allowed = now - timedelta(days=MAX_FALLBACKS_WINDOW_DAYS)
+        since_dt = max(since, earliest_allowed)
+
+    # Если входящий datetime naive — считаем UTC, иначе фильтр по
+    # AIFallbackEvent.created_at >= since будет сравнивать разные TZ.
+    if since_dt.tzinfo is None:
+        since_dt = since_dt.replace(tzinfo=timezone.utc)
+
+    by_reason_result = await db.execute(
+        select(AIFallbackEvent.reason, func.count().label("cnt"))
+        .where(AIFallbackEvent.created_at >= since_dt)
+        .group_by(AIFallbackEvent.reason)
+    )
+    by_reason = {row.reason: int(row.cnt) for row in by_reason_result}
+
+    by_service_result = await db.execute(
+        select(AIFallbackEvent.service, func.count().label("cnt"))
+        .where(AIFallbackEvent.created_at >= since_dt)
+        .group_by(AIFallbackEvent.service)
+    )
+    by_service = {row.service: int(row.cnt) for row in by_service_result}
+
+    return AIFallbacksStats(
+        since=since_dt.isoformat(),
+        total=sum(by_reason.values()),
+        by_reason=by_reason,
+        by_service=by_service,
+    )

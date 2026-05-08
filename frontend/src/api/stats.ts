@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "./client";
 import type {
+  AIFallbacksStats,
   AIJob,
   FailedJobsResponse,
   JobKind,
@@ -18,6 +19,24 @@ export function useStats() {
       const { data } = await api.get<StatsResponse>("/stats/");
       return data;
     },
+  });
+}
+
+export function useAIFallbacksStats(enabled: boolean) {
+  return useQuery({
+    queryKey: ["stats", "ai", "fallbacks"],
+    queryFn: async () => {
+      // Без since бэкенд использует дефолтное окно 24 ч — этого достаточно
+      // для виджета «Сбои AI за 24ч». Глубже окно админ может посмотреть
+      // отдельным запросом, но для дашборда лишний шум.
+      const { data } = await api.get<AIFallbacksStats>("/stats/ai/fallbacks");
+      return data;
+    },
+    enabled,
+    // 30 сек: достаточно частое обновление, чтобы заметить новый сбой,
+    // но не нагружает БД при долго открытой вкладке.
+    refetchInterval: enabled ? 30000 : false,
+    refetchIntervalInBackground: false,
   });
 }
 

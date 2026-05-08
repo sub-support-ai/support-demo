@@ -14,6 +14,7 @@ import {
 
 import { getApiError } from "../api/client";
 import {
+  useAIFallbacksStats,
   useFailedJobs,
   useRetryAIJob,
   useRetryKnowledgeEmbeddingJob,
@@ -23,6 +24,24 @@ import { useMe } from "../api/auth";
 import type { AIJob, KnowledgeEmbeddingJob } from "../api/types";
 import { getStatusLabel } from "../lib/ticketLabels";
 import { useAuth } from "../stores/auth";
+
+// Карта стабильных reason-кодов из AIFallbackEvent.reason на UI-подписи.
+// Любой неизвестный код проходит через as-is (см. BreakdownList): админ
+// заметит «новую» причину в списке, мы добавим перевод в этот словарь
+// без релиза фронта.
+const FALLBACK_REASON_LABELS: Record<string, string> = {
+  timeout: "Таймаут",
+  connect: "Не достучались",
+  http_5xx: "Ошибка HTTP",
+  broken_json: "Битый JSON",
+  empty_response: "Пустой ответ",
+};
+
+// service: где именно упало — чат /ai/answer или классификация /ai/classify.
+const FALLBACK_SERVICE_LABELS: Record<string, string> = {
+  answer: "Ответы в чате",
+  classify: "Классификация тикетов",
+};
 
 function percent(value: number): string {
   return `${Math.round(value)}%`;
@@ -154,6 +173,7 @@ export function DashboardPage() {
   const data = stats.data;
   const isAdmin = me?.role === "admin";
   const failedJobs = useFailedJobs(isAdmin);
+  const aiFallbacks = useAIFallbacksStats(isAdmin);
   const retryAIJob = useRetryAIJob();
   const retryKnowledgeJob = useRetryKnowledgeEmbeddingJob();
   const activeRequests =
@@ -297,6 +317,63 @@ export function DashboardPage() {
                       </Text>
                     )}
                 </Stack>
+              </Paper>
+            )}
+
+            {isAdmin && (
+              <Paper className="quiet-panel dashboard-section" withBorder>
+                <Group justify="space-between" mb="sm">
+                  <div>
+                    <Title order={4}>Сбои AI за 24 часа</Title>
+                    <Text size="sm" c="dimmed">
+                      Сколько раз AI-сервис ушёл в fallback и по какой причине.
+                      Помогает отличить «модель отдала мусор» от «сервис не
+                      отвечает» — каждый сбой требует разного действия.
+                    </Text>
+                  </div>
+                  <Badge
+                    size="lg"
+                    variant="light"
+                    color={
+                      (aiFallbacks.data?.total ?? 0) === 0 ? "green" : "yellow"
+                    }
+                  >
+                    Всего: {aiFallbacks.data?.total ?? 0}
+                  </Badge>
+                </Group>
+
+                {aiFallbacks.error && (
+                  <Alert color="red" variant="light" mb="sm">
+                    {getApiError(aiFallbacks.error)}
+                  </Alert>
+                )}
+
+                {aiFallbacks.data && aiFallbacks.data.total === 0 ? (
+                  <Text size="sm" c="dimmed">
+                    Сбоев нет — за 24 часа AI отвечал стабильно.
+                  </Text>
+                ) : (
+                  <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
+                    <div>
+                      <Text size="xs" tt="uppercase" fw={700} c="dimmed" mb="xs">
+                        По причинам
+                      </Text>
+                      <BreakdownList
+                        items={aiFallbacks.data?.by_reason ?? {}}
+                        labeler={(key) => FALLBACK_REASON_LABELS[key] ?? key}
+                      />
+                    </div>
+                    <div>
+                      <Text size="xs" tt="uppercase" fw={700} c="dimmed" mb="xs">
+                        По источникам
+                      </Text>
+                      <BreakdownList
+                        items={aiFallbacks.data?.by_service ?? {}}
+                        labeler={(key) => FALLBACK_SERVICE_LABELS[key] ?? key}
+                      />
+                    </div>
+                  </SimpleGrid>
+                )}
               </Paper>
             )}
 

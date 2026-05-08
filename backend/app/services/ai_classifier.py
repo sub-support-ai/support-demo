@@ -5,6 +5,7 @@ import time
 import httpx
 
 from app.config import get_settings
+from app.services.ai_fallback import FALLBACK_REASON_PAYLOAD_KEY
 from app.services.ai_service_client import ai_service_headers
 
 settings = get_settings()
@@ -112,7 +113,7 @@ async def classify_ticket(ticket_id: int | None, title: str, body: str) -> dict:
     """
     started = time.perf_counter()
     data: dict | object | None = None
-    last_error: Exception | None = None
+    last_reason: str | None = None
     for service_url in _candidate_ai_service_urls():
         try:
             async with httpx.AsyncClient(timeout=settings.AI_SERVICE_TIMEOUT_SECONDS) as client:
@@ -134,29 +135,41 @@ async def classify_ticket(ticket_id: int | None, title: str, body: str) -> dict:
                         extra={"ticket_id": ticket_id, "ai_service_url": service_url},
                         exc_info=True,
                     )
+                    last_reason = "broken_json"
                     data = dict(_CLASSIFICATION_FALLBACK)
                 break
-        except (
-            httpx.ConnectError,
-            httpx.TimeoutException,
-            httpx.HTTPStatusError,
-            httpx.UnsupportedProtocol,
-        ) as e:
-            last_error = e
+        except httpx.TimeoutException as e:
+            last_reason = "timeout"
             logger.warning(
-                "AI Service недоступен или ответ с ошибкой: %s",
+                "AI Service classify timeout: %s",
+                e,
+                extra={"ticket_id": ticket_id, "ai_service_url": service_url},
+            )
+        except (httpx.ConnectError, httpx.UnsupportedProtocol) as e:
+            last_reason = "connect"
+            logger.warning(
+                "AI Service classify connect error: %s",
+                e,
+                extra={"ticket_id": ticket_id, "ai_service_url": service_url},
+            )
+        except httpx.HTTPStatusError as e:
+            last_reason = "http_5xx"
+            logger.warning(
+                "AI Service classify HTTP error: %s",
                 e,
                 extra={"ticket_id": ticket_id, "ai_service_url": service_url},
             )
     if data is None:
-        if last_error is not None:
+        if last_reason is not None:
             logger.warning(
-                "Все адреса AI Service недоступны",
+                "Все адреса AI Service недоступны (reason=%s)",
+                last_reason,
                 extra={"ticket_id": ticket_id},
             )
         data = dict(_CLASSIFICATION_FALLBACK)
 
     if not isinstance(data, dict):
+        last_reason = last_reason or "empty_response"
         data = dict(_CLASSIFICATION_FALLBACK)
 
     data.setdefault("category", _CLASSIFICATION_FALLBACK["category"])
@@ -175,4 +188,7 @@ async def classify_ticket(ticket_id: int | None, title: str, body: str) -> dict:
     )
 
     data["response_time_ms"] = int((time.perf_counter() - started) * 1000)
+    if last_reason is not None:
+        # Подхватывается в routers/tickets.create_ticket → record_ai_fallback.
+        data[FALLBACK_REASON_PAYLOAD_KEY] = last_reason
     return data
