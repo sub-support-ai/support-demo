@@ -40,15 +40,9 @@ from app.services.audit import log_event
 from app.services.routing import assign_agent, unassign_agent
 from app.services.sla import OPEN_STATUSES, start_ticket_sla
 from app.services.ticket_body import clean_optional_text, replace_context_block_if_present
+from app.services.ticket_state_machine import transition, transition_via_operator
 
 router = APIRouter(prefix="/tickets", tags=["tickets"])
-
-ALLOWED_OPERATOR_STATUS_TRANSITIONS = {
-    "confirmed": {"in_progress", "resolved", "closed"},
-    "in_progress": {"confirmed", "resolved", "closed"},
-    "resolved": {"in_progress", "closed"},
-    "closed": set(),
-}
 
 
 async def _load_ticket(ticket_id: int, db: AsyncSession) -> Ticket:
@@ -385,9 +379,7 @@ async def update_ticket_status(
     ticket = await get_ticket_for_operator(ticket_id, db, current_user)
     _require_confirmed_ticket_for_operator(ticket)
 
-    old_status = ticket.status
-    _require_valid_operator_status_transition(old_status, payload.status)
-    ticket.status = payload.status
+    old_status = transition_via_operator(ticket, payload.status)
     if payload.status in OPEN_STATUSES and ticket.sla_started_at is None:
         start_ticket_sla(ticket)
 
@@ -553,7 +545,7 @@ async def confirm_ticket(
     _require_draft_context(ticket)
 
     ticket.confirmed_by_user = True
-    ticket.status = "confirmed"
+    transition(ticket, "confirmed")
     if ticket.sla_started_at is None:
         start_ticket_sla(ticket)
 
@@ -654,8 +646,7 @@ async def resolve_ticket(
     ticket = await get_ticket_for_operator(ticket_id, db, current_user)
     _require_confirmed_ticket_for_operator(ticket)
 
-    old_status = ticket.status
-    ticket.status = "closed"
+    old_status = transition(ticket, "closed")
     ticket.resolved_at = datetime.now(timezone.utc)
 
     if old_status not in {"resolved", "closed"}:
@@ -687,22 +678,6 @@ async def resolve_ticket(
     await db.flush()
     await db.refresh(ticket)
     return ticket
-
-
-def _require_valid_operator_status_transition(old_status: str, new_status: str) -> None:
-    if old_status == new_status:
-        return
-    allowed = ALLOWED_OPERATOR_STATUS_TRANSITIONS.get(old_status, set())
-    if new_status not in allowed:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "message": "Invalid ticket status transition",
-                "from": old_status,
-                "to": new_status,
-                "allowed": sorted(allowed),
-            },
-        )
 
 
 @router.get(
@@ -815,7 +790,7 @@ async def submit_ticket_feedback(
 
     reopened = False
     if payload.feedback == "not_helped" and payload.reopen:
-        ticket.status = "confirmed"
+        transition(ticket, "confirmed")  # resolved/closed → confirmed разрешён в полном графе
         ticket.confirmed_by_user = True
         ticket.resolved_at = None
         ticket.reopen_count += 1
