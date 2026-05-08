@@ -278,3 +278,71 @@ async def test_audit_endpoint_requires_auth(client: AsyncClient):
     """GET /audit без токена → 401."""
     r = await client.get("/api/v1/audit/")
     assert r.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_ticket_status_change_is_audited(client: AsyncClient):
+    """PATCH /tickets/{id} → запись action='ticket.status_change' с from/to."""
+    user_id, user_token = await register(client, "stchowner")
+    create = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "to be moved",
+            "body": "test",
+            "user_priority": 3,
+            "office": "HQ",
+            "affected_item": "VPN",
+        },
+        headers={"Authorization": f"Bearer {user_token}"},
+    )
+    assert create.status_code == 201
+    ticket_id = create.json()["id"]
+
+    confirm = await client.patch(
+        f"/api/v1/tickets/{ticket_id}/confirm",
+        headers={"Authorization": f"Bearer {user_token}"},
+    )
+    assert confirm.status_code == 200
+    assert confirm.json()["status"] == "confirmed"
+
+    # Бутстрапим админа и переводим тикет в in_progress.
+    from app.config import get_settings
+
+    settings = get_settings()
+    settings.BOOTSTRAP_ADMIN_EMAIL = "stchadmin@example.com"
+    admin_resp = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "stchadmin@example.com",
+            "username": "stchadmin",
+            "password": "Secret123!",
+        },
+    )
+    admin_token = admin_resp.json()["access_token"]
+    settings.BOOTSTRAP_ADMIN_EMAIL = None
+    admin_me = await client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    admin_id = admin_me.json()["id"]
+
+    update = await client.patch(
+        f"/api/v1/tickets/{ticket_id}",
+        json={"status": "in_progress"},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert update.status_code == 200
+    assert update.json()["status"] == "in_progress"
+
+    audit = await client.get(
+        "/api/v1/audit/?action=ticket.status_change",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert audit.status_code == 200
+    rows = [e for e in audit.json() if e["target_id"] == ticket_id]
+    assert len(rows) == 1
+    entry = rows[0]
+    assert entry["target_type"] == "ticket"
+    assert entry["user_id"] == admin_id
+    details = json.loads(entry["details"])
+    assert details == {"from": "confirmed", "to": "in_progress"}

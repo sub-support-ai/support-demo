@@ -1,12 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies import get_current_user, require_role
 from app.models.user import User
-from app.schemas.user import UserCreate, UserRead
+from app.schemas.user import UserCreate, UserRead, UserRoleUpdate
 from app.security import hash_password
+from app.services.audit import log_event
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -83,3 +84,90 @@ async def create_user(
     await db.flush()
     await db.refresh(user)
     return user
+
+
+@router.patch(
+    "/{user_id}/role",
+    response_model=UserRead,
+    summary="Сменить роль пользователя (admin-only)",
+    description=(
+        "Меняет роль user/agent/admin. Защищён от двух классов ошибок:\n"
+        "1) self-demotion: админ не может понизить сам себя (любое\n"
+        "   действие, переводящее текущего пользователя в роль ниже\n"
+        "   admin, отвергается с 409). Понижать админа должен другой\n"
+        "   админ — это барьер от случайного клика и компрометации.\n"
+        "2) последний админ: понижение приводит к 409, если больше\n"
+        "   ни одной admin-роли в системе не останется. Без этого\n"
+        "   возможен lock-out (некому раздать роли обратно).\n\n"
+        "Записывает действие в audit_log с переходом from→to."
+    ),
+)
+async def update_user_role(
+    user_id: int,
+    payload: UserRoleUpdate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_role("admin")),
+):
+    if user_id == admin.id and payload.role != "admin":
+        # См. docstring: self-demotion запрещён, чтобы исключить
+        # компрометированную сессию или случайный клик.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Admin cannot demote themselves; ask another admin",
+        )
+
+    # Защита от race на "последнем админе": до любых проверок и записей
+    # блокируем ВСЕ admin-строки в детерминированном порядке по id.
+    # Один и тот же порядок во всех конкурентных вызовах исключает
+    # deadlock между двумя админами, демоутящими друг друга. Затем
+    # блокируем target — если он admin, лок уже взят (re-entrant в той
+    # же транзакции). Только после этого считываем актуальное состояние.
+    await db.execute(
+        select(User)
+        .where(User.role == "admin")
+        .order_by(User.id)
+        .with_for_update()
+    )
+    target = (
+        await db.execute(
+            select(User).where(User.id == user_id).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if target is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    old_role = target.role
+    if old_role == payload.role:
+        # Идемпотентность: запрос ничего не меняет — отдаём 200 без
+        # записи в audit_log (чтобы не засорять журнал no-op'ами).
+        return target
+
+    if old_role == "admin" and payload.role != "admin":
+        # Под локом считаем количество админов. После лока счётчик
+        # стабилен до конца транзакции.
+        admin_count = await db.scalar(
+            select(func.count()).select_from(User).where(User.role == "admin")
+        )
+        if admin_count is None or admin_count <= 1:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Cannot demote the last remaining admin",
+            )
+
+    target.role = payload.role
+    await log_event(
+        db,
+        action="user.role_change",
+        user_id=admin.id,
+        target_type="user",
+        target_id=target.id,
+        request=request,
+        details={"from": old_role, "to": payload.role},
+    )
+    await db.flush()
+    await db.refresh(target)
+    return target

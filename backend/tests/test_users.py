@@ -464,3 +464,229 @@ async def test_register_rate_limit_blocks_spam(client: AsyncClient):
         "password": "Secret123!",
     })
     assert resp.status_code == 429
+
+
+# ── PATCH /users/{id}/role ───────────────────────────────────────────────────
+
+
+async def _register_and_promote(client, db_session, suffix: str) -> tuple[int, str]:
+    """Регистрация + ручное повышение до admin (минуя bootstrap-логику)."""
+    from app.models.user import User
+
+    response = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": f"role-{suffix}@example.com",
+            "username": f"role_{suffix}",
+            "password": "Secret123!",
+        },
+    )
+    assert response.status_code == 201
+    token = response.json()["access_token"]
+    me = await client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    user_id = me.json()["id"]
+    user = await db_session.get(User, user_id)
+    assert user is not None
+    user.role = "admin"
+    await db_session.flush()
+    return user_id, token
+
+
+async def _register_regular(client, suffix: str) -> tuple[int, str]:
+    response = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": f"role-r-{suffix}@example.com",
+            "username": f"role_r_{suffix}",
+            "password": "Secret123!",
+        },
+    )
+    assert response.status_code == 201
+    token = response.json()["access_token"]
+    me = await client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    return me.json()["id"], token
+
+
+@pytest.mark.asyncio
+async def test_admin_can_promote_user_to_agent(client: AsyncClient, db_session):
+    _, admin_token = await _register_and_promote(client, db_session, "promote-admin")
+    target_id, _ = await _register_regular(client, "promote-target")
+
+    response = await client.patch(
+        f"/api/v1/users/{target_id}/role",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={"role": "agent"},
+    )
+    assert response.status_code == 200
+    assert response.json()["role"] == "agent"
+
+
+@pytest.mark.asyncio
+async def test_role_change_is_audited(client: AsyncClient, db_session):
+    from app.models.audit_log import AuditLog
+    from sqlalchemy import select
+
+    admin_id, admin_token = await _register_and_promote(client, db_session, "audit-admin")
+    target_id, _ = await _register_regular(client, "audit-target")
+
+    response = await client.patch(
+        f"/api/v1/users/{target_id}/role",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={"role": "agent"},
+    )
+    assert response.status_code == 200
+
+    rows = (
+        await db_session.execute(
+            select(AuditLog).where(AuditLog.action == "user.role_change")
+        )
+    ).scalars().all()
+    assert len(rows) == 1
+    entry = rows[0]
+    assert entry.user_id == admin_id
+    assert entry.target_type == "user"
+    assert entry.target_id == target_id
+    assert "user" in entry.details and "agent" in entry.details
+
+
+@pytest.mark.asyncio
+async def test_role_change_no_op_is_idempotent_and_not_audited(
+    client: AsyncClient, db_session
+):
+    from app.models.audit_log import AuditLog
+    from sqlalchemy import select
+
+    _, admin_token = await _register_and_promote(client, db_session, "idem-admin")
+    target_id, _ = await _register_regular(client, "idem-target")
+
+    response = await client.patch(
+        f"/api/v1/users/{target_id}/role",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={"role": "user"},
+    )
+    assert response.status_code == 200
+    assert response.json()["role"] == "user"
+
+    rows = (
+        await db_session.execute(
+            select(AuditLog).where(AuditLog.action == "user.role_change")
+        )
+    ).scalars().all()
+    assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_role_change_rejects_self_demotion(client: AsyncClient, db_session):
+    admin_id, admin_token = await _register_and_promote(client, db_session, "self-demote")
+
+    response = await client.patch(
+        f"/api/v1/users/{admin_id}/role",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={"role": "user"},
+    )
+    assert response.status_code == 409
+    assert "themselves" in response.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_role_change_blocks_demoting_last_admin(
+    client: AsyncClient, db_session
+):
+    """Сценарий "последний админ".
+
+    В обычном HTTP-флоу триггер недостижим: чтобы admin_count<=1 в момент
+    SELECT внутри endpoint'а, target должен быть единственным admin'ом
+    в БД, а вызывающий — admin'ом, которого в БД нет (иначе их минимум
+    двое). На практике это ловит только параллельная транзакция,
+    которая успела демоутить второго admin'а.
+
+    Для воспроизведения подменяем get_current_user/require_role через
+    FastAPI dependency_overrides — каллер становится "виртуальным
+    admin'ом", который в БД admin'ом не числится. Все остальные ветки
+    (self-demotion, idempotent, audit, 403/404) тестируются обычным
+    HTTP-флоу выше.
+    """
+    from app.dependencies import get_current_user
+    from app.main import app
+    from app.models.user import User as UserModel
+
+    target_id, _ = await _register_and_promote(client, db_session, "lastadmin-target")
+    caller_id, _ = await _register_regular(client, "lastadmin-caller")
+    caller_in_db = await db_session.get(UserModel, caller_id)
+    assert caller_in_db is not None
+
+    # Phantom admin: НЕ привязан к сессии, role="admin" живёт только
+    # в памяти. require_role("admin") пропустит, count(role=admin) в БД
+    # этого юзера не учтёт → admin_count = 1 (только target) → 409.
+    async def fake_admin() -> UserModel:
+        return UserModel(
+            id=caller_id,
+            email=caller_in_db.email,
+            username=caller_in_db.username,
+            hashed_password=caller_in_db.hashed_password,
+            role="admin",
+            is_active=True,
+        )
+
+    app.dependency_overrides[get_current_user] = fake_admin
+    try:
+        response = await client.patch(
+            f"/api/v1/users/{target_id}/role",
+            json={"role": "user"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 409
+    assert "last" in response.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_role_change_unknown_user_returns_404(
+    client: AsyncClient, db_session
+):
+    _, admin_token = await _register_and_promote(client, db_session, "404admin")
+    response = await client.patch(
+        "/api/v1/users/999999/role",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={"role": "agent"},
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_role_change_rejects_invalid_role(client: AsyncClient, db_session):
+    _, admin_token = await _register_and_promote(client, db_session, "invalidrole")
+    target_id, _ = await _register_regular(client, "invalidrole-target")
+    response = await client.patch(
+        f"/api/v1/users/{target_id}/role",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={"role": "manager"},
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_role_change_forbidden_for_non_admin(client: AsyncClient):
+    _, user_token = await _register_regular(client, "nonadmin")
+    response = await client.patch(
+        "/api/v1/users/1/role",
+        headers={"Authorization": f"Bearer {user_token}"},
+        json={"role": "agent"},
+    )
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_role_change_requires_auth(client: AsyncClient):
+    response = await client.patch(
+        "/api/v1/users/1/role",
+        json={"role": "agent"},
+    )
+    assert response.status_code == 401

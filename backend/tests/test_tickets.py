@@ -97,6 +97,12 @@ async def create_operator(
 
 @pytest.mark.asyncio
 async def test_create_ticket(client: AsyncClient):
+    """Создание тикета: проверяем поля ответа и поведение AI-fallback.
+
+    AI-сервис принудительно недостижим (autouse-фикстура _isolate_ai_service
+    в conftest.py), поэтому classify_ticket всегда возвращает fallback:
+    confidence=0.0, category="other", department="IT".
+    """
     user_id, token = await register_user(client, suffix="create")
 
     response = await client.post(
@@ -125,7 +131,7 @@ async def test_create_ticket(client: AsyncClient):
     # После AI обработки дефолтный статус — pending_user
     assert data["status"] == "pending_user"
 
-    # AI Service в тестах недоступен — приходит заглушка из ai_classifier.py
+    # classify_ticket замокан → всегда возвращает заглушку (confidence=0.0)
     assert data["ai_confidence"] == 0.0
     assert data["ai_category"] == "other"
     assert data["department"] == "IT"
@@ -133,7 +139,12 @@ async def test_create_ticket(client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_urgent_broken_hardware_gets_high_priority(client: AsyncClient):
-    """Срочная поломка оборудования не должна оставаться средним приоритетом."""
+    """Срочная поломка оборудования не должна оставаться средним приоритетом.
+
+    AI-сервис недостижим (autouse-фикстура _isolate_ai_service) → classify_ticket
+    возвращает fallback «средний» → текстовые маркеры (сроч/порван/надо заменить)
+    через _choose_priority поднимают итоговый приоритет до «высокий».
+    """
     _, token = await register_user(client, suffix="urgentmouse")
 
     response = await client.post(
@@ -612,6 +623,12 @@ async def test_confirm_ticket_marks_user_confirmation(client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_confirm_ticket_sets_sla_deadline_by_priority(client: AsyncClient):
+    """SLA = 8 ч для «высокий»; эвристика должна поднять фолбэк «средний» до «высокий».
+
+    AI-сервис недостижим (autouse-фикстура _isolate_ai_service) → classify_ticket
+    даёт «средний» → маркеры «слом»/«сроч» поднимают до «высокий» →
+    SLA_HOURS_BY_PRIORITY[«высокий»] == 8.
+    """
     _, token = await register_user(client, suffix="sla")
     headers = {"Authorization": f"Bearer {token}"}
 

@@ -53,3 +53,15 @@ class UserRead(UserBase):
     is_active: bool
     created_at: datetime
     updated_at: datetime | None = None
+
+
+class UserRoleUpdate(BaseModel):
+    """Полезная нагрузка PATCH /users/{id}/role — смена роли админом.
+
+    Список ролей закрытый: за пределами {user, agent, admin} ничего не
+    работает (RBAC проверяет именно эти строки в require_role).
+    Pydantic вернёт 422 на любой другой ввод — это лучше, чем сохранить
+    "manager" и потом удивляться, почему у пользователя нет прав.
+    """
+
+    role: str = Field(pattern="^(user|agent|admin)$")

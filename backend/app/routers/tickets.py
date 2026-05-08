@@ -362,6 +362,7 @@ async def get_ticket(
 async def update_ticket_status(
     ticket_id: int,
     payload: TicketStatusUpdate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -378,6 +379,20 @@ async def update_ticket_status(
     if payload.status in closing_statuses and old_status not in closing_statuses:
         await unassign_agent(db, ticket)
         ticket.resolved_at = datetime.now(timezone.utc)
+
+    # Аудит критичных операционных действий: переходы статуса тикета
+    # часто связаны с SLA, биллингом и compliance-отчётностью. Запись в
+    # одной транзакции с изменением — гарантия что "если в audit есть
+    # запись, значит изменение действительно произошло".
+    await log_event(
+        db,
+        action="ticket.status_change",
+        user_id=current_user.id,
+        target_type="ticket",
+        target_id=ticket.id,
+        request=request,
+        details={"from": old_status, "to": payload.status},
+    )
 
     await db.flush()
     await db.refresh(ticket)

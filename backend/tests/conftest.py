@@ -48,6 +48,29 @@ async def setup_test_db():
 
 
 @pytest.fixture(autouse=True)
+def _isolate_ai_service(monkeypatch):
+    """Принудительно делаем AI-сервис недостижимым для каждого теста.
+
+    classify_ticket и get_ai_answer немедленно уходят в fallback вместо
+    обращения к реальному Ollama / AI-сервису. Тесты становятся
+    детерминированными и быстрыми независимо от того, запущен ли Ollama
+    в окружении разработчика.
+
+    Тесты, которые явно проверяют поведение AI, могут переопределить
+    AI_SERVICE_URL ещё раз через собственный monkeypatch — последний
+    вызов побеждает.
+    """
+    # ai_classifier.py читает URL из модульной переменной, заданной при импорте
+    monkeypatch.setattr(
+        "app.services.ai_classifier.AI_SERVICE_URL",
+        "http://127.0.0.1:1",
+    )
+    # conversation_ai.py читает URL из get_settings() в момент вызова
+    from app.config import get_settings
+    monkeypatch.setattr(get_settings(), "AI_SERVICE_URL", "http://127.0.0.1:1")
+
+
+@pytest.fixture(autouse=True)
 def _reset_rate_limiter():
     """Каждый тест стартует с чистыми счётчиками лимитера.
 
