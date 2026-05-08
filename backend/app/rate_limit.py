@@ -1,4 +1,4 @@
-"""Простейший in-memory rate limiter — скользящее окно на deque.
+"""Rate limiter — скользящее окно с двумя бэкендами (memory / redis).
 
 Зачем мы вообще лимитируем /auth:
   - /auth/login без лимита = брутфорс пароля. Злоумышленник может
@@ -7,31 +7,202 @@
   - /auth/register без лимита = спам регистрациями. Один скрипт может
     за минуту создать 10'000 пользователей и забить базу.
 
-Почему пишем сами, а не берём библиотеку:
-  - Это ~40 строк. Читается за минуту, понятно КАК работает.
-  - Внешняя библиотека (slowapi/limits) тянет middleware, декораторы,
-    свои исключения — на учебном проекте это чёрный ящик.
-  - Нам достаточно: "не больше N запросов в M секунд с одного IP
-    на конкретный endpoint".
+Два бэкенда:
 
-Ограничения этой реализации (сознательные):
-  - In-memory → счётчики живут только в этом процессе. Если запустить
-    несколько worker'ов uvicorn, каждый будет считать отдельно.
-    Для self-hosted одного worker'а этого хватает; на больших нагрузках
-    нужно общее хранилище — но это далёкое "потом".
-  - Счётчики не чистятся автоматически. Если уникальных IP миллионы,
-    dict вырастет. На практике для /auth это не проблема.
+  memory — счётчики в `dict[str, deque[float]]` внутри процесса. Деплой
+           в один uvicorn-воркер → лимит работает. На N воркеров каждый
+           счётчик отдельный → реальный лимит «N × max_calls/window».
+
+  redis  — общий счётчик через ZSET sliding-window. Lua-скрипт делает
+           ZREMRANGEBYSCORE + ZCARD + ZADD атомарно, иначе под высокой
+           нагрузкой N конкурентных запросов могут все попасть «между»
+           проверкой ZCARD и ZADD и проскочить мимо лимита.
+
+Выбор бэкенда — через settings.RATE_LIMIT_BACKEND. На старте лимитер
+проверяется один раз: невалидное значение даёт ошибку конфига, а не
+тихо возвращающий «всегда пропускать»-no-op в проде.
 """
 
+from __future__ import annotations
+
+import asyncio
+import time
+import uuid
+from abc import ABC, abstractmethod
 from collections import defaultdict, deque
 from time import monotonic
+from typing import Any
 
 from fastapi import HTTPException, Request, status
 
+from app.config import get_settings
 
-# Глобальный реестр всех созданных счётчиков — нужен только для _reset()
-# в тестах (чтобы один вызов чистил всё, а не помнить список вручную).
-_all_counters: list[dict[str, deque[float]]] = []
+
+# ── Бэкенды ──────────────────────────────────────────────────────────────────
+
+
+class _Backend(ABC):
+    """Контракт: проверить + (при разрешении) зафиксировать запрос.
+
+    Возвращает None если запрос разрешён, или int — сколько секунд ждать
+    до следующей попытки (для Retry-After).
+    """
+
+    @abstractmethod
+    async def consume(
+        self,
+        scope: str,
+        key: str,
+        max_calls: int,
+        window_seconds: int,
+    ) -> int | None:
+        ...
+
+    def reset(self) -> None:
+        """Очистить все счётчики. Используется тестами."""
+
+
+class _MemoryBackend(_Backend):
+    """Счётчики в памяти процесса. Дёшево, но не разделяется между worker'ами."""
+
+    def __init__(self) -> None:
+        # scope — изолятор endpoint'ов: 5 регистраций + 2 логина с одного
+        # IP не должны сваливаться в общий счётчик.
+        self._buckets: dict[str, dict[str, deque[float]]] = defaultdict(
+            lambda: defaultdict(deque)
+        )
+
+    async def consume(
+        self,
+        scope: str,
+        key: str,
+        max_calls: int,
+        window_seconds: int,
+    ) -> int | None:
+        now = monotonic()
+        q = self._buckets[scope][key]
+
+        cutoff = now - window_seconds
+        while q and q[0] < cutoff:
+            q.popleft()
+
+        if len(q) >= max_calls:
+            return int(window_seconds - (now - q[0])) + 1
+
+        q.append(now)
+        return None
+
+    def reset(self) -> None:
+        self._buckets.clear()
+
+
+# Lua-скрипт для атомарного sliding-window в Redis.
+#
+# KEYS[1] — ключ ZSET'а
+# ARGV[1] — текущий timestamp (миллисекунды, монотонная шкала)
+# ARGV[2] — окно в миллисекундах
+# ARGV[3] — max_calls
+# ARGV[4] — уникальный member (uuid), чтобы ZADD не схлопывал одинаковые scores
+#
+# Возвращает {-1, retry_after_seconds} при отказе или {count, 0} при разрешении.
+_REDIS_SLIDING_WINDOW_LUA = """
+local key = KEYS[1]
+local now_ms = tonumber(ARGV[1])
+local window_ms = tonumber(ARGV[2])
+local max_calls = tonumber(ARGV[3])
+local member = ARGV[4]
+
+redis.call('ZREMRANGEBYSCORE', key, 0, now_ms - window_ms)
+local count = redis.call('ZCARD', key)
+if count >= max_calls then
+  local oldest = redis.call('ZRANGE', key, 0, 0, 'WITHSCORES')
+  local retry_ms = window_ms - (now_ms - tonumber(oldest[2]))
+  if retry_ms < 1000 then retry_ms = 1000 end
+  return {-1, math.ceil(retry_ms / 1000)}
+end
+redis.call('ZADD', key, now_ms, member)
+-- EXPIRE с запасом, чтобы ключ почистился даже если до него никто не дойдёт
+redis.call('PEXPIRE', key, window_ms + 1000)
+return {count + 1, 0}
+"""
+
+
+class _RedisBackend(_Backend):
+    """Общий счётчик через Redis ZSET. Атомарность через единственный Lua-call.
+
+    Используем EVAL напрямую (а не EVALSHA + script_load): redis сервер
+    кеширует скрипт сам по первому EVAL, разница в трафике незначительна,
+    зато пропадает class-level state и тесты с fakeredis работают без
+    дополнительной поддержки SCRIPT LOAD.
+    """
+
+    def __init__(self, client: Any) -> None:
+        # client — redis.asyncio.Redis или совместимый (например, fakeredis).
+        self._client = client
+
+    async def consume(
+        self,
+        scope: str,
+        key: str,
+        max_calls: int,
+        window_seconds: int,
+    ) -> int | None:
+        now_ms = int(time.time() * 1000)
+        window_ms = window_seconds * 1000
+        member = uuid.uuid4().hex
+        full_key = f"rl:{scope}:{key}"
+        result = await self._client.eval(
+            _REDIS_SLIDING_WINDOW_LUA,
+            1,
+            full_key,
+            now_ms,
+            window_ms,
+            max_calls,
+            member,
+        )
+        # redis-py возвращает [int, int]; fakeredis то же.
+        count, retry_after = int(result[0]), int(result[1])
+        if count == -1:
+            return retry_after
+        return None
+
+    async def reset(self) -> None:  # type: ignore[override]
+        await self._client.flushdb()
+
+
+# ── Фабрика и реестр ─────────────────────────────────────────────────────────
+
+
+_backend: _Backend | None = None
+
+
+def _get_backend() -> _Backend:
+    """Лениво создаёт бэкенд по settings.RATE_LIMIT_BACKEND.
+
+    Лениво — потому что settings подменяются в тестах; делать выбор на
+    import-time значит зафиксировать значение до того, как тестовый
+    monkeypatch успеет сработать.
+    """
+    global _backend
+    if _backend is None:
+        settings = get_settings()
+        if settings.RATE_LIMIT_BACKEND == "redis":
+            from redis.asyncio import Redis  # ленивый импорт: redis опционален
+
+            client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
+            _backend = _RedisBackend(client)
+        else:
+            _backend = _MemoryBackend()
+    return _backend
+
+
+def set_backend_for_testing(backend: _Backend) -> None:
+    """Подменяет глобальный бэкенд (только для тестов)."""
+    global _backend
+    _backend = backend
+
+
+# ── Публичный API ────────────────────────────────────────────────────────────
 
 
 def _client_ip(request: Request) -> str:
@@ -47,58 +218,48 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
+# Счётчик для генерации уникальных scope-ключей. Каждый вызов rate_limit()
+# получает свой scope, чтобы 5 регистраций и 2 логина с одного IP не
+# свалились в общий счётчик (разные эндпоинты — разные пулы попыток).
+_scope_counter = 0
+
+
 def rate_limit(max_calls: int, window_seconds: int):
-    """Фабрика FastAPI-dependency с собственным счётчиком.
+    """Фабрика FastAPI-dependency на собственный scope.
 
     Пример:
         @router.post("/login", dependencies=[Depends(rate_limit(5, 60))])
-
-    Почему у каждого endpoint'а свой dict, а не общий на модуль:
-      Если бы счётчик был один — 3 регистрации + 2 логина с одного IP
-      внезапно упирались бы в общий лимит. Изолируем: /login считает
-      только свои попытки, /register — только свои.
-
-    Почему фабрика, а не одна функция с параметрами:
-      FastAPI-dependency должна быть callable без аргументов. Замыкание
-      над max_calls/window_seconds и собственным hits-словарём —
-      естественное решение.
     """
-    hits: dict[str, deque[float]] = defaultdict(deque)
-    _all_counters.append(hits)   # чтобы _reset() мог очистить и этот тоже
+    global _scope_counter
+    _scope_counter += 1
+    scope = f"rl{_scope_counter}"
 
-    def dependency(request: Request) -> None:
-        key = _client_ip(request)
-        now = monotonic()   # monotonic не прыгает при смене системного времени
-        q = hits[key]
-
-        # Выкидываем таймстампы, которые уже не в окне.
-        # deque.popleft() — O(1), в отличие от list.pop(0).
-        cutoff = now - window_seconds
-        while q and q[0] < cutoff:
-            q.popleft()
-        if not q:
-            hits.pop(key, None)
-            q = hits[key]
-
-        # Если в окне уже накопилось max_calls запросов — отказываем.
-        if len(q) >= max_calls:
-            # Retry-After — стандартный заголовок, говорит клиенту,
-            # через сколько секунд можно пробовать снова.
-            retry_after = int(window_seconds - (now - q[0])) + 1
+    async def dependency(request: Request) -> None:
+        backend = _get_backend()
+        retry_after = await backend.consume(
+            scope=scope,
+            key=_client_ip(request),
+            max_calls=max_calls,
+            window_seconds=window_seconds,
+        )
+        if retry_after is not None:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="Слишком много запросов. Попробуй позже.",
                 headers={"Retry-After": str(retry_after)},
             )
 
-        # Регистрируем этот запрос и пропускаем.
-        q.append(now)
-
     return dependency
 
 
 def _reset() -> None:
-    """Очистить счётчики ВСЕХ созданных лимитеров. Используется в тестах,
-    чтобы предыдущий тест не засорял лимит следующему."""
-    for hits in _all_counters:
-        hits.clear()
+    """Очистить счётчики memory-бэкенда. Используется autouse-фикстурой.
+
+    Намеренно не пытается достучаться до redis: autouse-фикстура висит
+    на каждом тесте, а на redis-бэкенде это бы (а) делало сетевой запрос
+    в тесте, который сам redis не использует, (б) валилось из-за вложенности
+    event loop'ов. Для redis-тестов есть `await backend.reset()` напрямую.
+    """
+    backend = _get_backend()
+    if isinstance(backend, _MemoryBackend):
+        backend.reset()

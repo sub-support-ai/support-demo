@@ -4,3 +4,8 @@ pytest>=9,<10
 pytest-asyncio>=1.3,<2
 anyio>=4,<5
 aiosqlite>=0.21,<1
+# fakeredis имитирует поведение Redis-сервера в процессе теста — sliding-window
+# Lua-скрипт можно прогнать без поднятого настоящего redis. Async-режим
+# (FakeAsyncRedis) совместим с redis>=5 async API. extras [lua] подтягивает
+# `lupa` (Lua-интерпретатор для Python), без него fakeredis не понимает EVAL.
+fakeredis[lua]>=2,<3

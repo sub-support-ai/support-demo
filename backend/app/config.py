@@ -76,6 +76,14 @@ class Settings:
         # просил эскалацию, мы её принудительно поднимаем (видим в чате
         # кнопку «Создать тикет»).
         self.RAG_CONFIDENCE_RED_ZONE = _env_float("RAG_CONFIDENCE_RED_ZONE", 0.6)
+        # ── Rate-limiter ───────────────────────────────────────────────────
+        # memory  — счётчики в памяти процесса, по uvicorn-воркеру свои.
+        #           Подходит для self-hosted с одним worker'ом и demo.
+        # redis   — общий счётчик через ZSET-sliding-window на REDIS_URL.
+        #           Нужен, когда backend крутится в нескольких pod'ах:
+        #           иначе лимит «5/мин» превращается в «5 × N pod'ов».
+        self.RATE_LIMIT_BACKEND = os.getenv("RATE_LIMIT_BACKEND", "memory").strip().lower()
+        self.REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
     APP_ENV: str
     APP_HOST: str
@@ -137,6 +145,10 @@ class Settings:
     RAG_SCORE_MEDIUM_THRESHOLD: float
     RAG_CONFIDENCE_RED_ZONE: float
 
+    # Бэкенд для rate-limiter и адрес Redis, если выбран redis-бэкенд.
+    RATE_LIMIT_BACKEND: str
+    REDIS_URL: str
+
     @property
     def CORS_ORIGINS(self) -> list[str]:
         """Парсит CORS_ORIGINS из .env в список строк.
@@ -185,6 +197,14 @@ class Settings:
             raise RuntimeError(
                 f"RAG_CONFIDENCE_RED_ZONE ({self.RAG_CONFIDENCE_RED_ZONE}) должен быть в [0, 1]: "
                 "это порог по confidence модели, который сам нормирован в этом диапазоне."
+            )
+        # Опечатка в RATE_LIMIT_BACKEND молча уронит лимит в no-op (фабрика
+        # бы не нашла нужный класс) — а это означает открытый /auth/login
+        # для брутфорса. Требуем явное значение из whitelist.
+        if self.RATE_LIMIT_BACKEND not in {"memory", "redis"}:
+            raise RuntimeError(
+                f"RATE_LIMIT_BACKEND={self.RATE_LIMIT_BACKEND!r} не поддерживается. "
+                "Допустимы 'memory' и 'redis'."
             )
 
     @property

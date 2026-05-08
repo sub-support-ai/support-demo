@@ -17,3 +17,8 @@ httpx>=0.28,<1
 sentry-sdk[fastapi]>=2.0,<3
 python-jose[cryptography]>=3.3,<4
 alembic>=1.14,<2
+# Redis — необязательный backend для rate-limiter (RATE_LIMIT_BACKEND=redis).
+# Нужен, когда backend крутится в нескольких uvicorn-воркерах / pod'ах:
+# in-memory-счётчики у каждого инстанса свои, и общий лимит «5 попыток в
+# минуту с IP» превращается в «5 × N инстансов» — брутфорс не остановить.
+redis>=5,<6
