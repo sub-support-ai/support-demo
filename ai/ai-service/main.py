@@ -1,3 +1,4 @@
+import logging
 import os
 
 import requests
@@ -7,17 +8,52 @@ from typing import Literal
 from classifier import classify_ticket
 from answerer import generate_answer
 
-app = FastAPI()
+logger = logging.getLogger(__name__)
+
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", os.getenv("OLLAMA_URL", "http://localhost:11434")).rstrip("/")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
 OLLAMA_EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 OLLAMA_HEALTH_TIMEOUT_SECONDS = float(os.getenv("OLLAMA_HEALTH_TIMEOUT_SECONDS", "3"))
 OLLAMA_EMBED_TIMEOUT_SECONDS = float(os.getenv("OLLAMA_EMBED_TIMEOUT_SECONDS", "60"))
+APP_ENV = os.getenv("APP_ENV", "development")
 AI_SERVICE_API_KEY = os.getenv("AI_SERVICE_API_KEY")
+
+
+def _validate_startup_config() -> None:
+    """Проверяет конфигурацию при старте — fail-closed для production.
+
+    Без AI_SERVICE_API_KEY require_api_key пропускает все запросы. В
+    production это означает, что любой, кто достучался до :8001, ходит в
+    AI без аутентификации (а оттуда — к Ollama, к промптам, и потенциально
+    к утечке данных клиента). Поэтому: если APP_ENV=production и ключ не
+    задан — поднимаем RuntimeError на старте, чтобы упало громко и сразу,
+    а не тихо открыло периметр.
+
+    В development разрешаем пустой ключ для удобства локального запуска,
+    но один раз пишем WARNING — чтобы dev-окружение случайно не уехало
+    в production без ключа.
+    """
+    if APP_ENV == "production" and not AI_SERVICE_API_KEY:
+        raise RuntimeError(
+            "AI_SERVICE_API_KEY не задан при APP_ENV=production. "
+            "Без него /ai/* открыт всем, кто достучался до сервиса. "
+            "Сгенерируйте ключ и положите в переменные окружения."
+        )
+    if not AI_SERVICE_API_KEY:
+        logger.warning(
+            "AI_SERVICE_API_KEY not set — auth disabled. "
+            "Acceptable for local development only; required in production."
+        )
+
+
+_validate_startup_config()
+app = FastAPI()
 
 
 def require_api_key(x_ai_service_key: str | None = Header(default=None)) -> None:
     if not AI_SERVICE_API_KEY:
+        # Допустимо только в dev: см. _validate_startup_config — в production
+        # сервис не стартует без ключа, поэтому сюда не дойдёт.
         return
     if x_ai_service_key != AI_SERVICE_API_KEY:
         raise HTTPException(

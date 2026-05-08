@@ -1,9 +1,11 @@
 import importlib
+import logging
 import sys
 import types
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
@@ -123,3 +125,66 @@ def test_ai_service_accepts_requests_with_configured_key(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["answer"] == "ok"
+
+
+# ── Fail-closed config: production обязан иметь AI_SERVICE_API_KEY ───────────
+
+
+def test_validate_startup_config_raises_in_production_without_key(monkeypatch):
+    """Без ключа сервис не должен стартовать в production.
+
+    Регрессия: раньше require_api_key молча пропускал запросы при пустом
+    AI_SERVICE_API_KEY — на production это означало открытый /ai/* для
+    любого, кто достучался до :8001.
+    """
+    monkeypatch.setattr(service_main, "APP_ENV", "production")
+    monkeypatch.setattr(service_main, "AI_SERVICE_API_KEY", None)
+
+    with pytest.raises(RuntimeError, match="AI_SERVICE_API_KEY"):
+        service_main._validate_startup_config()
+
+
+def test_validate_startup_config_allows_production_when_key_set(monkeypatch):
+    """Production с заданным ключом стартует без ошибок."""
+    monkeypatch.setattr(service_main, "APP_ENV", "production")
+    monkeypatch.setattr(service_main, "AI_SERVICE_API_KEY", "prod-secret")
+
+    # Не должно бросать
+    service_main._validate_startup_config()
+
+
+def test_validate_startup_config_warns_in_development_without_key(
+    monkeypatch, caplog
+):
+    """В dev без ключа сервис стартует, но один раз пишет WARNING."""
+    monkeypatch.setattr(service_main, "APP_ENV", "development")
+    monkeypatch.setattr(service_main, "AI_SERVICE_API_KEY", None)
+
+    with caplog.at_level(logging.WARNING, logger=service_main.__name__):
+        service_main._validate_startup_config()
+
+    assert any(
+        "AI_SERVICE_API_KEY not set" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_ai_service_rejects_empty_key_when_configured(monkeypatch):
+    """С настроенным ключом запрос без заголовка тоже должен получить 401.
+
+    Регрессия: важно убедиться, что атакующий не обходит auth, просто не
+    отправляя заголовок X-AI-Service-Key — раньше require_api_key мог
+    пропустить такой запрос, если бы не сравнение со значением None.
+    """
+    monkeypatch.setattr(service_main, "AI_SERVICE_API_KEY", "secret")
+    client = TestClient(service_main.app)
+
+    response = client.post(
+        "/ai/answer",
+        json={
+            "conversation_id": 1,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 401

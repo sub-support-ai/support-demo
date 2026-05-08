@@ -378,6 +378,53 @@ async def test_cors_no_middleware_when_empty():
     assert s.CORS_ORIGINS == ["http://localhost:3000", "https://app.acme.com"]
 
 
+# ── Fail-closed: production обязан иметь AI_SERVICE_API_KEY ──────────────────
+
+
+def test_settings_requires_ai_service_key_in_production():
+    """В production пустой AI_SERVICE_API_KEY → RuntimeError на старте.
+
+    Без ключа бэкенд ходит в AI без X-AI-Service-Key, а ai-service в
+    production отвергает такие запросы (тоже fail-closed). Лучше упасть
+    на старте бэкенда с понятным сообщением, чем на первом /ai/answer
+    в проде получить тихую 401-цепочку, спрятанную в логах.
+    """
+    from app.config import Settings
+
+    s = Settings()
+    s.APP_ENV = "production"
+    s.JWT_SECRET_KEY = "a" * 64  # валидный ключ — изолируем проверку AI
+    s.AI_SERVICE_API_KEY = None
+
+    with pytest.raises(RuntimeError, match="AI_SERVICE_API_KEY"):
+        s.__post_init_check__()
+
+
+def test_settings_allows_production_when_ai_key_set():
+    """Production с заданным AI_SERVICE_API_KEY проходит валидацию."""
+    from app.config import Settings
+
+    s = Settings()
+    s.APP_ENV = "production"
+    s.JWT_SECRET_KEY = "a" * 64
+    s.AI_SERVICE_API_KEY = "prod-secret"
+
+    # Не должно бросать
+    s.__post_init_check__()
+
+
+def test_settings_allows_development_without_ai_key():
+    """В dev пустой AI_SERVICE_API_KEY — нормально (упрощает локальный запуск)."""
+    from app.config import Settings
+
+    s = Settings()
+    s.APP_ENV = "development"
+    s.AI_SERVICE_API_KEY = None
+
+    # Не должно бросать
+    s.__post_init_check__()
+
+
 @pytest.mark.asyncio
 async def test_non_bootstrap_users_stay_regular(client: AsyncClient, monkeypatch):
     """

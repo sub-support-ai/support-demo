@@ -142,6 +142,16 @@ class Settings:
                 "JWT_SECRET_KEY не задан в .env при APP_ENV=production. "
                 "Сгенерируй длинную случайную строку и положи в переменные окружения."
             )
+        # Симметрично с ai-service: без AI_SERVICE_API_KEY бэкенд ходит
+        # в AI без заголовка X-AI-Service-Key, и AI-сервис в production
+        # тоже не стартует без ключа. Если переменная пуста на стороне
+        # бэкенда — связка backend↔ai-service гарантированно сломана,
+        # лучше упасть на старте, чем на первом обращении к /ai/answer.
+        if self.APP_ENV == "production" and not self.AI_SERVICE_API_KEY:
+            raise RuntimeError(
+                "AI_SERVICE_API_KEY не задан при APP_ENV=production. "
+                "Без него запросы к AI-сервису не аутентифицируются и будут отклонены."
+            )
 
     @property
     def DATABASE_URL(self) -> str:
