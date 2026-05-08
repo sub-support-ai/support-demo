@@ -54,35 +54,6 @@ def _stub_ai_services(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(ai_classifier, "classify_ticket", classify_fallback)
 
 
-@pytest.fixture(autouse=True)
-def _stub_ai_services(monkeypatch: pytest.MonkeyPatch):
-    from app.services import ai_classifier, conversation_ai
-
-    async def answer_fallback(conversation_id: int, messages: list[dict[str, str]]):
-        return {
-            "answer": "[AI Service временно недоступен. Ваше сообщение сохранено, агент ответит вручную.]",
-            "confidence": 0.0,
-            "escalate": True,
-            "sources": [],
-            "model_version": "test-fallback",
-        }
-
-    async def classify_fallback(ticket_id: int, title: str, body: str):
-        inferred = ai_classifier._infer_priority_from_text(title, body)
-        return {
-            "category": "other",
-            "department": "IT",
-            "priority": ai_classifier._choose_priority("средний", inferred),
-            "confidence": 0.0,
-            "draft_response": "[AI Service недоступен — требует агента]",
-            "model_version": "test-fallback",
-            "response_time_ms": 0,
-        }
-
-    monkeypatch.setattr(conversation_ai, "get_ai_answer", answer_fallback)
-    monkeypatch.setattr(ai_classifier, "classify_ticket", classify_fallback)
-
-
 async def register_user(client: AsyncClient, suffix: str) -> tuple[int, str]:
     """Регистрирует пользователя и возвращает (id, access_token)."""
     response = await client.post("/api/v1/auth/register", json={
@@ -180,6 +151,12 @@ async def test_post_message_uses_knowledge_base_before_external_ai(
     log = result.scalar_one()
     assert log.outcome == "resolved_by_ai"
     assert log.model_version == "knowledge-base-v1"
+    # Регрессия Блока 3: латенси перестала быть жёстко 0 — питч-дек обещает
+    # «1,01 сек среднее», без честного замера эту цифру нечем подтвердить.
+    # На замоканной KB это могут быть единицы мс, поэтому проверяем границу
+    # «не None и неотрицательно», а точное значение покрывает отдельный тест.
+    assert log.ai_response_time_ms is not None
+    assert log.ai_response_time_ms >= 0
 
 
 # ── POST /messages: AI fallback должен дать requires_escalation=True ─────────
@@ -739,3 +716,82 @@ def test_support_draft_detection_handles_draft_request_and_urgent_wire():
     assert not should_offer_support_draft([
         {"role": "user", "content": "как обновить VS Code?"},
     ])
+
+
+# ── Блок 3: AI latency capture ───────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_ai_log_records_latency_passed_through_payload(
+    client: AsyncClient,
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """find_knowledge_answer кладёт _latency_ms в payload — generate_ai_message
+    должен пробросить эту цифру в AILog.ai_response_time_ms.
+
+    Регрессия: раньше там был хардкоднутый 0 (см. git blame на строке записи
+    AILog), и метрики «среднее время ответа AI» в дашборде были враньём.
+    """
+    from app.models.ai_log import AILog
+    from app.services import conversation_ai
+    from app.services.knowledge_base import LATENCY_PAYLOAD_KEY
+
+    captured_latency_ms = 137  # уникальное число, чтобы исключить совпадение
+
+    async def _stub_kb_answer(db, messages):
+        return {
+            "answer": "stubbed kb answer",
+            "confidence": 0.85,
+            "escalate": False,
+            "sources": [{"title": "stub", "url": None}],
+            "model_version": "knowledge-base-test",
+            "knowledge_article_id": None,  # без записи фидбека (нет статьи в БД)
+            "knowledge_score": 5.0,
+            "knowledge_decision": "answer",
+            "knowledge_query": "stub",
+            LATENCY_PAYLOAD_KEY: captured_latency_ms,
+        }
+
+    # knowledge_article_id=None означает, что AILog не запишется (в коде
+    # ветка только для KB-source с реальной статьёй). Поэтому подсовываем
+    # реальную статью и в payload — её id.
+    from app.models.knowledge_article import KnowledgeArticle
+
+    article = KnowledgeArticle(
+        department="IT",
+        title="Latency probe",
+        body="probe body",
+        keywords="probe",
+        is_active=True,
+    )
+    db_session.add(article)
+    await db_session.flush()
+
+    async def _stub_kb_with_article(db, messages):
+        payload = await _stub_kb_answer(db, messages)
+        payload["knowledge_article_id"] = article.id
+        return payload
+
+    monkeypatch.setattr(conversation_ai, "find_knowledge_answer", _stub_kb_with_article)
+
+    _, token = await register_user(client, "latencyprobe")
+    headers = {"Authorization": f"Bearer {token}"}
+    conv_id = (await client.post("/api/v1/conversations/", headers=headers)).json()["id"]
+    response = await client.post(
+        f"/api/v1/conversations/{conv_id}/messages",
+        json={"content": "probe"},
+        headers=headers,
+    )
+    assert response.status_code == 201
+
+    await process_next_ai_job(db_session)
+
+    log = (
+        await db_session.execute(
+            select(AILog).where(AILog.conversation_id == conv_id)
+        )
+    ).scalar_one()
+    assert log.ai_response_time_ms == captured_latency_ms
+
+

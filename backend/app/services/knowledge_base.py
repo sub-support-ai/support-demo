@@ -1,4 +1,6 @@
+import logging
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Iterable
@@ -9,6 +11,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.models.knowledge_article import KnowledgeArticle, KnowledgeChunk
 from app.services.knowledge_embeddings import embed_texts, estimate_token_count, vector_literal
+
+logger = logging.getLogger(__name__)
+
+# Служебный ключ, под которым find_knowledge_answer / get_ai_answer
+# (conversation_ai.py) кладут замеренную латенси в payload. Дальше его
+# подхватывает generate_ai_message и пишет в AILog.ai_response_time_ms.
+# Префикс «_» подчёркивает, что это не часть API-контракта — наружу не уходит.
+LATENCY_PAYLOAD_KEY = "_latency_ms"
 
 TOKEN_RE = re.compile(r"[a-zA-Zа-яА-ЯёЁ0-9]+")
 MEDIUM_SCORE_THRESHOLD = 4.0
@@ -735,6 +745,13 @@ async def find_knowledge_answer(
     db: AsyncSession,
     messages: list[dict[str, str]],
 ) -> dict | None:
+    """Ищет ответ в KB и возвращает payload с замеренной латенси поиска.
+
+    Если match найден — payload[LATENCY_PAYLOAD_KEY] содержит миллисекунды,
+    потраченные на search_knowledge_articles (включая FTS, semantic-поиск и
+    hybrid-merge). Если нет — возвращаем None и не тратим бюджет на запись
+    AILog: для intake-rules / прямого AI латенси замерят сами вызывающие.
+    """
     user_messages = [
         message.get("content", "").strip()
         for message in messages
@@ -746,7 +763,24 @@ async def find_knowledge_answer(
     latest = user_messages[-1]
     combined = "\n".join(user_messages[-3:])
     query = f"{latest}\n{combined}"
+
+    started = time.perf_counter()
     matches = await search_knowledge_articles(db, query, limit=1)
+    latency_ms = int((time.perf_counter() - started) * 1000)
+
     if not matches:
         return None
-    return build_knowledge_answer(matches[0], query)
+
+    payload = build_knowledge_answer(matches[0], query)
+    payload[LATENCY_PAYLOAD_KEY] = latency_ms
+    logger.info(
+        "Knowledge base answer matched",
+        extra={
+            "ai_latency_ms": latency_ms,
+            "model_version": payload.get("model_version"),
+            "ai_source": "kb",
+            "knowledge_article_id": payload.get("knowledge_article_id"),
+            "knowledge_score": payload.get("knowledge_score"),
+        },
+    )
+    return payload

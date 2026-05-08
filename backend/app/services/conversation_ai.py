@@ -1,4 +1,5 @@
 import logging
+import time
 from typing import Any
 
 from sqlalchemy import select
@@ -10,7 +11,7 @@ from app.models.conversation import Conversation
 from app.models.knowledge_article import KnowledgeArticle, KnowledgeArticleFeedback
 from app.models.message import Message
 from app.services.ai_service_client import ai_service_headers
-from app.services.knowledge_base import find_knowledge_answer
+from app.services.knowledge_base import LATENCY_PAYLOAD_KEY, find_knowledge_answer
 
 logger = logging.getLogger(__name__)
 
@@ -62,9 +63,22 @@ async def get_ai_answer(
     conversation_id: int,
     messages: list[dict[str, str]],
 ) -> dict[str, Any]:
+    """Спрашивает AI-сервис и возвращает payload с замеренной латенси.
+
+    Латенси (полное время попытки, включая retry на second URL и timeout)
+    кладётся в payload[LATENCY_PAYLOAD_KEY] в миллисекундах. Это поле потом
+    уходит в AILog.ai_response_time_ms — питч-дек обещает «1,01 сек среднее»,
+    и без честного замера эту цифру нечем подтвердить.
+    """
     import httpx
 
     settings = get_settings()
+    started = time.perf_counter()
+
+    def _with_latency(payload: dict[str, Any]) -> dict[str, Any]:
+        payload[LATENCY_PAYLOAD_KEY] = int((time.perf_counter() - started) * 1000)
+        return payload
+
     fallback = {
         "answer": "[AI Service временно недоступен. Ваше сообщение сохранено, агент ответит вручную.]",
         "confidence": 0.0,
@@ -77,8 +91,8 @@ async def get_ai_answer(
     if service_urls[0] == "http://ai-service:8001":
         service_urls.append("http://localhost:8001")
 
+    data: Any = None
     try:
-        data: Any = None
         for service_url in service_urls:
             try:
                 async with httpx.AsyncClient(timeout=settings.AI_SERVICE_TIMEOUT_SECONDS) as client:
@@ -108,7 +122,7 @@ async def get_ai_answer(
                     },
                 )
         if data is None:
-            return fallback
+            return _with_latency(fallback)
     except ValueError as exc:
         logger.warning(
             "AI Service returned invalid JSON: %s",
@@ -116,17 +130,27 @@ async def get_ai_answer(
             extra={"conversation_id": conversation_id},
             exc_info=True,
         )
-        return fallback
+        return _with_latency(fallback)
 
     if not isinstance(data, dict):
-        return fallback
+        return _with_latency(fallback)
 
     data.setdefault("answer", "")
     data.setdefault("confidence", 0.5)
     data.setdefault("escalate", False)
     data.setdefault("sources", [])
     data.setdefault("model_version", settings.AI_MODEL_VERSION_FALLBACK)
-    return data
+    payload = _with_latency(data)
+    logger.info(
+        "AI Service responded",
+        extra={
+            "conversation_id": conversation_id,
+            "ai_latency_ms": payload[LATENCY_PAYLOAD_KEY],
+            "model_version": payload.get("model_version"),
+            "ai_source": "llm",
+        },
+    )
+    return payload
 
 
 async def generate_ai_message(db: AsyncSession, conversation_id: int) -> Message:
@@ -188,6 +212,10 @@ async def generate_ai_message(db: AsyncSession, conversation_id: int) -> Message
                     decision=ai_payload.get("knowledge_decision") or "answer",
                 )
             )
+        # Латенси из payload (find_knowledge_answer / get_ai_answer уже её
+        # измерили). Если по какой-то причине поля нет — 0 как honest «не знаем»
+        # вместо None, чтобы дашборд не ломался на NULL в AVG.
+        latency_ms = int(ai_payload.get(LATENCY_PAYLOAD_KEY) or 0)
         db.add(
             AILog(
                 ticket_id=None,
@@ -198,7 +226,7 @@ async def generate_ai_message(db: AsyncSession, conversation_id: int) -> Message
                 confidence_score=float(confidence or 0.0),
                 routed_to_agent_id=None,
                 ai_response_draft=ai_payload.get("answer"),
-                ai_response_time_ms=0,
+                ai_response_time_ms=latency_ms,
                 outcome="resolved_by_ai",
             )
         )
