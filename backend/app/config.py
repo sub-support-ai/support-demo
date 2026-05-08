@@ -65,6 +65,17 @@ class Settings:
         self.KNOWLEDGE_EMBEDDING_WORKER_STALE_RUNNING_SECONDS = _env_int(
             "KNOWLEDGE_EMBEDDING_WORKER_STALE_RUNNING_SECONDS", 900
         )
+        # ── RAG-пороги ─────────────────────────────────────────────────────
+        # Скор у нас вычисляется в _score_article (text_score + context +
+        # freshness + feedback) и сильно зависит от: размера KB, длины
+        # запросов, веса ts_rank_cd / cosine. На каждом клиенте распределение
+        # будет своё, поэтому пороги — конфиг, а не релиз.
+        self.RAG_SCORE_HIGH_THRESHOLD = _env_float("RAG_SCORE_HIGH_THRESHOLD", 8.0)
+        self.RAG_SCORE_MEDIUM_THRESHOLD = _env_float("RAG_SCORE_MEDIUM_THRESHOLD", 4.0)
+        # Под этим порогом confidence — «красная зона»: даже если AI не
+        # просил эскалацию, мы её принудительно поднимаем (видим в чате
+        # кнопку «Создать тикет»).
+        self.RAG_CONFIDENCE_RED_ZONE = _env_float("RAG_CONFIDENCE_RED_ZONE", 0.6)
 
     APP_ENV: str
     APP_HOST: str
@@ -121,6 +132,11 @@ class Settings:
     AI_WORKER_STALE_RUNNING_SECONDS: int
     KNOWLEDGE_EMBEDDING_WORKER_STALE_RUNNING_SECONDS: int
 
+    # Пороги отсечения для RAG: «answer» / «clarify» / «escalate».
+    RAG_SCORE_HIGH_THRESHOLD: float
+    RAG_SCORE_MEDIUM_THRESHOLD: float
+    RAG_CONFIDENCE_RED_ZONE: float
+
     @property
     def CORS_ORIGINS(self) -> list[str]:
         """Парсит CORS_ORIGINS из .env в список строк.
@@ -151,6 +167,24 @@ class Settings:
             raise RuntimeError(
                 "AI_SERVICE_API_KEY не задан при APP_ENV=production. "
                 "Без него запросы к AI-сервису не аутентифицируются и будут отклонены."
+            )
+        # RAG-пороги: ловим перепутанные значения СРАЗУ (на старте), а не на
+        # первом запросе в чат. Иначе при опечатке HIGH=4, MEDIUM=8 эскалация
+        # начнёт срабатывать там, где должен быть answer — и наоборот.
+        if self.RAG_SCORE_HIGH_THRESHOLD <= 0 or self.RAG_SCORE_MEDIUM_THRESHOLD <= 0:
+            raise RuntimeError(
+                "RAG_SCORE_HIGH_THRESHOLD и RAG_SCORE_MEDIUM_THRESHOLD должны быть > 0."
+            )
+        if self.RAG_SCORE_MEDIUM_THRESHOLD > self.RAG_SCORE_HIGH_THRESHOLD:
+            raise RuntimeError(
+                f"RAG_SCORE_MEDIUM_THRESHOLD ({self.RAG_SCORE_MEDIUM_THRESHOLD}) "
+                f"не может быть больше RAG_SCORE_HIGH_THRESHOLD ({self.RAG_SCORE_HIGH_THRESHOLD}). "
+                "Иначе ответы из KB будут отдавать «answer», когда уверенности нет."
+            )
+        if not 0.0 <= self.RAG_CONFIDENCE_RED_ZONE <= 1.0:
+            raise RuntimeError(
+                f"RAG_CONFIDENCE_RED_ZONE ({self.RAG_CONFIDENCE_RED_ZONE}) должен быть в [0, 1]: "
+                "это порог по confidence модели, который сам нормирован в этом диапазоне."
             )
 
     @property

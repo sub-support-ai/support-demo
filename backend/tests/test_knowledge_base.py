@@ -587,3 +587,81 @@ async def test_knowledge_feedback_updates_article_counters(
     await db_session.refresh(article)
     assert article.helped_count == 0
     assert article.not_relevant_count == 1
+
+
+# ── Блок 4: пороги RAG настраиваются через Settings ──────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_unreachable_high_threshold_forces_escalate(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """С пороговым значением 1000 ни одна KB-статья не даст «answer».
+
+    Это подтверждает, что хардкод порогов снят — теперь дашборд админа на
+    клиенте может тюнить чувствительность KB без релиза. Если бы пороги
+    остались константами, тест прошёл бы и до Блока 4.
+    """
+    from app.config import get_settings
+    from app.services.knowledge_base import _decision_for_score
+
+    monkeypatch.setattr(get_settings(), "RAG_SCORE_HIGH_THRESHOLD", 1000.0)
+    monkeypatch.setattr(get_settings(), "RAG_SCORE_MEDIUM_THRESHOLD", 999.0)
+
+    # Скоры реальных match'ей в KB обычно 5–30; 50 — точно «выше среднего»
+    # для KB ответа. С порогом 999 даже это даёт «escalate».
+    assert _decision_for_score(50.0) == "escalate"
+    assert _decision_for_score(998.0) == "escalate"
+    assert _decision_for_score(999.5) == "clarify"
+    assert _decision_for_score(1000.5) == "answer"
+
+
+@pytest.mark.asyncio
+async def test_zero_red_zone_disables_forced_escalation(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """RAG_CONFIDENCE_RED_ZONE=0 → ни один confidence не уйдёт в escalation
+    автоматически (только если AI сам попросил escalate).
+
+    Симметричный сценарий проверяет дефолтный порог 0.6 в test_conversations.py
+    (test_post_message_ai_unavailable_marks_red_zone).
+    """
+    from app.config import get_settings
+    from app.services import conversation_ai
+
+    monkeypatch.setattr(get_settings(), "RAG_CONFIDENCE_RED_ZONE", 0.0)
+
+    # AI отвечает с низкой confidence, но НЕ просит escalate
+    async def low_confidence_no_escalate(conversation_id, messages):
+        return {
+            "answer": "ok",
+            "confidence": 0.1,  # ниже дефолтного red zone
+            "escalate": False,
+            "sources": [],
+            "model_version": "test",
+        }
+
+    monkeypatch.setattr(conversation_ai, "get_ai_answer", low_confidence_no_escalate)
+
+    from tests.test_conversations import register_user, process_next_ai_job
+
+    _, token = await register_user(client, "rzdisabled")
+    headers = {"Authorization": f"Bearer {token}"}
+    conv_id = (await client.post("/api/v1/conversations/", headers=headers)).json()["id"]
+    await client.post(
+        f"/api/v1/conversations/{conv_id}/messages",
+        json={"content": "anything"},
+        headers=headers,
+    )
+    await process_next_ai_job(db_session)
+
+    history = await client.get(
+        f"/api/v1/conversations/{conv_id}/messages",
+        headers=headers,
+    )
+    ai_msg = history.json()[-1]
+    # Красная зона выключена (порог 0), AI не просил escalate → флаг False
+    assert ai_msg["requires_escalation"] is False

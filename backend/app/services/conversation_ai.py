@@ -15,7 +15,6 @@ from app.services.knowledge_base import LATENCY_PAYLOAD_KEY, find_knowledge_answ
 
 logger = logging.getLogger(__name__)
 
-RED_ZONE_THRESHOLD = 0.6
 MAX_HISTORY_MESSAGES = 20
 
 SUPPORT_DRAFT_INTENT_TERMS = (
@@ -177,9 +176,10 @@ async def generate_ai_message(db: AsyncSession, conversation_id: int) -> Message
     confidence = ai_payload.get("confidence")
     escalate = bool(ai_payload.get("escalate"))
 
+    red_zone_threshold = get_settings().RAG_CONFIDENCE_RED_ZONE
     requires_escalation = (
         escalate
-        or (confidence is not None and confidence < RED_ZONE_THRESHOLD)
+        or (confidence is not None and confidence < red_zone_threshold)
     )
 
     ai_message = Message(

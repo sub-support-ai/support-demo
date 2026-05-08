@@ -425,6 +425,66 @@ def test_settings_allows_development_without_ai_key():
     s.__post_init_check__()
 
 
+# ── Блок 4: валидация RAG-порогов ─────────────────────────────────────────────
+
+
+def test_settings_rejects_swapped_rag_thresholds():
+    """MEDIUM > HIGH — порядок порогов сломан, на первом же запросе из KB
+    логика отдаст «answer» там, где должно быть «escalate».
+    """
+    from app.config import Settings
+
+    s = Settings()
+    s.APP_ENV = "development"
+    s.RAG_SCORE_HIGH_THRESHOLD = 4.0
+    s.RAG_SCORE_MEDIUM_THRESHOLD = 8.0  # перепутаны
+
+    with pytest.raises(RuntimeError, match="RAG_SCORE_MEDIUM_THRESHOLD"):
+        s.__post_init_check__()
+
+
+def test_settings_rejects_zero_or_negative_rag_thresholds():
+    """Скор всегда положительный (см. _score_article). Нулевой / отрицательный
+    порог обозначал бы «принимать всё», что бессмысленно — это ошибка конфига.
+    """
+    from app.config import Settings
+
+    s = Settings()
+    s.APP_ENV = "development"
+    s.RAG_SCORE_HIGH_THRESHOLD = 0.0
+    s.RAG_SCORE_MEDIUM_THRESHOLD = 4.0
+
+    with pytest.raises(RuntimeError, match="должны быть > 0"):
+        s.__post_init_check__()
+
+
+def test_settings_rejects_red_zone_outside_unit_interval():
+    """Confidence модели нормирован [0, 1]; порог за пределами этого диапазона
+    либо никогда не сработает, либо сработает всегда — оба случая = ошибка.
+    """
+    from app.config import Settings
+
+    s = Settings()
+    s.APP_ENV = "development"
+    s.RAG_CONFIDENCE_RED_ZONE = 1.5
+
+    with pytest.raises(RuntimeError, match="RAG_CONFIDENCE_RED_ZONE"):
+        s.__post_init_check__()
+
+
+def test_settings_accepts_valid_rag_configuration():
+    """Эталонные значения проходят валидацию — sanity check для дефолтов."""
+    from app.config import Settings
+
+    s = Settings()
+    s.APP_ENV = "development"
+    s.RAG_SCORE_HIGH_THRESHOLD = 8.0
+    s.RAG_SCORE_MEDIUM_THRESHOLD = 4.0
+    s.RAG_CONFIDENCE_RED_ZONE = 0.6
+
+    s.__post_init_check__()  # не должно бросать
+
+
 @pytest.mark.asyncio
 async def test_non_bootstrap_users_stay_regular(client: AsyncClient, monkeypatch):
     """

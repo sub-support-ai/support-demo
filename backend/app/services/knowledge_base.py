@@ -21,8 +21,6 @@ logger = logging.getLogger(__name__)
 LATENCY_PAYLOAD_KEY = "_latency_ms"
 
 TOKEN_RE = re.compile(r"[a-zA-Zа-яА-ЯёЁ0-9]+")
-MEDIUM_SCORE_THRESHOLD = 4.0
-HIGH_SCORE_THRESHOLD = 8.0
 POSTGRES_FTS_SCORE_WEIGHT = 20.0
 POSTGRES_FTS_CANDIDATE_MULTIPLIER = 8
 POSTGRES_SEMANTIC_SCORE_WEIGHT = 12.0
@@ -313,9 +311,10 @@ def _article_snippet(article: KnowledgeArticle, query_tokens: set[str]) -> str |
 
 
 def _decision_for_score(score: float) -> str:
-    if score >= HIGH_SCORE_THRESHOLD:
+    settings = get_settings()
+    if score >= settings.RAG_SCORE_HIGH_THRESHOLD:
         return "answer"
-    if score >= MEDIUM_SCORE_THRESHOLD:
+    if score >= settings.RAG_SCORE_MEDIUM_THRESHOLD:
         return "clarify"
     return "escalate"
 
@@ -363,6 +362,7 @@ def _build_matches(
     filters: KnowledgeSearchFilters,
     now: datetime,
 ) -> list[KnowledgeMatch]:
+    medium_threshold = get_settings().RAG_SCORE_MEDIUM_THRESHOLD
     matches: list[KnowledgeMatch] = []
     for article, postgres_fts_score in rows:
         fallback_text_score = _text_score(query, query_tokens, article)
@@ -381,7 +381,7 @@ def _build_matches(
             now,
             text_score=text_score,
         )
-        if score >= MEDIUM_SCORE_THRESHOLD:
+        if score >= medium_threshold:
             matches.append(
                 KnowledgeMatch(
                     article=article,
@@ -571,6 +571,7 @@ async def _search_knowledge_articles_semantic_postgres(
         .order_by(KnowledgeArticle.id.asc())
     )
     now = datetime.now(timezone.utc)
+    medium_threshold = get_settings().RAG_SCORE_MEDIUM_THRESHOLD
     matches: list[KnowledgeMatch] = []
     for article in articles_result.scalars().all():
         chunk = scored_chunks[article.id]
@@ -582,7 +583,7 @@ async def _search_knowledge_articles_semantic_postgres(
             now,
             text_score=float(chunk["score"]) * POSTGRES_SEMANTIC_SCORE_WEIGHT,
         )
-        if score >= MEDIUM_SCORE_THRESHOLD:
+        if score >= medium_threshold:
             matches.append(
                 KnowledgeMatch(
                     article=article,
