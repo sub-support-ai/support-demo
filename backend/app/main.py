@@ -82,6 +82,20 @@ else:
     logger.info("CORS_ORIGINS пуст — CORS middleware отключён")
 
 
+# ── Глобальный обработчик необработанных исключений ──────────────────────────
+from fastapi.responses import JSONResponse
+
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.exception(
+        "Unhandled exception — возможно отсутствует CORS на 500",
+        extra={"path": request.url.path, "method": request.method},
+    )
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "Internal server error"},
+    )
+
 @app.middleware("http")
 async def request_observability_middleware(request: Request, call_next):
     request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex

@@ -46,7 +46,10 @@ export function getApiError(error: unknown): string {
       return "AI отвечает дольше обычного. Запрос не потерян, но локальная модель может отвечать 30-120 секунд. Проверьте, что Mistral прогрет и backend запущен с AI_SERVICE_TIMEOUT_SECONDS.";
     }
     if (!error.response) {
-      return `Не удалось подключиться к API (${API_BASE_URL}). Проверьте, что RestAPI запущен и CORS_ORIGINS разрешает http://localhost:5173.`;
+      const origin = typeof window !== "undefined"
+        ? window.location.origin
+        : "http://localhost:5173";
+      return `Не удалось подключиться к API (${API_BASE_URL}). Проверьте, что RestAPI запущен и CORS_ORIGINS разрешает ${origin}.`;
     }
     const detail = error.response?.data?.detail;
     if (Array.isArray(detail)) {
@@ -56,7 +59,7 @@ export function getApiError(error: unknown): string {
         .join("; ");
     }
     if (detail && typeof detail === "object") {
-      const message = detail.message ?? "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РґР°РЅРЅС‹Рµ";
+      const message = detail.message ?? "Некорректные данные";
       return detail.fields?.length
         ? `${message}: ${detail.fields.join(", ")}`
         : message;
