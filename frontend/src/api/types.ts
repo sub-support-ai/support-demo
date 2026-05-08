@@ -248,6 +248,7 @@ export interface KnowledgeEmbeddingJob {
   finished_at?: string | null;
   created_at: string;
   updated_at?: string | null;
+  is_stale?: boolean;
 }
 
 export interface AIJob {
@@ -263,6 +264,7 @@ export interface AIJob {
   finished_at?: string | null;
   created_at: string;
   updated_at?: string | null;
+  is_stale?: boolean;
 }
 
 export interface FailedJobsResponse {

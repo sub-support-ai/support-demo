@@ -59,6 +59,12 @@ class Settings:
         self.JWT_EXPIRE_MINUTES = _env_int("JWT_EXPIRE_MINUTES", 60)
         self.BOOTSTRAP_ADMIN_EMAIL = os.getenv("BOOTSTRAP_ADMIN_EMAIL") or None
         self.CORS_ORIGINS_RAW = os.getenv("CORS_ORIGINS", "")
+        self.AI_WORKER_STALE_RUNNING_SECONDS = _env_int(
+            "AI_WORKER_STALE_RUNNING_SECONDS", 600
+        )
+        self.KNOWLEDGE_EMBEDDING_WORKER_STALE_RUNNING_SECONDS = _env_int(
+            "KNOWLEDGE_EMBEDDING_WORKER_STALE_RUNNING_SECONDS", 900
+        )
 
     APP_ENV: str
     APP_HOST: str
@@ -106,6 +112,14 @@ class Settings:
     # Если переменная пустая — CORS выключен (полезно для чисто server-to-server
     # сценариев без браузерного фронта).
     CORS_ORIGINS_RAW: str
+
+    # Через сколько секунд running-задача считается зависшей. Используется
+    # одновременно воркером (для авто-перевешивания в очередь) и API
+    # (для is_stale-флага в ответе /jobs). Значение должно быть единым,
+    # иначе UI и воркер начнут расходиться: оператор увидит "зависла"
+    # на здоровой задаче или, наоборот, не увидит на реально зависшей.
+    AI_WORKER_STALE_RUNNING_SECONDS: int
+    KNOWLEDGE_EMBEDDING_WORKER_STALE_RUNNING_SECONDS: int
 
     @property
     def CORS_ORIGINS(self) -> list[str]:

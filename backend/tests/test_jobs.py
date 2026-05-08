@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from httpx import AsyncClient
@@ -288,3 +288,266 @@ async def test_admin_can_requeue_running_knowledge_embedding_job(
     assert data["locked_at"] is None
     assert data["started_at"] is None
     assert data["error"] == "Job was manually returned to queue"
+
+
+@pytest.mark.asyncio
+async def test_regular_user_cannot_requeue_ai_job(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    admin_id, _ = await _register_user_with_id(client, "requeueaiowner")
+    admin = await db_session.get(User, admin_id)
+    assert admin is not None
+    admin.role = "admin"
+    conversation = Conversation(user_id=admin_id, status="ai_processing")
+    db_session.add(conversation)
+    await db_session.flush()
+    job = AIJob(
+        conversation_id=conversation.id,
+        status="running",
+        attempts=1,
+        max_attempts=3,
+        run_after=datetime.now(timezone.utc),
+        locked_at=datetime.now(timezone.utc),
+        started_at=datetime.now(timezone.utc),
+    )
+    db_session.add(job)
+    await db_session.flush()
+
+    _, user_token = await _register_user_with_id(client, "requeueairegular")
+
+    response = await client.post(
+        f"/api/v1/jobs/ai/{job.id}/requeue",
+        headers={"Authorization": f"Bearer {user_token}"},
+    )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_requeue_unknown_ai_job_returns_404(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    admin_id, token = await _register_user_with_id(client, "requeueai404")
+    admin = await db_session.get(User, admin_id)
+    assert admin is not None
+    admin.role = "admin"
+
+    response = await client.post(
+        "/api/v1/jobs/ai/999999/requeue",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("job_status", ["queued", "done", "failed"])
+async def test_requeue_ai_job_rejects_non_running_status(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    job_status: str,
+):
+    admin_id, token = await _register_user_with_id(client, f"requeueai409{job_status}")
+    admin = await db_session.get(User, admin_id)
+    assert admin is not None
+    admin.role = "admin"
+    conversation = Conversation(user_id=admin_id, status="active")
+    db_session.add(conversation)
+    await db_session.flush()
+    job = AIJob(
+        conversation_id=conversation.id,
+        status=job_status,
+        attempts=1,
+        max_attempts=3,
+        run_after=datetime.now(timezone.utc),
+    )
+    db_session.add(job)
+    await db_session.flush()
+
+    response = await client.post(
+        f"/api/v1/jobs/ai/{job.id}/requeue",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 409
+    assert job_status in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_requeue_ai_job_rejects_when_attempts_exhausted(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    admin_id, token = await _register_user_with_id(client, "requeueaiexhausted")
+    admin = await db_session.get(User, admin_id)
+    assert admin is not None
+    admin.role = "admin"
+    conversation = Conversation(user_id=admin_id, status="ai_processing")
+    db_session.add(conversation)
+    await db_session.flush()
+    job = AIJob(
+        conversation_id=conversation.id,
+        status="running",
+        attempts=3,
+        max_attempts=3,
+        run_after=datetime.now(timezone.utc),
+        locked_at=datetime.now(timezone.utc),
+        started_at=datetime.now(timezone.utc),
+    )
+    db_session.add(job)
+    await db_session.flush()
+
+    response = await client.post(
+        f"/api/v1/jobs/ai/{job.id}/requeue",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 409
+    assert "exhausted" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_regular_user_cannot_requeue_knowledge_embedding_job(
+    client: AsyncClient,
+):
+    _, user_token = await _register_user_with_id(client, "requeuekeregular")
+
+    response = await client.post(
+        "/api/v1/jobs/knowledge-embeddings/1/requeue",
+        headers={"Authorization": f"Bearer {user_token}"},
+    )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_requeue_unknown_knowledge_embedding_job_returns_404(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    admin_id, token = await _register_user_with_id(client, "requeueke404")
+    admin = await db_session.get(User, admin_id)
+    assert admin is not None
+    admin.role = "admin"
+
+    response = await client.post(
+        "/api/v1/jobs/knowledge-embeddings/999999/requeue",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("job_status", ["queued", "done", "failed"])
+async def test_requeue_knowledge_embedding_job_rejects_non_running_status(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    job_status: str,
+):
+    admin_id, token = await _register_user_with_id(
+        client, f"requeueke409{job_status}"
+    )
+    admin = await db_session.get(User, admin_id)
+    assert admin is not None
+    admin.role = "admin"
+    job = KnowledgeEmbeddingJob(
+        article_id=None,
+        requested_by_user_id=admin_id,
+        status=job_status,
+        attempts=1,
+        max_attempts=3,
+        run_after=datetime.now(timezone.utc),
+    )
+    db_session.add(job)
+    await db_session.flush()
+
+    response = await client.post(
+        f"/api/v1/jobs/knowledge-embeddings/{job.id}/requeue",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 409
+    assert job_status in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_requeue_knowledge_embedding_job_rejects_when_attempts_exhausted(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    admin_id, token = await _register_user_with_id(client, "requeuekeexhausted")
+    admin = await db_session.get(User, admin_id)
+    assert admin is not None
+    admin.role = "admin"
+    job = KnowledgeEmbeddingJob(
+        article_id=None,
+        requested_by_user_id=admin_id,
+        status="running",
+        attempts=3,
+        max_attempts=3,
+        run_after=datetime.now(timezone.utc),
+        locked_at=datetime.now(timezone.utc),
+        started_at=datetime.now(timezone.utc),
+    )
+    db_session.add(job)
+    await db_session.flush()
+
+    response = await client.post(
+        f"/api/v1/jobs/knowledge-embeddings/{job.id}/requeue",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 409
+    assert "exhausted" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_requeue_ai_job_marks_is_stale_for_old_lock(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    admin_id, token = await _register_user_with_id(client, "requeueaistale")
+    admin = await db_session.get(User, admin_id)
+    assert admin is not None
+    admin.role = "admin"
+    conversation = Conversation(user_id=admin_id, status="ai_processing")
+    db_session.add(conversation)
+    await db_session.flush()
+    # Свежий lock — is_stale должен быть False для running-задачи.
+    fresh_job = AIJob(
+        conversation_id=conversation.id,
+        status="running",
+        attempts=1,
+        max_attempts=3,
+        run_after=datetime.now(timezone.utc),
+        locked_at=datetime.now(timezone.utc),
+        started_at=datetime.now(timezone.utc),
+    )
+    # Старый lock (20 минут назад) — is_stale должен быть True.
+    other = Conversation(user_id=admin_id, status="ai_processing")
+    db_session.add(other)
+    await db_session.flush()
+    stale_job = AIJob(
+        conversation_id=other.id,
+        status="running",
+        attempts=1,
+        max_attempts=3,
+        run_after=datetime.now(timezone.utc),
+        locked_at=datetime.now(timezone.utc) - timedelta(minutes=20),
+        started_at=datetime.now(timezone.utc) - timedelta(minutes=20),
+    )
+    db_session.add_all([fresh_job, stale_job])
+    await db_session.flush()
+
+    response = await client.get(
+        "/api/v1/jobs/?kind=ai&status=running",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    by_id = {item["id"]: item for item in data["ai"]}
+    assert by_id[fresh_job.id]["is_stale"] is False
+    assert by_id[stale_job.id]["is_stale"] is True

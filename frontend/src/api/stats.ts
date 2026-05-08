@@ -50,6 +50,11 @@ export function useJobs({
       return data;
     },
     enabled,
+    // Авто-обновление каждые 5 секунд: страница — оперативный мониторинг
+    // зависших задач, поэтому ручной refresh здесь UX-провал. При
+    // невидимой вкладке React Query сам останавливает polling.
+    refetchInterval: enabled ? 5000 : false,
+    refetchIntervalInBackground: false,
   });
 }
 

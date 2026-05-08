@@ -18,6 +18,10 @@ class AIJobRead(BaseModel):
     finished_at: datetime | None = None
     created_at: datetime
     updated_at: datetime | None = None
+    # Признак "зависла" — running-задача с lock'ом старше порога воркера.
+    # Считается на сервере, чтобы UI и авто-перевешивание не разъезжались
+    # между собой при изменении STALE_RUNNING_SECONDS у воркера.
+    is_stale: bool = False
 
 
 class KnowledgeEmbeddingJobRead(BaseModel):
@@ -38,6 +42,7 @@ class KnowledgeEmbeddingJobRead(BaseModel):
     finished_at: datetime | None = None
     created_at: datetime
     updated_at: datetime | None = None
+    is_stale: bool = False
 
 
 class FailedJobsResponse(BaseModel):

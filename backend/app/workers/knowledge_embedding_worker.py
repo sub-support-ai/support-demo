@@ -3,6 +3,7 @@ import logging
 import os
 import signal
 
+from app.config import get_settings
 from app.database import AsyncSessionLocal
 from app.services.knowledge_embedding_jobs import (
     claim_next_knowledge_embedding_job,
@@ -16,7 +17,6 @@ from app.services.knowledge_embeddings import DEFAULT_EMBEDDING_BATCH_SIZE
 logger = logging.getLogger(__name__)
 POLL_INTERVAL_SECONDS = float(os.getenv("KNOWLEDGE_EMBEDDING_WORKER_POLL_INTERVAL_SECONDS", "5"))
 JOB_TIMEOUT_SECONDS = float(os.getenv("KNOWLEDGE_EMBEDDING_WORKER_JOB_TIMEOUT_SECONDS", "300"))
-STALE_RUNNING_SECONDS = int(os.getenv("KNOWLEDGE_EMBEDDING_WORKER_STALE_RUNNING_SECONDS", "900"))
 REINDEX_INTERVAL_SECONDS = int(os.getenv("KNOWLEDGE_REINDEX_INTERVAL_SECONDS", "0"))
 EMBEDDING_BATCH_SIZE = int(
     os.getenv("KNOWLEDGE_EMBEDDING_BATCH_SIZE", str(DEFAULT_EMBEDDING_BATCH_SIZE))
@@ -43,8 +43,12 @@ def _install_signal_handlers() -> None:
 
 
 async def run_once() -> bool:
+    settings = get_settings()
     async with AsyncSessionLocal() as db:
-        await requeue_stale_knowledge_embedding_jobs(db, STALE_RUNNING_SECONDS)
+        await requeue_stale_knowledge_embedding_jobs(
+            db,
+            settings.KNOWLEDGE_EMBEDDING_WORKER_STALE_RUNNING_SECONDS,
+        )
         job = await claim_next_knowledge_embedding_job(db)
         if job is None:
             await db.commit()

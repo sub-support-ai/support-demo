@@ -49,8 +49,6 @@ type JobRow =
   | { kind: "ai"; job: AIJob }
   | { kind: "knowledge_embeddings"; job: KnowledgeEmbeddingJob };
 
-const STALE_RUNNING_MINUTES = 5;
-
 function statusColor(status: string): string {
   if (status === "failed") return "red";
   if (status === "running") return "blue";
@@ -68,12 +66,12 @@ function formatDate(value?: string | null): string {
   });
 }
 
+// Признак "зависла" приходит от сервера (поле is_stale): порог сидит
+// в settings воркера и одинаков для авто- и ручного перевешивания.
+// Считать порог на клиенте — значит держать второй источник истины и
+// на каждой смене STALE_RUNNING_SECONDS у воркера ронять/раздувать UI.
 function isStaleRunning(job: AIJob | KnowledgeEmbeddingJob): boolean {
-  if (job.status !== "running" || !job.locked_at) {
-    return false;
-  }
-  const lockedAt = new Date(job.locked_at).getTime();
-  return Date.now() - lockedAt > STALE_RUNNING_MINUTES * 60 * 1000;
+  return job.status === "running" && job.is_stale === true;
 }
 
 function jobTarget(row: JobRow): string {
