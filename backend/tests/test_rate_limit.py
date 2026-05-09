@@ -211,3 +211,93 @@ def test_settings_rejects_unknown_rate_limit_backend():
 
     with pytest.raises(RuntimeError, match="RATE_LIMIT_BACKEND"):
         s.__post_init_check__()
+
+
+# ── _client_ip: X-Forwarded-For за доверенным прокси ────────────────────────
+
+
+def _make_request(xff: str | None, client_host: str = "127.0.0.1"):
+    """Создаёт минимальный mock Request с нужными атрибутами."""
+    from unittest.mock import MagicMock
+
+    req = MagicMock()
+    req.client = MagicMock()
+    req.client.host = client_host
+    req.headers = {}
+    if xff is not None:
+        req.headers = {"X-Forwarded-For": xff}
+    # MagicMock.get() нужен для dict-like доступа headers.get(...)
+    req.headers = MagicMock()
+    req.headers.get = lambda key, default="": xff if xff is not None and key == "X-Forwarded-For" else default
+    return req
+
+
+def test_client_ip_without_proxy_uses_socket_host(monkeypatch):
+    """TRUSTED_PROXY_COUNT=0: IP берётся из request.client.host, XFF игнорируется."""
+    from app.config import Settings
+    from app.rate_limit import _client_ip
+
+    settings = Settings()
+    settings.TRUSTED_PROXY_COUNT = 0
+    monkeypatch.setattr("app.rate_limit.get_settings", lambda: settings)
+
+    req = _make_request(xff="1.2.3.4", client_host="10.0.0.1")
+    assert _client_ip(req) == "10.0.0.1"
+
+
+def test_client_ip_with_one_proxy_reads_xff(monkeypatch):
+    """TRUSTED_PROXY_COUNT=1, один прокси (nginx):
+    X-Forwarded-For содержит реальный IP клиента."""
+    from app.config import Settings
+    from app.rate_limit import _client_ip
+
+    settings = Settings()
+    settings.TRUSTED_PROXY_COUNT = 1
+    monkeypatch.setattr("app.rate_limit.get_settings", lambda: settings)
+
+    req = _make_request(xff="1.2.3.4", client_host="127.0.0.1")
+    assert _client_ip(req) == "1.2.3.4"
+
+
+def test_client_ip_with_proxy_resists_xff_spoofing(monkeypatch):
+    """Злоумышленник добавляет поддельный IP перед реальным.
+    TRUSTED_PROXY_COUNT=1: берём IP на позиции len-1 от начала, spoof отброшен.
+    X-Forwarded-For: spoofed_ip, real_client_ip  (nginx добавил real_client_ip)
+    """
+    from app.config import Settings
+    from app.rate_limit import _client_ip
+
+    settings = Settings()
+    settings.TRUSTED_PROXY_COUNT = 1
+    monkeypatch.setattr("app.rate_limit.get_settings", lambda: settings)
+
+    req = _make_request(xff="9.9.9.9, 1.2.3.4", client_host="127.0.0.1")
+    assert _client_ip(req) == "1.2.3.4"
+
+
+def test_client_ip_with_two_proxies(monkeypatch):
+    """TRUSTED_PROXY_COUNT=2: клиент → proxy1 → nginx → app.
+    X-Forwarded-For: client_ip, proxy1_ip  → реальный IP = client_ip.
+    """
+    from app.config import Settings
+    from app.rate_limit import _client_ip
+
+    settings = Settings()
+    settings.TRUSTED_PROXY_COUNT = 2
+    monkeypatch.setattr("app.rate_limit.get_settings", lambda: settings)
+
+    req = _make_request(xff="1.2.3.4, 2.2.2.2", client_host="127.0.0.1")
+    assert _client_ip(req) == "1.2.3.4"
+
+
+def test_client_ip_falls_back_to_socket_when_xff_empty(monkeypatch):
+    """TRUSTED_PROXY_COUNT=1 но XFF отсутствует → fallback на socket host."""
+    from app.config import Settings
+    from app.rate_limit import _client_ip
+
+    settings = Settings()
+    settings.TRUSTED_PROXY_COUNT = 1
+    monkeypatch.setattr("app.rate_limit.get_settings", lambda: settings)
+
+    req = _make_request(xff=None, client_host="10.0.0.2")
+    assert _client_ip(req) == "10.0.0.2"

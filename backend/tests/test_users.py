@@ -821,3 +821,198 @@ async def test_role_change_requires_auth(client: AsyncClient):
         json={"role": "agent"},
     )
     assert response.status_code == 401
+
+
+# ── PATCH /users/{id}/active ─────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_deactivate_user_revokes_api_access(client: AsyncClient, db_session):
+    """После деактивации токен пользователя отвергается с 401.
+
+    get_current_user делает SELECT при каждом запросе — is_active=False
+    возвращает credentials_error немедленно, без ожидания истечения токена.
+    """
+    from app.models.audit_log import AuditLog
+    from sqlalchemy import select
+
+    user_id, user_token = await _register_regular(client, "deact-access")
+    admin_id, admin_token = await _register_and_promote(client, db_session, "deact-admin")
+
+    # Пользователь работает нормально
+    assert (await client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {user_token}"},
+    )).status_code == 200
+
+    # Администратор деактивирует
+    resp = await client.patch(
+        f"/api/v1/users/{user_id}/active",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={"is_active": False},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["is_active"] is False
+
+    # Токен пользователя больше не работает
+    assert (await client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {user_token}"},
+    )).status_code == 401
+
+    # Действие попало в audit_log
+    rows = (
+        await db_session.execute(
+            select(AuditLog).where(AuditLog.action == "user.deactivate")
+        )
+    ).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].user_id == admin_id
+    assert rows[0].target_id == user_id
+
+
+@pytest.mark.asyncio
+async def test_reactivate_user_restores_access(client: AsyncClient, db_session):
+    """Реактивация восстанавливает доступ и пишет user.activate в audit."""
+    from app.models.audit_log import AuditLog
+    from sqlalchemy import select
+
+    user_id, user_token = await _register_regular(client, "react-user")
+    _, admin_token = await _register_and_promote(client, db_session, "react-admin")
+
+    # Деактивируем
+    assert (await client.patch(
+        f"/api/v1/users/{user_id}/active",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={"is_active": False},
+    )).status_code == 200
+
+    # Реактивируем
+    resp = await client.patch(
+        f"/api/v1/users/{user_id}/active",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={"is_active": True},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["is_active"] is True
+
+    # Токен снова работает
+    assert (await client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {user_token}"},
+    )).status_code == 200
+
+    rows = (
+        await db_session.execute(
+            select(AuditLog).where(AuditLog.action == "user.activate")
+        )
+    ).scalars().all()
+    assert len(rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_deactivate_is_idempotent(client: AsyncClient, db_session):
+    """Повторная деактивация уже неактивного пользователя возвращает 200
+    без дублирования записи в audit_log."""
+    from app.models.audit_log import AuditLog
+    from sqlalchemy import select
+
+    user_id, _ = await _register_regular(client, "idem-deact")
+    _, admin_token = await _register_and_promote(client, db_session, "idem-deact-admin")
+
+    for _ in range(2):
+        assert (await client.patch(
+            f"/api/v1/users/{user_id}/active",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            json={"is_active": False},
+        )).status_code == 200
+
+    rows = (
+        await db_session.execute(
+            select(AuditLog).where(AuditLog.action == "user.deactivate")
+        )
+    ).scalars().all()
+    # Второй вызов — no-op, запись в лог не дублируется
+    assert len(rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_cannot_deactivate_self(client: AsyncClient, db_session):
+    """Администратор не может деактивировать собственный аккаунт — 409."""
+    admin_id, admin_token = await _register_and_promote(client, db_session, "self-deact")
+
+    resp = await client.patch(
+        f"/api/v1/users/{admin_id}/active",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={"is_active": False},
+    )
+    assert resp.status_code == 409
+    assert "themselves" in resp.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_cannot_deactivate_last_active_admin(client: AsyncClient, db_session):
+    """Деактивация единственного активного admin'а — 409.
+
+    Иначе система теряет возможность управления: некому вернуть права.
+    """
+    target_id, _ = await _register_and_promote(client, db_session, "last-act-target")
+    caller_id, _ = await _register_regular(client, "last-act-caller")
+
+    # Phantom admin (не числится в БД как admin) — тот же трюк что в тесте
+    # на последнего admin'а в role_change.
+    from app.dependencies import get_current_user
+    from app.main import app
+    from app.models.user import User as UserModel
+
+    caller_in_db = await db_session.get(UserModel, caller_id)
+
+    async def fake_admin() -> UserModel:
+        return UserModel(
+            id=caller_id,
+            email=caller_in_db.email,
+            username=caller_in_db.username,
+            hashed_password=caller_in_db.hashed_password,
+            role="admin",
+            is_active=True,
+        )
+
+    app.dependency_overrides[get_current_user] = fake_admin
+    try:
+        resp = await client.patch(
+            f"/api/v1/users/{target_id}/active",
+            json={"is_active": False},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert resp.status_code == 409
+    assert "last" in resp.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_deactivate_unknown_user_returns_404(client: AsyncClient, db_session):
+    _, admin_token = await _register_and_promote(client, db_session, "deact-404")
+    resp = await client.patch(
+        "/api/v1/users/999999/active",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={"is_active": False},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_deactivate_forbidden_for_non_admin(client: AsyncClient):
+    _, user_token = await _register_regular(client, "deact-nonadmin")
+    resp = await client.patch(
+        "/api/v1/users/1/active",
+        headers={"Authorization": f"Bearer {user_token}"},
+        json={"is_active": False},
+    )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_deactivate_requires_auth(client: AsyncClient):
+    resp = await client.patch("/api/v1/users/1/active", json={"is_active": False})
+    assert resp.status_code == 401

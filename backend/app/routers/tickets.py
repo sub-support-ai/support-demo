@@ -620,6 +620,8 @@ async def resolve_ticket(
 )
 async def list_ticket_comments(
     ticket_id: int,
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -633,7 +635,7 @@ async def list_ticket_comments(
     if current_user.role == "user":
         query = query.where(TicketComment.internal.is_(False))
 
-    result = await db.execute(query)
+    result = await db.execute(query.offset(skip).limit(limit))
     return result.scalars().all()
 
 

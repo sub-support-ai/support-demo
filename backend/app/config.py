@@ -126,6 +126,15 @@ class Settings(BaseSettings):
     RATE_LIMIT_BACKEND: str = "memory"
     REDIS_URL: str = "redis://localhost:6379/0"
 
+    # Сколько доверенных прокси стоит перед приложением.
+    # 0  — прямой доступ, IP берётся из request.client.host.
+    # N  — N прокси (nginx, L7-балансировщик); реальный IP клиента
+    #      извлекается из X-Forwarded-For, отбрасывая N последних записей.
+    # Пример nginx→app: X-Forwarded-For: 1.2.3.4 → TRUSTED_PROXY_COUNT=1 → IP=1.2.3.4
+    # ВАЖНО: устанавливайте > 0 только если прокси контролируется вами —
+    # иначе любой клиент подделает заголовок и обойдёт лимит.
+    TRUSTED_PROXY_COUNT: int = 0
+
     # ── Поле для ленивых вычислений (без алиасов в env) ──────────────────
 
     @property

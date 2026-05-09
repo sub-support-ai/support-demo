@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.dependencies import get_current_user, require_role
 from app.models.user import User
-from app.schemas.user import UserCreate, UserRead, UserRoleUpdate
+from app.schemas.user import UserActiveUpdate, UserCreate, UserRead, UserRoleUpdate
 from app.security import hash_password
 from app.services.audit import log_event
 
@@ -167,6 +167,83 @@ async def update_user_role(
         target_id=target.id,
         request=request,
         details={"from": old_role, "to": payload.role},
+    )
+    await db.flush()
+    await db.refresh(target)
+    return target
+
+
+@router.patch(
+    "/{user_id}/active",
+    response_model=UserRead,
+    summary="Заблокировать / разблокировать пользователя (admin-only)",
+    description=(
+        "Меняет is_active. Активный пользователь отключается немедленно: "
+        "get_current_user проверяет is_active при каждом запросе, поэтому "
+        "текущий токен начинает возвращать 401 сразу после деактивации.\n\n"
+        "Защиты:\n"
+        "1) Нельзя деактивировать самого себя.\n"
+        "2) Нельзя деактивировать последнего активного admin'а — иначе "
+        "   система теряет возможность управления.\n"
+        "Действие записывается в audit_log."
+    ),
+)
+async def update_user_active(
+    user_id: int,
+    payload: UserActiveUpdate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_role("admin")),
+):
+    if user_id == admin.id and not payload.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Admin cannot deactivate themselves",
+        )
+
+    # Блокируем target сразу — FOR UPDATE гарантирует, что параллельный
+    # запрос увидит наш is_active после commit, а не читает stale-значение.
+    target = (
+        await db.execute(
+            select(User).where(User.id == user_id).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if target is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    if target.is_active == payload.is_active:
+        # Идемпотентность: состояние уже такое — отдаём 200 без записи в лог.
+        return target
+
+    if not payload.is_active and target.role == "admin":
+        # Защита от lock-out: не позволяем деактивировать единственного
+        # активного admin'а. Блокировка всех admin-строк (как в role_change)
+        # здесь избыточна — достаточно подсчитать активных admin'ов под
+        # уже взятым локом на target.
+        active_admin_count = await db.scalar(
+            select(func.count())
+            .select_from(User)
+            .where(User.role == "admin", User.is_active.is_(True))
+        )
+        if active_admin_count is not None and active_admin_count <= 1:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Cannot deactivate the last active admin",
+            )
+
+    target.is_active = payload.is_active
+    action = "user.deactivate" if not payload.is_active else "user.activate"
+    await log_event(
+        db,
+        action=action,
+        user_id=admin.id,
+        target_type="user",
+        target_id=target.id,
+        request=request,
+        details={"is_active": payload.is_active},
     )
     await db.flush()
     await db.refresh(target)
