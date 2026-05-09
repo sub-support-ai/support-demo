@@ -762,6 +762,57 @@ async def test_regular_user_cannot_add_operator_comment(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_user_cannot_see_internal_comments(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    _, user_token = await register_user(client, suffix="internaluser")
+    user_headers = {"Authorization": f"Bearer {user_token}"}
+    _, admin_token = await create_operator(client, db_session, suffix="internaladmin")
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+    create = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "Тест внутренних комментариев",
+            "body": "Проверка фильтрации",
+            "user_priority": 3,
+            "office": "HQ",
+            "affected_item": "VPN",
+        },
+        headers=user_headers,
+    )
+    assert create.status_code == 201
+    ticket_id = create.json()["id"]
+    await client.patch(f"/api/v1/tickets/{ticket_id}/confirm", headers=user_headers)
+
+    await client.post(
+        f"/api/v1/tickets/{ticket_id}/comments",
+        json={"content": "Внутренняя заметка агента", "internal": True},
+        headers=admin_headers,
+    )
+    await client.post(
+        f"/api/v1/tickets/{ticket_id}/comments",
+        json={"content": "Публичный ответ пользователю", "internal": False},
+        headers=admin_headers,
+    )
+
+    resp_admin = await client.get(
+        f"/api/v1/tickets/{ticket_id}/comments", headers=admin_headers
+    )
+    assert resp_admin.status_code == 200
+    assert len(resp_admin.json()) == 2
+
+    resp_user = await client.get(
+        f"/api/v1/tickets/{ticket_id}/comments", headers=user_headers
+    )
+    assert resp_user.status_code == 200
+    contents = [c["content"] for c in resp_user.json()]
+    assert "Публичный ответ пользователю" in contents
+    assert "Внутренняя заметка агента" not in contents
+
+
+@pytest.mark.asyncio
 async def test_confirm_ticket_requires_request_context(client: AsyncClient):
     _, token = await register_user(client, suffix="confirmcontext")
     headers = {"Authorization": f"Bearer {token}"}
