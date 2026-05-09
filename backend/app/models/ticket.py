@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -44,6 +44,10 @@ class Ticket(Base):
       ai_processed_at — когда AI обработал (метрика скорости пайплайна)
     """
     __tablename__ = "tickets"
+    __table_args__ = (
+        # Ускоряет запросы агента к «своим» тикетам по статусу и SLA-воркер.
+        Index("ix_tickets_agent_id_status", "agent_id", "status"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
 

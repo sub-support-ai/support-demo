@@ -235,7 +235,7 @@ def _make_request(xff: str | None, client_host: str = "127.0.0.1"):
 def test_client_ip_without_proxy_uses_socket_host(monkeypatch):
     """TRUSTED_PROXY_COUNT=0: IP берётся из request.client.host, XFF игнорируется."""
     from app.config import Settings
-    from app.rate_limit import _client_ip
+    from app.rate_limit import get_client_ip as _client_ip
 
     settings = Settings()
     settings.TRUSTED_PROXY_COUNT = 0
@@ -249,7 +249,7 @@ def test_client_ip_with_one_proxy_reads_xff(monkeypatch):
     """TRUSTED_PROXY_COUNT=1, один прокси (nginx):
     X-Forwarded-For содержит реальный IP клиента."""
     from app.config import Settings
-    from app.rate_limit import _client_ip
+    from app.rate_limit import get_client_ip as _client_ip
 
     settings = Settings()
     settings.TRUSTED_PROXY_COUNT = 1
@@ -265,7 +265,7 @@ def test_client_ip_with_proxy_resists_xff_spoofing(monkeypatch):
     X-Forwarded-For: spoofed_ip, real_client_ip  (nginx добавил real_client_ip)
     """
     from app.config import Settings
-    from app.rate_limit import _client_ip
+    from app.rate_limit import get_client_ip as _client_ip
 
     settings = Settings()
     settings.TRUSTED_PROXY_COUNT = 1
@@ -280,7 +280,7 @@ def test_client_ip_with_two_proxies(monkeypatch):
     X-Forwarded-For: client_ip, proxy1_ip  → реальный IP = client_ip.
     """
     from app.config import Settings
-    from app.rate_limit import _client_ip
+    from app.rate_limit import get_client_ip as _client_ip
 
     settings = Settings()
     settings.TRUSTED_PROXY_COUNT = 2
@@ -293,7 +293,7 @@ def test_client_ip_with_two_proxies(monkeypatch):
 def test_client_ip_falls_back_to_socket_when_xff_empty(monkeypatch):
     """TRUSTED_PROXY_COUNT=1 но XFF отсутствует → fallback на socket host."""
     from app.config import Settings
-    from app.rate_limit import _client_ip
+    from app.rate_limit import get_client_ip as _client_ip
 
     settings = Settings()
     settings.TRUSTED_PROXY_COUNT = 1

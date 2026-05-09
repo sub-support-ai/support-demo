@@ -14,13 +14,20 @@ TicketStatusLiteral = Literal[
     "declined",
 ]
 
+# Статусы, которые оператор может выставить вручную.
+# "new" / "pending_user" / "ai_processing" / "declined" никогда не проходят
+# через state-machine агента — оставлять их в публичной схеме значит
+# давать ложное ощущение, что они работают (они упадут с 409 из-за
+# ALLOWED_OPERATOR_TRANSITIONS).
+OperatorStatusLiteral = Literal["confirmed", "in_progress", "resolved", "closed"]
+
 DepartmentLiteral = Literal["IT", "HR", "finance"]
 EditableTicketPriorityLiteral = Literal["высокий", "средний", "низкий"]
 
 
 class TicketBase(BaseModel):
     title: str = Field(min_length=1, max_length=255)
-    body: str = Field(min_length=1)
+    body: str = Field(min_length=1, max_length=10_000)
     user_priority: int = Field(default=3, ge=2, le=5)
 
 
@@ -37,17 +44,17 @@ class TicketCreate(TicketBase):
 
 
 class TicketStatusUpdate(BaseModel):
-    status: TicketStatusLiteral
+    status: OperatorStatusLiteral
 
 
 class TicketDraftUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=255)
-    body: str | None = Field(default=None, min_length=1)
+    body: str | None = Field(default=None, min_length=1, max_length=10_000)
     department: DepartmentLiteral | None = None
     ai_priority: EditableTicketPriorityLiteral | None = None
     requester_name: str | None = Field(default=None, max_length=100)
     requester_email: EmailStr | None = None
-    steps_tried: str | None = None
+    steps_tried: str | None = Field(default=None, max_length=5_000)
     office: str | None = Field(default=None, max_length=100)
     affected_item: str | None = Field(default=None, max_length=150)
     request_type: str | None = Field(default=None, max_length=60)
@@ -64,7 +71,7 @@ class TicketCommentRead(BaseModel):
 
     id: int
     ticket_id: int
-    author_id: int
+    author_id: int | None = None
     author_username: str
     author_role: str
     content: str

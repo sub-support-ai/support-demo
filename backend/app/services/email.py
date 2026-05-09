@@ -90,7 +90,7 @@ async def send_email(
     )
 
     try:
-        await asyncio.get_event_loop().run_in_executor(
+        await asyncio.get_running_loop().run_in_executor(
             None,
             _send_sync,
             to,

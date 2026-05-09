@@ -20,6 +20,7 @@ from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit_log import DETAILS_MAX_LEN, AuditLog
+from app.rate_limit import get_client_ip as _rate_limit_get_ip
 
 
 # Маркер, который добавляется при обрезании длинного details.
@@ -28,11 +29,18 @@ _TRUNCATED_SUFFIX = "...<truncated>"
 
 
 def _client_ip(request: Optional[Request]) -> Optional[str]:
-    """IP из request, если request передали. Некоторые вызовы могут
-    логировать без request (например, фоновые задачи) — тогда IP=None."""
-    if request is None or request.client is None:
+    """Реальный IP клиента с учётом X-Forwarded-For за прокси.
+
+    Делегирует в rate_limit.get_client_ip, которая уже умеет читать
+    TRUSTED_PROXY_COUNT и корректно парсит XFF-цепочку. За nginx
+    audit_log будет показывать настоящий IP клиента, а не 127.0.0.1.
+
+    Некоторые вызовы могут логировать без request (фоновые задачи) —
+    тогда IP=None.
+    """
+    if request is None:
         return None
-    return request.client.host
+    return _rate_limit_get_ip(request)
 
 
 def _serialize_details(details: Optional[dict[str, Any]]) -> Optional[str]:
