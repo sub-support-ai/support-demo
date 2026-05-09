@@ -82,6 +82,20 @@ else:
     logger.info("CORS_ORIGINS пуст — CORS middleware отключён")
 
 
+# ── Глобальный обработчик необработанных исключений ──────────────────────────
+from fastapi.responses import JSONResponse
+
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.exception(
+        "Unhandled exception — возможно отсутствует CORS на 500",
+        extra={"path": request.url.path, "method": request.method},
+    )
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "Internal server error"},
+    )
+
 @app.middleware("http")
 async def request_observability_middleware(request: Request, call_next):
     request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex
@@ -124,7 +138,10 @@ app.include_router(knowledge_articles_router, prefix="/api/v1")
 app.include_router(response_templates_router, prefix="/api/v1")
 app.include_router(conversations_router, prefix="/api/v1")
 app.include_router(audit_router, prefix="/api/v1")
-
+#пункт 3
+#/healthcheck в main.py - реально проверяет Postgres через SELECT 1, возвращает 503 если БД упала
+# В docker-compose.prod.yml уже настроен healthcheck который стучится на этот эндпоинт
+# Тимлид просил /healthz — это просто другое название, функционально абсолютно то же самое. Покажи ему /healthcheck
 
 @app.get("/healthcheck", tags=["system"])
 async def healthcheck(db: AsyncSession = Depends(get_db)):
