@@ -937,6 +937,62 @@ async def test_admin_can_add_comment_to_confirmed_ticket(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_user_cannot_see_internal_comments(client: AsyncClient):
+    _, user_token = await register_user(client, suffix="internal-vis")
+    _, admin_token = await register_admin(client, suffix="internal-vis")
+    user_headers = {"Authorization": f"Bearer {user_token}"}
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+    create = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "не работает принтер",
+            "body": "бумага застряла",
+            "user_priority": 3,
+            "office": "HQ",
+            "affected_item": "Принтер",
+        },
+        headers=user_headers,
+    )
+    assert create.status_code == 201
+    ticket_id = create.json()["id"]
+
+    assert (await client.patch(
+        f"/api/v1/tickets/{ticket_id}/confirm",
+        headers=user_headers,
+    )).status_code == 200
+
+    assert (await client.post(
+        f"/api/v1/tickets/{ticket_id}/comments",
+        json={"content": "Внутренняя заметка агента", "internal": True},
+        headers=admin_headers,
+    )).status_code == 201
+
+    assert (await client.post(
+        f"/api/v1/tickets/{ticket_id}/comments",
+        json={"content": "Взяли в работу", "internal": False},
+        headers=admin_headers,
+    )).status_code == 201
+
+    user_resp = await client.get(
+        f"/api/v1/tickets/{ticket_id}/comments",
+        headers=user_headers,
+    )
+    assert user_resp.status_code == 200
+    user_comments = user_resp.json()
+    assert len(user_comments) == 1
+    assert user_comments[0]["content"] == "Взяли в работу"
+    assert user_comments[0]["internal"] is False
+
+    admin_resp = await client.get(
+        f"/api/v1/tickets/{ticket_id}/comments",
+        headers=admin_headers,
+    )
+    assert admin_resp.status_code == 200
+    assert len(admin_resp.json()) == 2
+
+
+@pytest.mark.asyncio
 async def test_negative_feedback_can_reopen_closed_ticket(
     client: AsyncClient,
     db_session: AsyncSession,

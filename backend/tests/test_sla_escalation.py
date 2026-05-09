@@ -9,6 +9,7 @@ from app.models.ticket import Ticket
 from app.models.ticket_comment import TicketComment
 from app.models.user import User
 from app.security import hash_password
+from app.services.sla import is_sla_breached
 from app.services.sla_escalation import escalate_overdue_tickets
 
 
@@ -47,6 +48,24 @@ async def _create_agent(
     db.add(agent)
     await db.flush()
     return agent
+
+
+class _FakeTicket:
+    def __init__(self, deadline, status="confirmed"):
+        self.sla_deadline_at = deadline
+        self.status = status
+
+
+def test_sla_breach_check_handles_naive_deadline():
+    now_aware = datetime.now(timezone.utc)
+    deadline_naive = (now_aware - timedelta(minutes=1)).replace(tzinfo=None)
+    assert is_sla_breached(_FakeTicket(deadline=deadline_naive), now=now_aware) is True
+
+
+def test_sla_breach_check_handles_aware_deadline():
+    now = datetime.now(timezone.utc)
+    deadline = now - timedelta(minutes=1)
+    assert is_sla_breached(_FakeTicket(deadline=deadline), now=now) is True
 
 
 @pytest.mark.asyncio

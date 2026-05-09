@@ -557,75 +557,6 @@ async def confirm_ticket(
     return ticket
 
 
-# ── GET/POST /tickets/{id}/comments — рабочие комментарии ────────────────────
-
-@router.get(
-    "/{ticket_id}/comments",
-    response_model=list[TicketCommentRead],
-    summary="Комментарии к запросу",
-)
-async def list_ticket_comments(
-    ticket_id: int,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    await get_ticket_for_reader(ticket_id, db, current_user)
-    result = await db.execute(
-        select(TicketComment)
-        .where(TicketComment.ticket_id == ticket_id)
-        .order_by(TicketComment.created_at.desc(), TicketComment.id.desc())
-        .limit(50)
-    )
-    return result.scalars().all()
-
-
-@router.post(
-    "/{ticket_id}/comments",
-    response_model=TicketCommentRead,
-    status_code=status.HTTP_201_CREATED,
-    summary="Добавить комментарий к запросу",
-)
-async def create_ticket_comment(
-    ticket_id: int,
-    payload: TicketCommentCreate,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    ticket = await get_ticket_for_operator(ticket_id, db, current_user)
-    _require_confirmed_ticket_for_operator(ticket)
-    content = payload.content.strip()
-    if not content:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Комментарий не должен быть пустым",
-        )
-
-    comment = TicketComment(
-        ticket_id=ticket.id,
-        author_id=current_user.id,
-        author_username=current_user.username,
-        author_role=current_user.role,
-        content=content,
-        internal=payload.internal,
-    )
-    db.add(comment)
-    await db.flush()
-    await db.refresh(comment)
-
-    await log_event(
-        db,
-        action="ticket.comment",
-        user_id=current_user.id,
-        target_type="ticket",
-        target_id=ticket.id,
-        request=request,
-        details={"internal": payload.internal},
-    )
-
-    return comment
-
-
 # ── PATCH /tickets/{id}/resolve — агент закрывает тикет ───────────────────────
 
 @router.patch(
@@ -680,6 +611,8 @@ async def resolve_ticket(
     return ticket
 
 
+# ── GET/POST /tickets/{id}/comments — рабочие комментарии ────────────────────
+
 @router.get(
     "/{ticket_id}/comments",
     response_model=list[TicketCommentRead],
@@ -724,7 +657,7 @@ async def create_ticket_comment(
     if not content:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Comment must not be empty",
+            detail="Комментарий не должен быть пустым",
         )
 
     comment = TicketComment(
