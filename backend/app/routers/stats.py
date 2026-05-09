@@ -26,6 +26,7 @@ from app.models.ai_log import AILog
 from app.models.ai_job import AIJob
 from app.models.conversation import Conversation
 from app.models.knowledge_embedding_job import KnowledgeEmbeddingJob
+from app.models.ticket_rating import TicketRating
 from app.models.user import User
 from app.schemas.stats import (
     AIFallbacksStats,
@@ -177,6 +178,17 @@ async def get_stats(
     avg_ttfr = ttfr_result.scalar()
     avg_ttr = ttr_result.scalar()
 
+    # Средняя CSAT-оценка (1–5) по оценённым тикетам из скоупа пользователя
+    csat_query = select(func.avg(TicketRating.rating).label("avg_csat"))
+    if ticket_filters:
+        csat_query = (
+            csat_query
+            .join(Ticket, TicketRating.ticket_id == Ticket.id)
+            .where(*ticket_filters)
+        )
+    csat_result = await db.execute(csat_query)
+    avg_csat = csat_result.scalar()
+
     ticket_stats = TicketStats(
         total=total_tickets,
         by_status=by_status,
@@ -188,6 +200,7 @@ async def get_stats(
         reopen_count=reopen_result.scalar() or 0,
         avg_ttfr_seconds=round(float(avg_ttfr), 1) if avg_ttfr is not None else None,
         avg_ttr_seconds=round(float(avg_ttr), 1) if avg_ttr is not None else None,
+        avg_csat_score=round(float(avg_csat), 2) if avg_csat is not None else None,
     )
 
     # ── Статистика AI ─────────────────────────────────────────────────────────

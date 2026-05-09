@@ -131,11 +131,6 @@ class Settings(BaseSettings):
     SMTP_FROM: str = "noreply@support.local"
     SMTP_USE_TLS: bool = True
 
-    # ── Slack Incoming Webhook ────────────────────────────────────────────────
-    # Получить URL: Slack → App settings → Incoming Webhooks → Add New Webhook.
-    # Если не задан — Slack-уведомления отключены (no-op).
-    SLACK_WEBHOOK_URL: Optional[str] = None
-
     # ── Retention логов ───────────────────────────────────────────────────────
     # Количество дней хранения audit_logs, ai_fallback_events и завершённых
     # ai_jobs / knowledge_embedding_jobs. 0 — retention отключён (хранить всё).

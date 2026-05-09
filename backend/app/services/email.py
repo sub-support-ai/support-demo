@@ -149,6 +149,28 @@ _STATUS_BODIES = {
 }
 
 
+async def notify_agent_assigned(
+    *,
+    ticket_id: int,
+    title: str,
+    department: str,
+    requester_name: Optional[str],
+    agent_email: str,
+    agent_name: Optional[str],
+) -> None:
+    """Уведомляет агента о назначении нового тикета."""
+    subject = f"Вам назначен запрос #{ticket_id}"
+    body = (
+        f"Здравствуйте, {agent_name or 'агент'}!\n\n"
+        f"Вам назначен новый запрос в отдел {department}:\n"
+        f"  Тема: {title}\n"
+        f"  Заявитель: {requester_name or 'Сотрудник'}\n\n"
+        f"Войдите в систему, чтобы ознакомиться с деталями.\n\n"
+        f"С уважением,\nСлужба поддержки"
+    )
+    await send_email(to=agent_email, subject=subject, body=body)
+
+
 async def notify_ticket_status(
     *,
     ticket_id: int,

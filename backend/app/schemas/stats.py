@@ -17,6 +17,8 @@ class TicketStats(BaseModel):
     avg_ttfr_seconds: float | None = None
     # Среднее время полного решения тикета (секунды). None если данных нет.
     avg_ttr_seconds: float | None = None
+    # Средняя оценка CSAT (1.0–5.0). None если оценок нет.
+    avg_csat_score: float | None = None
 
 
 class AIStats(BaseModel):

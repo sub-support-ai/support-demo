@@ -127,6 +127,12 @@ class Ticket(Base):
         back_populates="ticket",
         cascade="all, delete-orphan",
     )
+    rating: Mapped[Optional["TicketRating"]] = relationship(
+        "TicketRating",
+        back_populates="ticket",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
 
     @property
     def is_sla_breached(self) -> bool:

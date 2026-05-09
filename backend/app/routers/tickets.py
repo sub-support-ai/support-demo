@@ -28,19 +28,23 @@ from app.schemas.ticket import (
     TicketCreate,
     TicketDraftUpdate,
     TicketFeedbackPayload,
+    TicketRatingCreate,
+    TicketRatingRead,
     TicketRead,
+    TicketReroutePayload,
     TicketStatusUpdate,
 )
+from app.models.ticket_rating import TicketRating
 from app.services.agents import get_active_agent_for_user
 from app.services.ai_fallback import (
     FALLBACK_REASON_PAYLOAD_KEY,
     record_ai_fallback,
 )
 from app.services.audit import log_event
-from app.services.email import notify_ticket_status
+from app.models.agent import Agent
+from app.services.email import notify_agent_assigned, notify_ticket_status
 from app.services.pii import mask_pii
 from app.services.routing import assign_agent, unassign_agent
-from app.services.slack import notify_ticket_created, notify_ticket_resolved
 from app.services.sla import OPEN_STATUSES, start_ticket_sla
 from app.services.ticket_body import clean_optional_text, replace_context_block_if_present
 from app.services.ticket_state_machine import transition, transition_via_operator
@@ -571,14 +575,22 @@ async def confirm_ticket(
         department=ticket.department,
         sla_deadline=sla_deadline_str,
     )
-    await notify_ticket_created(
-        ticket_id=ticket.id,
-        title=ticket.title,
-        department=ticket.department,
-        priority=ticket.ai_priority,
-        requester_name=ticket.requester_name,
-        sla_deadline=sla_deadline_str,
-    )
+
+    # Уведомить назначенного агента
+    if ticket.agent_id is not None:
+        agent_result = await db.execute(
+            select(Agent).where(Agent.id == ticket.agent_id)
+        )
+        assigned_agent = agent_result.scalar_one_or_none()
+        if assigned_agent:
+            await notify_agent_assigned(
+                ticket_id=ticket.id,
+                title=ticket.title,
+                department=ticket.department,
+                requester_name=ticket.requester_name,
+                agent_email=assigned_agent.email,
+                agent_name=assigned_agent.username,
+            )
 
     return ticket
 
@@ -642,12 +654,6 @@ async def resolve_ticket(
         requester_email=ticket.requester_email,
         requester_name=ticket.requester_name,
         department=ticket.department,
-    )
-    await notify_ticket_resolved(
-        ticket_id=ticket.id,
-        title=ticket.title,
-        department=ticket.department,
-        agent_name=current_user.username,
     )
 
     return ticket
@@ -794,6 +800,170 @@ async def submit_ticket_feedback(
     )
 
     return ticket
+
+
+# ── PATCH /tickets/{id}/reroute — агент перенаправляет в другой отдел ─────────
+
+@router.patch(
+    "/{ticket_id}/reroute",
+    response_model=TicketRead,
+    summary="Перенаправить тикет в другой отдел",
+    description=(
+        "Агент или администратор меняет отдел тикета и инициирует переназначение "
+        "агента. Старый агент снимается, новый назначается автоматически по "
+        "workload-балансировщику. Причина фиксируется системным комментарием."
+    ),
+)
+async def reroute_ticket(
+    ticket_id: int,
+    payload: TicketReroutePayload,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    ticket = await get_ticket_for_operator(ticket_id, db, current_user)
+    _require_confirmed_ticket_for_operator(ticket)
+
+    if ticket.status in {"resolved", "closed"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Нельзя перенаправить закрытый или решённый тикет",
+        )
+
+    old_department = ticket.department
+    if payload.department == old_department:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Тикет уже направлен в отдел {old_department}",
+        )
+
+    # Снять текущего агента (уменьшает его счётчик active_ticket_count)
+    await unassign_agent(db, ticket)
+    ticket.agent_id = None
+    ticket.department = payload.department
+
+    # Назначить нового агента из целевого отдела
+    await assign_agent(db, ticket)
+
+    # Системный комментарий — видим агентам, скрыт от пользователя (internal=True)
+    system_comment = TicketComment(
+        ticket_id=ticket.id,
+        author_id=current_user.id,
+        author_username=current_user.username,
+        author_role=current_user.role,
+        content=(
+            f"[Системное] Тикет перенаправлен из отдела «{old_department}» "
+            f"в «{payload.department}». Причина: {payload.reason}"
+        ),
+        internal=True,
+    )
+    db.add(system_comment)
+
+    await db.flush()
+    await db.refresh(ticket)
+
+    # Уведомить нового агента о назначении
+    if ticket.agent_id is not None:
+        agent_res = await db.execute(
+            select(Agent).where(Agent.id == ticket.agent_id)
+        )
+        new_agent = agent_res.scalar_one_or_none()
+        if new_agent:
+            await notify_agent_assigned(
+                ticket_id=ticket.id,
+                title=ticket.title,
+                department=ticket.department,
+                requester_name=ticket.requester_name,
+                agent_email=new_agent.email,
+                agent_name=new_agent.username,
+            )
+
+    await log_event(
+        db,
+        action="ticket.rerouted",
+        user_id=current_user.id,
+        target_type="ticket",
+        target_id=ticket.id,
+        request=request,
+        details={
+            "from_department": old_department,
+            "to_department": payload.department,
+            "reason": payload.reason,
+        },
+    )
+
+    return ticket
+
+
+# ── POST /tickets/{id}/rate — CSAT оценка пользователя ───────────────────────
+
+@router.post(
+    "/{ticket_id}/rate",
+    response_model=TicketRatingRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Оценить решение тикета (CSAT 1–5)",
+    description=(
+        "Пользователь ставит оценку от 1 до 5 звёзд после закрытия/решения тикета. "
+        "Повторный вызов обновляет существующую оценку (UPSERT). "
+        "Доступно только владельцу тикета."
+    ),
+)
+async def rate_ticket(
+    ticket_id: int,
+    payload: TicketRatingCreate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    ticket = await _load_ticket(ticket_id, db)
+
+    # Только владелец тикета или admin
+    if ticket.user_id != current_user.id and current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Ticket not found",
+        )
+
+    # Оценивать можно только завершённые тикеты
+    if ticket.status not in {"resolved", "closed"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Оценить можно только решённый или закрытый тикет",
+        )
+
+    # UPSERT: проверяем, есть ли уже оценка для этого тикета
+    existing_result = await db.execute(
+        select(TicketRating).where(TicketRating.ticket_id == ticket_id)
+    )
+    rating_obj = existing_result.scalar_one_or_none()
+
+    if rating_obj is None:
+        rating_obj = TicketRating(
+            ticket_id=ticket_id,
+            user_id=current_user.id,
+            rating=payload.rating,
+            comment=payload.comment,
+        )
+        db.add(rating_obj)
+    else:
+        # Обновляем существующую оценку
+        rating_obj.rating = payload.rating
+        rating_obj.comment = payload.comment
+
+    await db.flush()
+    await db.refresh(rating_obj)
+
+    await log_event(
+        db,
+        action="ticket.rated",
+        user_id=current_user.id,
+        target_type="ticket",
+        target_id=ticket.id,
+        request=request,
+        details={"rating": payload.rating},
+    )
+
+    return rating_obj
 
 
 # ── DELETE /tickets/{id} — только admin ───────────────────────────────────────

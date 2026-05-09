@@ -21,4 +21,5 @@ from app.models.response import Response  # noqa: F401
 from app.models.ai_log import AILog  # noqa: F401
 from app.models.ai_fallback_event import AIFallbackEvent  # noqa: F401
 from app.models.audit_log import AuditLog  # noqa: F401
+from app.models.ticket_rating import TicketRating  # noqa: F401
 
