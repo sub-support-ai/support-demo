@@ -7,9 +7,16 @@ class TicketStats(BaseModel):
     by_status: dict[str, int]   # сколько тикетов в каждом статусе
     by_department: dict[str, int]  # сколько тикетов по отделам
     by_source: dict[str, int]   # ai_generated / user_written / ai_assisted
+    # Топ-темы (ai_category): {"VPN access": 15, "printer": 8, ...}
+    # Отсортированы по убыванию — первые N самых частых.
+    by_category: dict[str, int] = {}
     sla_overdue_count: int = 0
     sla_escalated_count: int = 0
     reopen_count: int = 0
+    # Среднее время первого ответа агента (секунды). None если данных нет.
+    avg_ttfr_seconds: float | None = None
+    # Среднее время полного решения тикета (секунды). None если данных нет.
+    avg_ttr_seconds: float | None = None
 
 
 class AIStats(BaseModel):

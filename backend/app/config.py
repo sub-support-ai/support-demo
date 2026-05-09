@@ -120,11 +120,41 @@ class Settings(BaseSettings):
     AI_WORKER_STALE_RUNNING_SECONDS: int = 600
     KNOWLEDGE_EMBEDDING_WORKER_STALE_RUNNING_SECONDS: int = 900
 
+    # ── SMTP (email-уведомления) ──────────────────────────────────────────────
+    # Если SMTP_HOST не задан — уведомления по email отключены (no-op).
+    # Поддерживается STARTTLS (587) и SMTPS/SSL (465). Для внутреннего relay
+    # без TLS установите SMTP_USE_TLS=false.
+    SMTP_HOST: Optional[str] = None
+    SMTP_PORT: int = 587
+    SMTP_USER: Optional[str] = None
+    SMTP_PASSWORD: Optional[SecretStr] = None
+    SMTP_FROM: str = "noreply@support.local"
+    SMTP_USE_TLS: bool = True
+
+    # ── Slack Incoming Webhook ────────────────────────────────────────────────
+    # Получить URL: Slack → App settings → Incoming Webhooks → Add New Webhook.
+    # Если не задан — Slack-уведомления отключены (no-op).
+    SLACK_WEBHOOK_URL: Optional[str] = None
+
+    # ── Retention логов ───────────────────────────────────────────────────────
+    # Количество дней хранения audit_logs, ai_fallback_events и завершённых
+    # ai_jobs / knowledge_embedding_jobs. 0 — retention отключён (хранить всё).
+    LOG_RETENTION_DAYS: int = 90
+
     # ── Rate limiter ──────────────────────────────────────────────────────
     # memory  — счётчики в памяти процесса, по uvicorn-воркеру свои.
     # redis   — общий счётчик через ZSET-sliding-window на REDIS_URL.
     RATE_LIMIT_BACKEND: str = "memory"
     REDIS_URL: str = "redis://localhost:6379/0"
+
+    # Сколько доверенных прокси стоит перед приложением.
+    # 0  — прямой доступ, IP берётся из request.client.host.
+    # N  — N прокси (nginx, L7-балансировщик); реальный IP клиента
+    #      извлекается из X-Forwarded-For, отбрасывая N последних записей.
+    # Пример nginx→app: X-Forwarded-For: 1.2.3.4 → TRUSTED_PROXY_COUNT=1 → IP=1.2.3.4
+    # ВАЖНО: устанавливайте > 0 только если прокси контролируется вами —
+    # иначе любой клиент подделает заголовок и обойдёт лимит.
+    TRUSTED_PROXY_COUNT: int = 0
 
     # ── Поле для ленивых вычислений (без алиасов в env) ──────────────────
 

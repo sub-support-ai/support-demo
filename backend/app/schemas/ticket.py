@@ -111,3 +111,4 @@ class TicketRead(TicketBase):
     created_at: datetime
     updated_at: datetime | None = None
     resolved_at: datetime | None = None
+    first_response_at: datetime | None = None

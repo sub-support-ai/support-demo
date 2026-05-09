@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $serviceRoot = Join-Path $root 'ai-service'
@@ -63,7 +63,33 @@ if (-not $ollamaProcess) {
 
 $pythonExe = Join-Path $serviceRoot '.venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $pythonExe)) {
-    throw "Missing virtual environment Python at $pythonExe"
+    # Первый запуск: создаём venv и ставим зависимости. Это самая частая
+    # причина неудачного старта у нового разработчика — раньше скрипт
+    # просто падал с "Missing virtual environment Python" и человек шёл
+    # читать docs. Теперь — bootstrap'имся автоматически.
+    Write-Host 'AI-service .venv не найден — создаю и устанавливаю зависимости...' -ForegroundColor Yellow
+    $systemPython = Get-Command py -ErrorAction SilentlyContinue
+    if (-not $systemPython) {
+        $systemPython = Get-Command python -ErrorAction SilentlyContinue
+    }
+    if (-not $systemPython) {
+        throw 'Python не найден в PATH. Установите Python 3.12 (https://www.python.org/downloads/)'
+    }
+
+    # `py -3.12` если установлен Windows Python launcher; иначе системный python.
+    if ($systemPython.Name -eq 'py') {
+        & py -3.12 -m venv .venv
+    } else {
+        & $systemPython.Source -m venv .venv
+    }
+
+    if (-not (Test-Path -LiteralPath $pythonExe)) {
+        throw "venv создан, но $pythonExe всё ещё отсутствует — проверьте версию Python"
+    }
+
+    & $pythonExe -m pip install --upgrade pip
+    & $pythonExe -m pip install -r requirements.txt
+    Write-Host 'AI-service .venv готов' -ForegroundColor Green
 }
 
 Start-Process `

@@ -37,7 +37,10 @@ from app.services.ai_fallback import (
     record_ai_fallback,
 )
 from app.services.audit import log_event
+from app.services.email import notify_ticket_status
+from app.services.pii import mask_pii
 from app.services.routing import assign_agent, unassign_agent
+from app.services.slack import notify_ticket_created, notify_ticket_resolved
 from app.services.sla import OPEN_STATUSES, start_ticket_sla
 from app.services.ticket_body import clean_optional_text, replace_context_block_if_present
 from app.services.ticket_state_machine import transition, transition_via_operator
@@ -236,7 +239,7 @@ async def create_ticket(
         # TicketCreate (app/schemas/ticket.py) про атаку подмены user_id.
         user_id=current_user.id,
         title=payload.title,
-        body=payload.body,
+        body=mask_pii(payload.body),
         user_priority=payload.user_priority,
         department=department,
         requester_name=current_user.username,
@@ -244,7 +247,7 @@ async def create_ticket(
         office=payload.office.strip() if payload.office else None,
         affected_item=payload.affected_item.strip() if payload.affected_item else None,
         request_type=clean_optional_text(payload.request_type),
-        request_details=clean_optional_text(payload.request_details),
+        request_details=mask_pii(clean_optional_text(payload.request_details)),
         ai_category=ai_result.get("category"),
         ai_priority=ai_result.get("priority"),
         ai_confidence=ai_result.get("confidence"),
@@ -454,7 +457,7 @@ async def update_ticket_draft(
     if "title" in update_data and update_data["title"] is not None:
         ticket.title = update_data["title"].strip()
     if "body" in update_data and update_data["body"] is not None:
-        ticket.body = update_data["body"].strip()
+        ticket.body = mask_pii(update_data["body"].strip())
     if "department" in update_data and update_data["department"] is not None:
         ticket.department = update_data["department"]
     if "ai_priority" in update_data and update_data["ai_priority"] is not None:
@@ -554,76 +557,30 @@ async def confirm_ticket(
 
     await db.flush()
     await db.refresh(ticket)
-    return ticket
 
-
-# ── GET/POST /tickets/{id}/comments — рабочие комментарии ────────────────────
-
-@router.get(
-    "/{ticket_id}/comments",
-    response_model=list[TicketCommentRead],
-    summary="Комментарии к запросу",
-)
-async def list_ticket_comments(
-    ticket_id: int,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    await get_ticket_for_reader(ticket_id, db, current_user)
-    result = await db.execute(
-        select(TicketComment)
-        .where(TicketComment.ticket_id == ticket_id)
-        .order_by(TicketComment.created_at.desc(), TicketComment.id.desc())
-        .limit(50)
+    sla_deadline_str = (
+        ticket.sla_deadline_at.strftime("%d.%m.%Y %H:%M UTC")
+        if ticket.sla_deadline_at else None
     )
-    return result.scalars().all()
-
-
-@router.post(
-    "/{ticket_id}/comments",
-    response_model=TicketCommentRead,
-    status_code=status.HTTP_201_CREATED,
-    summary="Добавить комментарий к запросу",
-)
-async def create_ticket_comment(
-    ticket_id: int,
-    payload: TicketCommentCreate,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    ticket = await get_ticket_for_operator(ticket_id, db, current_user)
-    _require_confirmed_ticket_for_operator(ticket)
-    content = payload.content.strip()
-    if not content:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Комментарий не должен быть пустым",
-        )
-
-    comment = TicketComment(
+    await notify_ticket_status(
         ticket_id=ticket.id,
-        author_id=current_user.id,
-        author_username=current_user.username,
-        author_role=current_user.role,
-        content=content,
-        internal=payload.internal,
+        title=ticket.title,
+        status="confirmed",
+        requester_email=ticket.requester_email,
+        requester_name=ticket.requester_name,
+        department=ticket.department,
+        sla_deadline=sla_deadline_str,
     )
-    db.add(comment)
-    await db.flush()
-    await db.refresh(comment)
-
-    await log_event(
-        db,
-        action="ticket.comment",
-        user_id=current_user.id,
-        target_type="ticket",
-        target_id=ticket.id,
-        request=request,
-        details={"internal": payload.internal},
+    await notify_ticket_created(
+        ticket_id=ticket.id,
+        title=ticket.title,
+        department=ticket.department,
+        priority=ticket.ai_priority,
+        requester_name=ticket.requester_name,
+        sla_deadline=sla_deadline_str,
     )
 
-    return comment
+    return ticket
 
 
 # ── PATCH /tickets/{id}/resolve — агент закрывает тикет ───────────────────────
@@ -677,8 +634,26 @@ async def resolve_ticket(
 
     await db.flush()
     await db.refresh(ticket)
+
+    await notify_ticket_status(
+        ticket_id=ticket.id,
+        title=ticket.title,
+        status="resolved",
+        requester_email=ticket.requester_email,
+        requester_name=ticket.requester_name,
+        department=ticket.department,
+    )
+    await notify_ticket_resolved(
+        ticket_id=ticket.id,
+        title=ticket.title,
+        department=ticket.department,
+        agent_name=current_user.username,
+    )
+
     return ticket
 
+
+# ── GET/POST /tickets/{id}/comments — рабочие комментарии ────────────────────
 
 @router.get(
     "/{ticket_id}/comments",
@@ -687,6 +662,8 @@ async def resolve_ticket(
 )
 async def list_ticket_comments(
     ticket_id: int,
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -700,7 +677,7 @@ async def list_ticket_comments(
     if current_user.role == "user":
         query = query.where(TicketComment.internal.is_(False))
 
-    result = await db.execute(query)
+    result = await db.execute(query.offset(skip).limit(limit))
     return result.scalars().all()
 
 
@@ -720,11 +697,11 @@ async def create_ticket_comment(
     ticket = await get_ticket_for_operator(ticket_id, db, current_user)
     _require_confirmed_ticket_for_operator(ticket)
 
-    content = payload.content.strip()
+    content = mask_pii(payload.content.strip())
     if not content:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Comment must not be empty",
+            detail="Комментарий не должен быть пустым",
         )
 
     comment = TicketComment(
@@ -736,6 +713,11 @@ async def create_ticket_comment(
         internal=payload.internal,
     )
     db.add(comment)
+
+    # Первый публичный комментарий агента/системы → фиксируем TTFR
+    if ticket.first_response_at is None and current_user.role in {"agent", "admin"}:
+        ticket.first_response_at = datetime.now(timezone.utc)
+
     await db.flush()
     await db.refresh(comment)
 

@@ -65,3 +65,15 @@ class UserRoleUpdate(BaseModel):
     """
 
     role: str = Field(pattern="^(user|agent|admin)$")
+
+
+class UserActiveUpdate(BaseModel):
+    """Полезная нагрузка PATCH /users/{id}/active — блокировка/разблокировка.
+
+    Отдельная схема (а не поле в UserRoleUpdate) намеренно — два разных
+    действия с разными инвариантами. Смешать их в одну схему означало бы
+    принимать {"role": "admin", "is_active": false} одним запросом, где
+    порядок применения полей неочевиден и легко ошибиться.
+    """
+
+    is_active: bool

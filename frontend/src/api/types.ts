@@ -296,9 +296,15 @@ export interface TicketStats {
   by_status: Record<string, number>;
   by_department: Record<string, number>;
   by_source: Record<string, number>;
+  /** Топ-темы обращений (ai_category → количество). */
+  by_category: Record<string, number>;
   sla_overdue_count: number;
   sla_escalated_count: number;
   reopen_count: number;
+  /** Среднее время первого ответа агента (секунды). null если данных нет. */
+  avg_ttfr_seconds: number | null;
+  /** Среднее время полного решения тикета (секунды). null если данных нет. */
+  avg_ttr_seconds: number | null;
 }
 
 export interface AIStats {

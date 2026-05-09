@@ -50,5 +50,7 @@ def is_sla_breached(ticket: Any, now: datetime | None = None) -> bool:
 
     current_time = now or _utc_now()
     if deadline.tzinfo is None:
-        current_time = current_time.replace(tzinfo=None)
+        deadline = deadline.replace(tzinfo=timezone.utc)
+    if current_time.tzinfo is None:
+        current_time = current_time.replace(tzinfo=timezone.utc)
     return deadline < current_time

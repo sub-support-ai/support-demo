@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent import Agent
@@ -18,6 +18,7 @@ async def find_senior_agent_for_ticket(
         .where(Agent.department == ticket.department)
         .where(Agent.is_active.is_(True))
         .order_by(Agent.ai_routing_score.desc(), Agent.active_ticket_count.asc(), Agent.id.asc())
+        .with_for_update(skip_locked=True)
         .limit(1)
     )
     return result.scalar_one_or_none()
@@ -36,11 +37,22 @@ async def escalate_overdue_ticket(
     previous_agent_id = ticket.agent_id
     if previous_agent_id != senior_agent.id:
         if previous_agent_id is not None:
-            previous_agent = await db.get(Agent, previous_agent_id)
-            if previous_agent is not None and previous_agent.active_ticket_count > 0:
-                previous_agent.active_ticket_count -= 1
+            # Атомарный декремент — нет race condition при параллельной
+            # эскалации нескольких тикетов. WHERE count > 0 предотвращает
+            # уход в отрицательные значения.
+            await db.execute(
+                update(Agent)
+                .where(Agent.id == previous_agent_id)
+                .where(Agent.active_ticket_count > 0)
+                .values(active_ticket_count=Agent.active_ticket_count - 1)
+            )
 
-        senior_agent.active_ticket_count += 1
+        # Атомарный инкремент старшего агента.
+        await db.execute(
+            update(Agent)
+            .where(Agent.id == senior_agent.id)
+            .values(active_ticket_count=Agent.active_ticket_count + 1)
+        )
         ticket.agent_id = senior_agent.id
 
     ticket.sla_escalated_at = current_time
@@ -87,6 +99,9 @@ async def escalate_overdue_tickets(
             Ticket.sla_escalated_at.is_(None),
         )
         .order_by(Ticket.sla_deadline_at.asc(), Ticket.id.asc())
+        # skip_locked: параллельный cron-воркер пропустит уже обрабатываемые
+        # тикеты, вместо того чтобы эскалировать их дважды.
+        .with_for_update(skip_locked=True)
         .limit(limit)
     )
     tickets = result.scalars().all()

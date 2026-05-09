@@ -206,15 +206,39 @@ def set_backend_for_testing(backend: _Backend) -> None:
 
 
 def _client_ip(request: Request) -> str:
-    """IP клиента для ключа лимитера.
+    """Реальный IP клиента для ключа лимитера.
 
-    request.client.host — это IP того, кто подключился к нашему сокету.
-    За прокси (nginx, CloudFlare) это будет IP прокси, а не реального
-    пользователя — тогда надо читать X-Forwarded-For, но ТОЛЬКО если
-    приложение действительно за доверенным прокси (иначе любой клиент
-    подделает заголовок и обойдёт лимит). Для self-hosted без прокси
-    достаточно request.client.host.
+    Без прокси (TRUSTED_PROXY_COUNT=0): берём request.client.host — это IP
+    того, кто напрямую подключился к нашему сокету.
+
+    За прокси (TRUSTED_PROXY_COUNT=N): читаем X-Forwarded-For и берём IP
+    на позиции len(ips) - N от начала. Каждый прокси в цепочке добавляет IP
+    входящего соединения справа, поэтому «настоящих» клиентских записей
+    ровно len(ips) - N; берём крайнюю правую из них.
+
+    Пример (nginx, TRUSTED_PROXY_COUNT=1):
+      X-Forwarded-For: 1.2.3.4          → real_index=0 → "1.2.3.4"
+      X-Forwarded-For: fake, 1.2.3.4    → real_index=1 → "1.2.3.4"  (spoof отброшен)
+
+    Пример (proxy→nginx, TRUSTED_PROXY_COUNT=2):
+      X-Forwarded-For: 1.2.3.4, 2.2.2.2 → real_index=0 → "1.2.3.4"
+
+    Spoofing-защита: злоумышленник может добавить произвольные IP в
+    начало заголовка, но не может изменить записи, добавленные нашими
+    доверенными прокси (они контролируются нами). Берём IP ровно за
+    N-й позицией от конца — всё, что левее, добавлено до наших прокси
+    и потому ненадёжно, но мы берём самую правую «чистую» запись.
     """
+    settings = get_settings()
+    proxy_count = settings.TRUSTED_PROXY_COUNT
+    if proxy_count > 0:
+        forwarded_for = request.headers.get("X-Forwarded-For", "")
+        if forwarded_for:
+            ips = [ip.strip() for ip in forwarded_for.split(",")]
+            real_index = max(0, len(ips) - proxy_count)
+            candidate = ips[real_index] if real_index < len(ips) else ""
+            if candidate:
+                return candidate
     return request.client.host if request.client else "unknown"
 
 

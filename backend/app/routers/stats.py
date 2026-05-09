@@ -113,6 +113,17 @@ async def get_stats(
     )
     by_source = {row.ticket_source: row.cnt for row in source_result}
 
+    # Топ-темы (ai_category) — для дашборда «Популярные категории»
+    category_result = await db.execute(
+        select(Ticket.ai_category, func.count().label("cnt"))
+        .where(*ticket_filters, Ticket.ai_category.is_not(None))
+        .group_by(Ticket.ai_category)
+        .order_by(func.count().desc())
+        .limit(20)
+    )
+    # Словарь уже отсортирован по убыванию (Python 3.7+ dict сохраняет порядок вставки)
+    by_category = {row.ai_category: row.cnt for row in category_result if row.ai_category}
+
     sla_overdue_result = await db.execute(
         select(func.count())
         .select_from(Ticket)
@@ -137,14 +148,46 @@ async def get_stats(
         )
     )
 
+    # TTFR = среднее (first_response_at - created_at) по решённым/закрытым тикетам
+    # TTR  = среднее (resolved_at - created_at)
+    # epoch() переводит interval в секунды (PostgreSQL-специфично; SQLite в тестах
+    # не поддерживает эту функцию — там avg будет None, и мы защищаемся проверкой).
+    ttfr_result = await db.execute(
+        select(
+            func.avg(
+                func.extract("epoch", Ticket.first_response_at - Ticket.created_at)
+            ).label("avg_ttfr")
+        )
+        .where(
+            *ticket_filters,
+            Ticket.first_response_at.is_not(None),
+        )
+    )
+    ttr_result = await db.execute(
+        select(
+            func.avg(
+                func.extract("epoch", Ticket.resolved_at - Ticket.created_at)
+            ).label("avg_ttr")
+        )
+        .where(
+            *ticket_filters,
+            Ticket.resolved_at.is_not(None),
+        )
+    )
+    avg_ttfr = ttfr_result.scalar()
+    avg_ttr = ttr_result.scalar()
+
     ticket_stats = TicketStats(
         total=total_tickets,
         by_status=by_status,
         by_department=by_department,
         by_source=by_source,
+        by_category=by_category,
         sla_overdue_count=sla_overdue_result.scalar() or 0,
         sla_escalated_count=sla_escalated_result.scalar() or 0,
         reopen_count=reopen_result.scalar() or 0,
+        avg_ttfr_seconds=round(float(avg_ttfr), 1) if avg_ttfr is not None else None,
+        avg_ttr_seconds=round(float(avg_ttr), 1) if avg_ttr is not None else None,
     )
 
     # ── Статистика AI ─────────────────────────────────────────────────────────
