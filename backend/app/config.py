@@ -120,6 +120,27 @@ class Settings(BaseSettings):
     AI_WORKER_STALE_RUNNING_SECONDS: int = 600
     KNOWLEDGE_EMBEDDING_WORKER_STALE_RUNNING_SECONDS: int = 900
 
+    # ── SMTP (email-уведомления) ──────────────────────────────────────────────
+    # Если SMTP_HOST не задан — уведомления по email отключены (no-op).
+    # Поддерживается STARTTLS (587) и SMTPS/SSL (465). Для внутреннего relay
+    # без TLS установите SMTP_USE_TLS=false.
+    SMTP_HOST: Optional[str] = None
+    SMTP_PORT: int = 587
+    SMTP_USER: Optional[str] = None
+    SMTP_PASSWORD: Optional[SecretStr] = None
+    SMTP_FROM: str = "noreply@support.local"
+    SMTP_USE_TLS: bool = True
+
+    # ── Slack Incoming Webhook ────────────────────────────────────────────────
+    # Получить URL: Slack → App settings → Incoming Webhooks → Add New Webhook.
+    # Если не задан — Slack-уведомления отключены (no-op).
+    SLACK_WEBHOOK_URL: Optional[str] = None
+
+    # ── Retention логов ───────────────────────────────────────────────────────
+    # Количество дней хранения audit_logs, ai_fallback_events и завершённых
+    # ai_jobs / knowledge_embedding_jobs. 0 — retention отключён (хранить всё).
+    LOG_RETENTION_DAYS: int = 90
+
     # ── Rate limiter ──────────────────────────────────────────────────────
     # memory  — счётчики в памяти процесса, по uvicorn-воркеру свои.
     # redis   — общий счётчик через ZSET-sliding-window на REDIS_URL.

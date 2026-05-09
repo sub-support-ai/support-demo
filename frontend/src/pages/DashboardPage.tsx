@@ -108,6 +108,15 @@ function BreakdownList({
   );
 }
 
+/** Форматирует секунды в читаемый вид: "2 ч 15 мин" или "45 мин". */
+function formatDuration(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (h > 0) return `${h} ч ${m} мин`;
+  if (m > 0) return `${m} мин`;
+  return `${Math.round(seconds)} с`;
+}
+
 function formatDate(value?: string | null): string {
   if (!value) return "нет даты";
   return new Date(value).toLocaleString("ru-RU", {
@@ -248,6 +257,24 @@ export function DashboardPage() {
                 label="Роутинг"
                 value={percent(data.ai.routing_accuracy_pct)}
                 hint="подтверждено агентами"
+              />
+              <MetricCard
+                label="TTFR (среднее)"
+                value={
+                  data.tickets.avg_ttfr_seconds != null
+                    ? formatDuration(data.tickets.avg_ttfr_seconds)
+                    : "—"
+                }
+                hint="время первого ответа агента"
+              />
+              <MetricCard
+                label="TTR (среднее)"
+                value={
+                  data.tickets.avg_ttr_seconds != null
+                    ? formatDuration(data.tickets.avg_ttr_seconds)
+                    : "—"
+                }
+                hint="время полного решения"
               />
             </SimpleGrid>
 
@@ -400,6 +427,19 @@ export function DashboardPage() {
                 <BreakdownList items={data.tickets.by_source} />
               </Paper>
             </SimpleGrid>
+
+            {Object.keys(data.tickets.by_category ?? {}).length > 0 && (
+              <Paper className="quiet-panel dashboard-section" withBorder>
+                <Title order={4} mb="xs">
+                  Топ-темы обращений
+                </Title>
+                <Text size="sm" c="dimmed" mb="sm">
+                  Самые частые категории запросов, определённые автоматически.
+                  Помогает выявить узкие места в процессах.
+                </Text>
+                <BreakdownList items={data.tickets.by_category} />
+              </Paper>
+            )}
 
             <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
               <MetricCard label="Эскалации" value={data.ai.escalated_count} />
