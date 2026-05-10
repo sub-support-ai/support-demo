@@ -139,7 +139,6 @@ app.include_router(response_templates_router, prefix="/api/v1")
 app.include_router(conversations_router, prefix="/api/v1")
 app.include_router(audit_router, prefix="/api/v1")
 
-
 @app.get("/healthcheck", tags=["system"])
 async def healthcheck(db: AsyncSession = Depends(get_db)):
     """
