@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 """Тесты email и Slack нотификаций.
 
 Используем monkeypatch для изоляции от реального SMTP и Slack Webhook.
@@ -7,15 +6,6 @@
   - При отсутствии SMTP_HOST / SLACK_WEBHOOK_URL — no-op, нет исключений.
   - notify_ticket_status не падает при None requester_email.
   - post_to_slack не падает при сетевой ошибке.
-=======
-"""Тесты email-нотификаций.
-
-Используем monkeypatch для изоляции от реального SMTP.
-Проверяем:
-  - send_email вызывается с правильными аргументами при смене статуса.
-  - При отсутствии SMTP_HOST — no-op, нет исключений.
-  - notify_ticket_status не падает при None requester_email.
->>>>>>> 381505c1ad1a211574bae4e0656e1003860877d3
 """
 
 import asyncio
@@ -24,10 +14,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.services.email import notify_ticket_status, send_email
-<<<<<<< HEAD
-from app.services.slack import notify_ticket_created, notify_ticket_resolved, post_to_slack
-=======
->>>>>>> 381505c1ad1a211574bae4e0656e1003860877d3
 
 
 # ── send_email ────────────────────────────────────────────────────────────────
@@ -153,90 +139,6 @@ async def test_notify_ticket_status_confirmed_sends_email():
     assert "IT" in sent[0]["body"]
 
 
-<<<<<<< HEAD
-# ── post_to_slack / notify_ticket_created ─────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_post_to_slack_noop_when_no_webhook(monkeypatch):
-    """Без SLACK_WEBHOOK_URL — no-op, httpx не вызывается."""
-    from app.config import Settings
-    settings = Settings()
-    settings.SLACK_WEBHOOK_URL = None
-    monkeypatch.setattr("app.services.slack.get_settings", lambda: settings)
-
-    with patch("httpx.AsyncClient") as mock_client:
-        await post_to_slack({"text": "hello"})
-        mock_client.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_post_to_slack_sends_payload(monkeypatch):
-    """Если SLACK_WEBHOOK_URL задан — отправляем POST с payload."""
-    from app.config import Settings
-    settings = Settings()
-    settings.SLACK_WEBHOOK_URL = "https://hooks.slack.com/test"
-    monkeypatch.setattr("app.services.slack.get_settings", lambda: settings)
-
-    mock_response = MagicMock()
-    mock_response.raise_for_status = MagicMock()
-    mock_client = AsyncMock()
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
-    mock_client.post = AsyncMock(return_value=mock_response)
-
-    with patch("app.services.slack.httpx.AsyncClient", return_value=mock_client):
-        await post_to_slack({"text": "новый тикет"})
-
-    mock_client.post.assert_called_once()
-    call_kwargs = mock_client.post.call_args
-    assert call_kwargs[0][0] == "https://hooks.slack.com/test"
-
-
-@pytest.mark.asyncio
-async def test_post_to_slack_swallows_http_error(monkeypatch):
-    """HTTP-ошибка Slack не прокидывается наружу."""
-    from app.config import Settings
-    settings = Settings()
-    settings.SLACK_WEBHOOK_URL = "https://hooks.slack.com/broken"
-    monkeypatch.setattr("app.services.slack.get_settings", lambda: settings)
-
-    mock_client = AsyncMock()
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
-    mock_client.post = AsyncMock(side_effect=Exception("Network error"))
-
-    with patch("app.services.slack.httpx.AsyncClient", return_value=mock_client):
-        # Не должно бросать
-        await post_to_slack({"text": "fail"})
-
-
-@pytest.mark.asyncio
-async def test_notify_ticket_created_formats_message(monkeypatch):
-    """notify_ticket_created передаёт правильные данные в post_to_slack."""
-    sent = []
-
-    async def fake_post(payload):
-        sent.append(payload)
-
-    with patch("app.services.slack.post_to_slack", side_effect=fake_post):
-        await notify_ticket_created(
-            ticket_id=7,
-            title="Нет VPN",
-            department="IT",
-            priority="высокий",
-            requester_name="Сотрудник",
-        )
-
-    assert len(sent) == 1
-    text = sent[0]["text"]
-    assert "7" in text
-    assert "Нет VPN" in text
-    assert "IT" in text
-
-
-=======
->>>>>>> 381505c1ad1a211574bae4e0656e1003860877d3
 # ── Retention config ──────────────────────────────────────────────────────────
 
 

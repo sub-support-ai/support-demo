@@ -149,8 +149,6 @@ _STATUS_BODIES = {
 }
 
 
-<<<<<<< HEAD
-=======
 async def notify_agent_assigned(
     *,
     ticket_id: int,
@@ -173,7 +171,6 @@ async def notify_agent_assigned(
     await send_email(to=agent_email, subject=subject, body=body)
 
 
->>>>>>> 381505c1ad1a211574bae4e0656e1003860877d3
 async def notify_ticket_status(
     *,
     ticket_id: int,

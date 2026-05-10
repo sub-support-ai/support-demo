@@ -178,8 +178,6 @@ async def get_stats(
     avg_ttfr = ttfr_result.scalar()
     avg_ttr = ttr_result.scalar()
 
-<<<<<<< HEAD
-=======
     # Средняя CSAT-оценка (1–5) по оценённым тикетам из скоупа пользователя
     csat_query = select(func.avg(TicketRating.rating).label("avg_csat"))
     if ticket_filters:
@@ -191,7 +189,6 @@ async def get_stats(
     csat_result = await db.execute(csat_query)
     avg_csat = csat_result.scalar()
 
->>>>>>> 381505c1ad1a211574bae4e0656e1003860877d3
     ticket_stats = TicketStats(
         total=total_tickets,
         by_status=by_status,
@@ -203,10 +200,7 @@ async def get_stats(
         reopen_count=reopen_result.scalar() or 0,
         avg_ttfr_seconds=round(float(avg_ttfr), 1) if avg_ttfr is not None else None,
         avg_ttr_seconds=round(float(avg_ttr), 1) if avg_ttr is not None else None,
-<<<<<<< HEAD
-=======
         avg_csat_score=round(float(avg_csat), 2) if avg_csat is not None else None,
->>>>>>> 381505c1ad1a211574bae4e0656e1003860877d3
     )
 
     # ── Статистика AI ─────────────────────────────────────────────────────────
