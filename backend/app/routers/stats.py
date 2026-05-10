@@ -25,6 +25,7 @@ from app.models.ticket import Ticket
 from app.models.ai_log import AILog
 from app.models.ai_job import AIJob
 from app.models.conversation import Conversation
+from app.models.knowledge_article import KnowledgeArticle, KnowledgeArticleFeedback
 from app.models.knowledge_embedding_job import KnowledgeEmbeddingJob
 from app.models.ticket_rating import TicketRating
 from app.models.user import User
@@ -33,6 +34,10 @@ from app.schemas.stats import (
     AIStats,
     JobQueueStats,
     JobsStats,
+    KnowledgeArticleSummary,
+    KnowledgeScoreBucket,
+    KnowledgeScoreDistribution,
+    KnowledgeStats,
     StatsResponse,
     TicketStats,
 )
@@ -373,4 +378,231 @@ async def get_ai_fallbacks_stats(
         total=sum(by_reason.values()),
         by_reason=by_reason,
         by_service=by_service,
+    )
+
+
+# ── KB-дашборд ──────────────────────────────────────────────────────────────
+
+# Сколько статей-карточек класть в каждую секцию дашборда. Десять —
+# хороший компромисс: на одной странице, но достаточно для анализа.
+_KB_DASHBOARD_TOP_N = 10
+# Окно «expiring soon»: 30 дней. Дольше — почти не воспринимается как
+# срочно; меньше — не успевает попадать в дайджесты.
+_KB_EXPIRING_WINDOW_DAYS = 30
+
+
+def _summary_from_article(article: KnowledgeArticle) -> KnowledgeArticleSummary:
+    total_feedback = article.helped_count + article.not_helped_count + article.not_relevant_count
+    helpfulness = (
+        round(article.helped_count / total_feedback * 100, 1)
+        if total_feedback > 0
+        else None
+    )
+    return KnowledgeArticleSummary(
+        article_id=article.id,
+        title=article.title,
+        department=article.department,
+        request_type=article.request_type,
+        view_count=article.view_count,
+        helped_count=article.helped_count,
+        not_helped_count=article.not_helped_count,
+        not_relevant_count=article.not_relevant_count,
+        helpfulness_pct=helpfulness,
+        is_active=article.is_active,
+        expires_at=article.expires_at.isoformat() if article.expires_at else None,
+    )
+
+
+@router.get(
+    "/knowledge",
+    response_model=KnowledgeStats,
+    summary="Метрики базы знаний (для админ-дашборда)",
+    description=(
+        "Возвращает агрегаты по KB: всего статей, по отделам, истекающие, "
+        "топ-помогающих и топ-непомогающих, никогда не показанные. "
+        "Доступно только админам."
+    ),
+)
+async def get_knowledge_stats(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_role("admin")),
+):
+    now = datetime.now(timezone.utc)
+    expiring_cutoff = now + timedelta(days=_KB_EXPIRING_WINDOW_DAYS)
+
+    total = (await db.execute(select(func.count()).select_from(KnowledgeArticle))).scalar() or 0
+    active = (
+        await db.execute(
+            select(func.count())
+            .select_from(KnowledgeArticle)
+            .where(KnowledgeArticle.is_active.is_(True))
+        )
+    ).scalar() or 0
+    drafts = total - active
+
+    by_dept_rows = await db.execute(
+        select(KnowledgeArticle.department, func.count().label("cnt"))
+        .where(KnowledgeArticle.is_active.is_(True))
+        .group_by(KnowledgeArticle.department)
+    )
+    by_department = {row.department or "—": int(row.cnt) for row in by_dept_rows}
+
+    expiring_soon = (
+        await db.execute(
+            select(func.count())
+            .select_from(KnowledgeArticle)
+            .where(
+                KnowledgeArticle.is_active.is_(True),
+                KnowledgeArticle.expires_at.is_not(None),
+                KnowledgeArticle.expires_at > now,
+                KnowledgeArticle.expires_at <= expiring_cutoff,
+            )
+        )
+    ).scalar() or 0
+
+    expired = (
+        await db.execute(
+            select(func.count())
+            .select_from(KnowledgeArticle)
+            .where(
+                KnowledgeArticle.is_active.is_(True),
+                KnowledgeArticle.expires_at.is_not(None),
+                KnowledgeArticle.expires_at <= now,
+            )
+        )
+    ).scalar() or 0
+
+    # Топ-помогающих: helped_count > 0, сортировка по helped_count desc.
+    # Тай-брейк по helpfulness_pct мы делаем уже в Python — на SQL это
+    # дорого выражается через CASE, а N маленькое.
+    top_helped_rows = await db.execute(
+        select(KnowledgeArticle)
+        .where(
+            KnowledgeArticle.is_active.is_(True),
+            KnowledgeArticle.helped_count > 0,
+        )
+        .order_by(
+            KnowledgeArticle.helped_count.desc(),
+            KnowledgeArticle.id.asc(),
+        )
+        .limit(_KB_DASHBOARD_TOP_N)
+    )
+    top_helped = [_summary_from_article(a) for a in top_helped_rows.scalars().all()]
+
+    # Топ-непомогающих: not_helped_count > 0. Это явные кандидаты на
+    # ревью/перепись/удаление.
+    top_not_helped_rows = await db.execute(
+        select(KnowledgeArticle)
+        .where(
+            KnowledgeArticle.is_active.is_(True),
+            KnowledgeArticle.not_helped_count > 0,
+        )
+        .order_by(
+            KnowledgeArticle.not_helped_count.desc(),
+            KnowledgeArticle.id.asc(),
+        )
+        .limit(_KB_DASHBOARD_TOP_N)
+    )
+    top_not_helped = [_summary_from_article(a) for a in top_not_helped_rows.scalars().all()]
+
+    # Никогда не показанные: view_count = 0 И активные. Это статьи,
+    # которые в выдачу не попадают совсем — кандидаты на удаление или
+    # переписывание keywords.
+    never_shown_rows = await db.execute(
+        select(KnowledgeArticle)
+        .where(
+            KnowledgeArticle.is_active.is_(True),
+            KnowledgeArticle.view_count == 0,
+        )
+        .order_by(KnowledgeArticle.created_at.desc())
+        .limit(_KB_DASHBOARD_TOP_N)
+    )
+    never_shown = [_summary_from_article(a) for a in never_shown_rows.scalars().all()]
+
+    return KnowledgeStats(
+        total_articles=total,
+        active_articles=active,
+        drafts=drafts,
+        by_department=by_department,
+        expiring_soon_count=expiring_soon,
+        expired_count=expired,
+        top_helped=top_helped,
+        top_not_helped=top_not_helped,
+        never_shown=never_shown,
+    )
+
+
+# ── Score distribution для калибровки порогов ───────────────────────────────
+
+
+# Бакеты гистограммы score'ов. Подобраны под ожидаемые значения скоринга
+# (см. build_matches в knowledge_base.py): text_score + context + freshness
+# + feedback. Реалистичный диапазон 0..40, выше — экстремальные совпадения.
+_SCORE_BUCKETS: list[tuple[float, float]] = [
+    (0.0, 2.0),
+    (2.0, 4.0),
+    (4.0, 6.0),
+    (6.0, 8.0),
+    (8.0, 12.0),
+    (12.0, 16.0),
+    (16.0, 24.0),
+    (24.0, 999.0),  # последний — открытый сверху
+]
+
+
+@router.get(
+    "/knowledge/score-distribution",
+    response_model=KnowledgeScoreDistribution,
+    summary="Распределение KB-скор'ов за период (для калибровки порогов)",
+    description=(
+        "Возвращает гистограмму score'ов из KnowledgeArticleFeedback за "
+        "последние N дней + распределение по решениям (answer / clarify / "
+        "escalate) и текущие пороги. Админ использует это, чтобы подкрутить "
+        "RAG_SCORE_HIGH_THRESHOLD / RAG_SCORE_MEDIUM_THRESHOLD под реальные "
+        "данные. Доступно только админам."
+    ),
+)
+async def get_kb_score_distribution(
+    days: int = Query(default=30, ge=1, le=180),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_role("admin")),
+):
+    settings = get_settings()
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+
+    # Тянем минимум — score и decision. На больших окнах быстрее, чем
+    # тянуть полные ORM-объекты.
+    rows = await db.execute(
+        select(KnowledgeArticleFeedback.score, KnowledgeArticleFeedback.decision)
+        .where(KnowledgeArticleFeedback.created_at >= since)
+    )
+    records = list(rows.all())
+    total = len(records)
+
+    # Раскидываем по бакетам.
+    counts = [0] * len(_SCORE_BUCKETS)
+    decision_counts: dict[str, int] = {}
+    for score, decision in records:
+        s = float(score or 0.0)
+        for index, (start, end) in enumerate(_SCORE_BUCKETS):
+            if start <= s < end:
+                counts[index] += 1
+                break
+        decision_counts[decision] = decision_counts.get(decision, 0) + 1
+
+    buckets = [
+        KnowledgeScoreBucket(range_start=start, range_end=end, count=cnt)
+        for (start, end), cnt in zip(_SCORE_BUCKETS, counts)
+    ]
+
+    return KnowledgeScoreDistribution(
+        period_days=days,
+        total_feedback_records=total,
+        buckets=buckets,
+        decision_distribution=decision_counts,
+        current_thresholds={
+            "high": settings.RAG_SCORE_HIGH_THRESHOLD,
+            "medium": settings.RAG_SCORE_MEDIUM_THRESHOLD,
+            "red_zone": settings.RAG_CONFIDENCE_RED_ZONE,
+        },
     )

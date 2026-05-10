@@ -1,4 +1,4 @@
-import { Button, Group, Paper, Text } from "@mantine/core";
+import { Badge, Button, Group, Paper, Text, Tooltip } from "@mantine/core";
 import { useState } from "react";
 
 import { useSubmitKnowledgeFeedback } from "../../api/knowledge";
@@ -9,6 +9,35 @@ import type {
 } from "../../api/types";
 import { EscalationCard } from "./EscalationCard";
 import { Sources } from "./Sources";
+
+/** Визуальный индикатор уверенности модели.
+ *  ≥ 0.8 — зелёный «уверен» (типично для KB-hit'ов с decision=answer)
+ *  ≥ 0.6 — жёлтый «средне» (clarify или LLM с осторожным ответом)
+ *  <  0.6 — красный «не уверен» (escalate / red zone)
+ *  null  — не показываем (intake-сообщения, fallback'и без conf'а)
+ */
+function ConfidenceBadge({ confidence }: { confidence?: number | null }) {
+  if (typeof confidence !== "number") return null;
+  let color: string;
+  let label: string;
+  if (confidence >= 0.8) {
+    color = "green";
+    label = "уверен";
+  } else if (confidence >= 0.6) {
+    color = "yellow";
+    label = "средне";
+  } else {
+    color = "red";
+    label = "не уверен";
+  }
+  return (
+    <Tooltip label={`Уверенность модели: ${(confidence * 100).toFixed(0)}%`} withArrow>
+      <Badge size="xs" variant="light" color={color}>
+        {label}
+      </Badge>
+    </Tooltip>
+  );
+}
 
 function KnowledgeFeedbackActions({ message }: { message: Message }) {
   const submitFeedback = useSubmitKnowledgeFeedback();
@@ -86,10 +115,11 @@ export function MessageBubble({
         <div className="escalation-stack">
           {message.content && (
             <Paper className="message-bubble ai" withBorder>
-              <Group gap="xs" mb={4}>
+              <Group gap="xs" mb={4} align="center">
                 <Text size="xs" fw={600} c="dimmed">
                   AI
                 </Text>
+                <ConfidenceBadge confidence={message.ai_confidence} />
               </Group>
               <Text size="sm" className="message-text">
                 {message.content}
@@ -114,10 +144,11 @@ export function MessageBubble({
   return (
     <div className={`message-row ${isUser ? "user" : "ai"}`}>
       <Paper className={`message-bubble ${isUser ? "user" : "ai"}`} withBorder>
-        <Group gap="xs" mb={4}>
+        <Group gap="xs" mb={4} align="center">
           <Text size="xs" fw={600} c="dimmed">
             {isUser ? "Вы" : "AI"}
           </Text>
+          {!isUser && <ConfidenceBadge confidence={message.ai_confidence} />}
         </Group>
         <Text size="sm" className="message-text">
           {message.content}

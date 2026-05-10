@@ -55,6 +55,8 @@ export interface Conversation {
   id: number;
   user_id: number;
   status: ConversationStatus | string;
+  /** Текущая стадия обработки AI-ответа (null = не обрабатывается). */
+  ai_stage?: "thinking" | "searching" | "found_kb" | "generating" | string | null;
   created_at?: string | null;
   updated_at?: string | null;
 }

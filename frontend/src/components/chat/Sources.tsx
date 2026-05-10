@@ -1,8 +1,27 @@
-import { Anchor, Collapse, Group, Stack, Text, UnstyledButton } from "@mantine/core";
+import { Anchor, Badge, Collapse, Group, Stack, Text, UnstyledButton } from "@mantine/core";
 import { IconChevronDown, IconChevronRight, IconFileText } from "@tabler/icons-react";
 import { useDisclosure } from "@mantine/hooks";
 
 import type { Source } from "../../api/types";
+
+// Человекочитаемые ярлыки для типа поиска. Показываем пользователю, что
+// статья нашлась через keyword-match (точное совпадение) или semantic
+// (по смыслу) — это help'ает доверять/не доверять источнику.
+const RETRIEVAL_LABELS: Record<string, { label: string; color: string }> = {
+  keyword: { label: "Ключевые слова", color: "gray" },
+  full_text: { label: "Полнотекстовый", color: "blue" },
+  semantic: { label: "По смыслу", color: "violet" },
+};
+
+function retrievalBadge(retrieval: string | null | undefined) {
+  if (!retrieval) return null;
+  const meta = RETRIEVAL_LABELS[retrieval] ?? { label: retrieval, color: "gray" };
+  return (
+    <Badge size="xs" variant="light" color={meta.color}>
+      {meta.label}
+    </Badge>
+  );
+}
 
 export function Sources({ sources }: { sources?: Source[] | null }) {
   const [opened, { toggle }] = useDisclosure(false);
@@ -25,7 +44,7 @@ export function Sources({ sources }: { sources?: Source[] | null }) {
         <div className="sources-list">
           {sources.map((source, index) => (
             <Stack key={`${source.title}-${index}`} gap={4} className="source-item">
-              <Group gap={8} wrap="nowrap">
+              <Group gap={8} wrap="nowrap" align="center">
                 <IconFileText size={14} />
                 {source.url ? (
                   <Anchor href={source.url} target="_blank" size="xs">
@@ -34,9 +53,10 @@ export function Sources({ sources }: { sources?: Source[] | null }) {
                 ) : (
                   <Text size="xs">{source.title}</Text>
                 )}
-                {source.retrieval && (
+                {retrievalBadge(source.retrieval)}
+                {typeof source.score === "number" && (
                   <Text size="xs" c="dimmed">
-                    {source.retrieval}
+                    score {source.score.toFixed(1)}
                   </Text>
                 )}
               </Group>

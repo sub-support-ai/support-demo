@@ -55,6 +55,62 @@ class StatsResponse(BaseModel):
     jobs: JobsStats
 
 
+class KnowledgeArticleSummary(BaseModel):
+    """Карточка статьи в KB-дашборде. Минимум для админа: title и счётчики."""
+    article_id: int
+    title: str
+    department: str | None = None
+    request_type: str | None = None
+    view_count: int = 0
+    helped_count: int = 0
+    not_helped_count: int = 0
+    not_relevant_count: int = 0
+    helpfulness_pct: float | None = None  # helped / (helped+not_helped+not_relevant), None если 0
+    is_active: bool = True
+    expires_at: str | None = None  # ISO8601
+
+
+class KnowledgeStats(BaseModel):
+    """Метрики KB для админ-дашборда."""
+    total_articles: int
+    active_articles: int
+    drafts: int  # is_active=False — обычно черновики из promote-to-kb
+    by_department: dict[str, int]
+    expiring_soon_count: int  # активных, у которых expires_at в ближайшие 30 дней
+    expired_count: int  # активных, у которых expires_at уже прошёл (фильтруются на поиске)
+    # Самые помогающие — топ по helped_count (и helpfulness_pct, как тай-брейк)
+    top_helped: list[KnowledgeArticleSummary]
+    # Самые «не помогающие» — топ по not_helped_count (явные кандидаты на ревью)
+    top_not_helped: list[KnowledgeArticleSummary]
+    # Никогда не показывались пользователям — view_count = 0. Кандидаты на удаление.
+    never_shown: list[KnowledgeArticleSummary]
+
+
+class KnowledgeScoreBucket(BaseModel):
+    """Один бакет гистограммы score'ов из feedback'ов."""
+    range_start: float
+    range_end: float
+    count: int
+
+
+class KnowledgeScoreDistribution(BaseModel):
+    """Распределение score'ов KB-результатов за период.
+
+    Используется для калибровки RAG_SCORE_HIGH_THRESHOLD /
+    RAG_SCORE_MEDIUM_THRESHOLD: админ смотрит, как реальные score'ы
+    распределяются и какая доля улетает в answer/clarify/escalate.
+
+    decision_distribution показывает, сколько KB-ответов вышло на каждое
+    решение state-machine'а. Если answer = 90% — порог занижен (модель
+    самоуверенная). Если escalate = 50% — порог завышен или KB пустая.
+    """
+    period_days: int
+    total_feedback_records: int
+    buckets: list[KnowledgeScoreBucket]
+    decision_distribution: dict[str, int]  # answer / clarify / escalate
+    current_thresholds: dict[str, float]   # high / medium / red_zone
+
+
 class AIFallbacksStats(BaseModel):
     """Агрегат fallback-событий за окно времени.
 

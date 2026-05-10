@@ -9,8 +9,23 @@ MODEL_VERSION = os.getenv("AI_MODEL_VERSION", "mistral-7b-instruct-q4_K_M-2026-0
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", os.getenv("OLLAMA_URL", "http://localhost:11434")).rstrip("/")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
 OLLAMA_TIMEOUT_SECONDS = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "180"))
-MAX_CONTEXT_MESSAGES = int(os.getenv("AI_MAX_CONTEXT_MESSAGES", "10"))
-MAX_MESSAGE_CHARS = int(os.getenv("AI_MAX_MESSAGE_CHARS", "4000"))
+# См. одноимённую переменную в classifier.py — единая стратегия для двух
+# эндпоинтов: модель не выгружается из памяти между запросами в течение
+# часа.
+OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "1h")
+# История диалога, передаваемая в LLM. Раньше: 10 сообщений × 4000 симв.
+# = до 40k символов в каждом промпте. На CPU каждый дополнительный
+# токен на входе = ~10–20 мс prefill'а. 6×2500 = 15k симв. Резервный
+# контекст для модели остаётся (system prompt + история), но prefill
+# короче в ~2–3 раза.
+# Backend ещё раз режет историю по токенному бюджету — см.
+# load_history_for_ai в conversation_ai.py.
+MAX_CONTEXT_MESSAGES = int(os.getenv("AI_MAX_CONTEXT_MESSAGES", "6"))
+MAX_MESSAGE_CHARS = int(os.getenv("AI_MAX_MESSAGE_CHARS", "2500"))
+# Лимит длины ответа модели в токенах. ~400 токенов = 1500–2000 симв,
+# для саппорт-ответа с шагами решения этого хватает. Без лимита Mistral
+# может писать простыни на 2000+ токенов и тратить 30+ сек на CPU.
+NUM_PREDICT = int(os.getenv("AI_NUM_PREDICT", "400"))
 
 
 def _fallback_response() -> dict:
@@ -95,7 +110,15 @@ def generate_answer(conversation_id: int, messages: list) -> dict:
                 "model": OLLAMA_MODEL,
                 "messages": ollama_messages,
                 "stream": False,
-                "options": {"temperature": 0}
+                # keep_alive — модель не выгружается из памяти.
+                "keep_alive": OLLAMA_KEEP_ALIVE,
+                "options": {
+                    "temperature": 0,
+                    # num_predict — потолок длины ответа. Защищает от
+                    # «заболтавшейся» модели и фиксирует худший случай по
+                    # времени генерации.
+                    "num_predict": NUM_PREDICT,
+                },
             },
             timeout=OLLAMA_TIMEOUT_SECONDS,
         )

@@ -985,6 +985,89 @@ async def rate_ticket(
     return rating_obj
 
 
+# ── POST /tickets/{id}/promote-to-kb — превратить решённый тикет в KB-черновик ─
+
+class KBPromotionResponse(BaseModel):
+    """Результат промоута тикета в KB-черновик.
+
+    article_id  — id созданной/обновлённой статьи (черновик, is_active=False).
+    title       — заголовок, извлечённый LLM.
+    created     — True если новая статья, False если обновили существующую
+                  (matched по title).
+    """
+    article_id: int
+    title: str
+    is_active: bool
+    created: bool
+
+
+@router.post(
+    "/{ticket_id}/promote-to-kb",
+    response_model=KBPromotionResponse,
+    summary="Превратить решённый тикет в черновик KB-статьи",
+    description=(
+        "LLM извлекает из тикета и комментариев агентов структурированную "
+        "статью базы знаний (title, problem, steps, when_to_escalate). "
+        "Создаётся как черновик (is_active=False, access_scope=internal) — "
+        "админ ревьюит и публикует. Доступно только агентам и админам. "
+        "Тикет должен быть в статусе resolved/closed."
+    ),
+)
+async def promote_ticket_to_kb(
+    ticket_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.services.kb_promotion import promote_ticket_to_kb_draft
+
+    # Только агент/админ может промоутить — пользователь не имеет
+    # представления, какие решения попадают в KB.
+    if current_user.role not in {"agent", "admin"}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Только агенты и администраторы могут продвигать тикеты в KB",
+        )
+
+    ticket = await _load_ticket(ticket_id, db)
+    if ticket.status not in {"resolved", "closed"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Промоутить можно только решённый или закрытый тикет",
+        )
+
+    result = await promote_ticket_to_kb_draft(
+        db,
+        ticket,
+        requested_by_user_id=current_user.id,
+    )
+    if result is None:
+        # LLM не смог извлечь структуру — тикет слишком специфичный или
+        # AI-сервис недоступен. Не 500, потому что это ожидаемая ситуация.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "Не удалось извлечь обобщаемое решение из тикета. "
+                "Возможно, тикет слишком специфичный или нет агентских комментариев."
+            ),
+        )
+
+    await log_event(
+        db,
+        action="ticket.promote_to_kb",
+        user_id=current_user.id,
+        target_type="ticket",
+        target_id=ticket.id,
+        request=request,
+        details={
+            "kb_article_id": result["article_id"],
+            "kb_article_title": result["title"][:200],
+            "created": result["created"],
+        },
+    )
+    return KBPromotionResponse(**result)
+
+
 # ── DELETE /tickets/{id} — только admin ───────────────────────────────────────
 
 @router.delete(

@@ -90,6 +90,34 @@ export function useUpdateTicketStatus() {
   });
 }
 
+/** Промоут решённого тикета в черновик KB-статьи. Возвращает id и title
+ *  созданной/обновлённой статьи. Доступно агенту/админу.
+ *  Backend: POST /tickets/{id}/promote-to-kb (см. routers/tickets.py).
+ */
+export interface KBPromotionResult {
+  article_id: number;
+  title: string;
+  is_active: boolean;
+  created: boolean;
+}
+
+export function usePromoteTicketToKb() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (ticketId: number) => {
+      const { data } = await api.post<KBPromotionResult>(
+        `/tickets/${ticketId}/promote-to-kb`,
+      );
+      return data;
+    },
+    onSuccess: () => {
+      // KB-список меняется → инвалидируем; tickets не трогаем — статус
+      // тикета не изменился.
+      queryClient.invalidateQueries({ queryKey: ["knowledge"] });
+    },
+  });
+}
+
 export function useResolveTicket() {
   const queryClient = useQueryClient();
   return useMutation({

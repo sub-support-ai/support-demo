@@ -1,7 +1,7 @@
 """Расширить CHECK на tickets.department до 7 отделов
 
-Revision ID: d4e5f6a7b8c9
-Revises: c3d4e5f6a7b8
+Revision ID: d5e8f9a0b1c2
+Revises: c5d6e7f8a9b0
 Create Date: 2026-05-10 00:00:00.000000
 
 Добавляем 4 новых отдела к таксономии: procurement, security, facilities,
@@ -20,8 +20,8 @@ from typing import Sequence, Union
 from alembic import op
 
 
-revision: str = "d4e5f6a7b8c9"
-down_revision: Union[str, None] = "c3d4e5f6a7b8"
+revision: str = "d5e8f9a0b1c2"
+down_revision: Union[str, None] = "c5d6e7f8a9b0"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -23,6 +23,7 @@ import { useResponseTemplates } from "../../api/responseTemplates";
 import type { ResponseTemplate, Ticket, UserRole } from "../../api/types";
 import {
   useCreateTicketComment,
+  usePromoteTicketToKb,
   useResolveTicket,
   useSubmitTicketFeedback,
   useTicketComments,
@@ -100,6 +101,8 @@ export function TicketCard({
   const isOperator = viewerRole === "agent" || viewerRole === "admin";
   const isOwner = viewerRole === "user";
   const isClosed = ticket.status === "closed" || ticket.status === "resolved";
+  const promoteToKb = usePromoteTicketToKb();
+  const [promotedKbId, setPromotedKbId] = useState<number | null>(null);
   const canOperate =
     isOperator &&
     ticket.status !== "pending_user" &&
@@ -275,6 +278,39 @@ export function TicketCard({
             </Button>
             </Group>
           </Stack>
+        )}
+
+        {isOperator && isClosed && (
+          <Group gap="xs" align="center">
+            <Button
+              size="xs"
+              variant="light"
+              color="violet"
+              loading={promoteToKb.isPending}
+              disabled={promotedKbId !== null}
+              onClick={async () => {
+                try {
+                  const result = await promoteToKb.mutateAsync(ticket.id);
+                  setPromotedKbId(result.article_id);
+                } catch {
+                  // ошибка покажется через mutationError ниже / снаружи
+                }
+              }}
+            >
+              Сделать статью KB
+            </Button>
+            {promotedKbId !== null && (
+              <Text size="xs" c="dimmed">
+                Черновик #{promotedKbId} создан — на ревью у админа
+              </Text>
+            )}
+            {promoteToKb.error && (
+              <Text size="xs" c="red">
+                Не удалось создать статью (LLM-сервис недоступен или
+                тикет слишком специфичный)
+              </Text>
+            )}
+          </Group>
         )}
 
         {isOwner && isClosed && (

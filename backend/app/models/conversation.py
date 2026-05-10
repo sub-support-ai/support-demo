@@ -43,6 +43,16 @@ class Conversation(Base):
         String(50), nullable=True
     )
 
+    # ПСЕВДО-СТРИМИНГ: текущая стадия обработки AI-ответа.
+    # Поле обновляется несколькими отдельными commit'ами внутри
+    # generate_ai_message(), чтобы клиент-поллер видел прогресс
+    # без реального стриминга токенов.
+    # Значения: thinking / searching / found_kb / generating / None (idle).
+    # Очищается после завершения или падения джобы.
+    ai_stage: Mapped[Optional[str]] = mapped_column(
+        String(20), nullable=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

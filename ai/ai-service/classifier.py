@@ -10,6 +10,15 @@ MODEL_VERSION = os.getenv("AI_MODEL_VERSION", "mistral-7b-instruct-q4_K_M-2026-0
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", os.getenv("OLLAMA_URL", "http://localhost:11434")).rstrip("/")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
 OLLAMA_TIMEOUT_SECONDS = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "180"))
+# Сколько Ollama держит модель в памяти после последнего запроса.
+# По умолчанию у Ollama 5 минут — модель выгружается, и следующий
+# запрос ждёт 5–15 секунд на её загрузку обратно. На демо/проде с
+# нерегулярным трафиком это даёт холодные старты и кажется, что модель
+# тормозит.
+# Значение в формате Ollama: "30m", "1h", "24h", "-1" (никогда).
+# 1h — компромисс: модель держится в памяти весь рабочий час,
+# на ночь освобождается. Для промышленной нагрузки лучше "-1".
+OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "1h")
 
 # Маппинг категории в департамент — источник истины здесь
 CATEGORY_TO_DEPARTMENT = {
@@ -110,7 +119,16 @@ def classify_ticket(ticket_id: int | None, title: str, body: str) -> dict:
                 "model": OLLAMA_MODEL,
                 "messages": [{"role": "user", "content": prompt}],
                 "stream": False,
-                "options": {"temperature": 0}
+                # keep_alive — чтобы модель не выгружалась между запросами.
+                "keep_alive": OLLAMA_KEEP_ALIVE,
+                "options": {
+                    "temperature": 0,
+                    # num_predict — потолок длины ответа. Классификатор
+                    # возвращает компактный JSON (~150 токенов), резервируем
+                    # 256 с запасом. Без лимита Mistral может «заболтаться»
+                    # на пол-минуты сверху положенного.
+                    "num_predict": 256,
+                },
             },
             timeout=OLLAMA_TIMEOUT_SECONDS,
         )

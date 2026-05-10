@@ -19,6 +19,50 @@ from app.services.knowledge_base import LATENCY_PAYLOAD_KEY, find_knowledge_answ
 
 logger = logging.getLogger(__name__)
 
+# ── ПСЕВДО-СТРИМИНГ ────────────────────────────────────────────────────────────
+# Вместо реального SSE/WebSocket-стриминга токенов мы имитируем прогресс
+# через последовательные обновления поля Conversation.ai_stage. Каждый
+# «этап» сохраняется отдельным коротким commit'ом в своей сессии (не в
+# транзакции воркера) — это единственный способ сделать изменение видимым
+# для клиентов-поллеров до завершения основной джобы.
+#
+# Каждый этап соответствует реальному шагу в пайплайне:
+#   thinking  → разбираем вопрос (до поиска по KB)
+#   searching → выполняем гибридный FTS+semantic поиск по KB
+#   found_kb  → KB-статья найдена, формируем ответ из неё
+#   generating→ LLM формирует ответ (самый долгий шаг)
+#   None      → обработка завершена / ошибка; stage сброшен
+#
+# Клиент читает ai_stage из GET /conversations/ (поллинг conversations
+# уже есть при ai_processing=true, интервал 2 сек). Пользователь видит
+# "Ищу в базе знаний..." без намёка на "псевдо".
+
+
+async def _set_ai_stage(conversation_id: int, stage: str | None) -> None:
+    """ПСЕВДО-СТРИМИНГ: обновляет стадию обработки в отдельной сессии.
+
+    Открывает новый AsyncSession и сразу делает commit, чтобы поллящие
+    клиенты видели стадию ещё во время работы основной транзакции воркера.
+    Ошибки намеренно проглатываются — они не должны прерывать основной
+    пайплайн генерации ответа.
+    """
+    from app.database import AsyncSessionLocal
+
+    try:
+        async with AsyncSessionLocal() as stage_db:
+            conv = await stage_db.get(Conversation, conversation_id)
+            if conv is not None:
+                conv.ai_stage = stage
+                await stage_db.commit()
+    except Exception:  # noqa: BLE001
+        # Не прерываем основной поток: стадия — UX-украшение, не бизнес-логика.
+        logger.debug(
+            "Не удалось обновить ai_stage для диалога %d",
+            conversation_id,
+            exc_info=True,
+        )
+
+
 # Лимиты на историю, передаваемую в LLM:
 #  - MESSAGES — потолок по штукам (защита от диалогов на 200 сообщений).
 #  - TOKENS   — потолок по бюджету токенов (защита от длинных простыней).
@@ -33,9 +77,12 @@ logger = logging.getLogger(__name__)
 MAX_HISTORY_MESSAGES = 20
 # 1 русский токен ≈ 2-3 символа, английский ≈ 4. Используем оценку 1 токен ≈ 3 символа
 # (см. estimate_token_count в knowledge_embeddings — там по словам, что грубее).
-# 4096 токенов на историю = ~12'288 символов: оставляет ~3-4k токенов для
-# system-промпта + RAG-контекста + ответа модели.
-MAX_HISTORY_TOKENS = 4096
+# Раньше было 4096 — это давало до ~12k символов в промпте, и на CPU
+# каждый токен в prefill'е добавляет 10–20 мс. 2048 токенов (~6k симв)
+# покрывает реальный диалог поддержки (5–10 сообщений по 50–500 симв).
+# Если нужен больший контекст для конкретного клиента — поднимать через
+# отдельную настройку, но дефолт оптимизируем под скорость.
+MAX_HISTORY_TOKENS = 2048
 _CHARS_PER_TOKEN = 3
 
 SUPPORT_DRAFT_INTENT_TERMS = (
@@ -181,8 +228,14 @@ async def get_ai_answer(
     кладётся в payload[LATENCY_PAYLOAD_KEY] в миллисекундах. Это поле потом
     уходит в AILog.ai_response_time_ms — питч-дек обещает «1,01 сек среднее»,
     и без честного замера эту цифру нечем подтвердить.
+
+    LLM-кэш (см. services/llm_cache.py): на повторные одинаковые
+    истории отдаём готовый ответ instant'ом. Не кэшируем неуверенные
+    ответы и fallback'и (там стратегия — повторить попытку).
     """
     import httpx
+
+    from app.services.llm_cache import get_llm_cache, is_cacheable
 
     settings = get_settings()
     started = time.perf_counter()
@@ -190,6 +243,21 @@ async def get_ai_answer(
     def _with_latency(payload: dict[str, Any]) -> dict[str, Any]:
         payload[LATENCY_PAYLOAD_KEY] = int((time.perf_counter() - started) * 1000)
         return payload
+
+    # ── Cache lookup ─────────────────────────────────────────────────────
+    # Делаем ДО сетевого вызова. На hit возвращаем за <1мс.
+    cache = get_llm_cache()
+    cached = cache.get(messages)
+    if cached is not None:
+        logger.info(
+            "LLM cache hit",
+            extra={
+                "conversation_id": conversation_id,
+                "model_version": cached.get("model_version"),
+            },
+        )
+        # _with_latency обновит latency_ms (получится несколько мс — честно).
+        return _with_latency(cached)
 
     fallback = {
         "answer": "[AI Service временно недоступен. Ваше сообщение сохранено, агент ответит вручную.]",
@@ -264,6 +332,14 @@ async def get_ai_answer(
     data.setdefault("sources", [])
     data.setdefault("model_version", settings.AI_MODEL_VERSION_FALLBACK)
     payload = _with_latency(data)
+
+    # Кэшируем ТОЛЬКО уверенные не-fallback ответы. См. is_cacheable —
+    # там whitelist условий. Это критично, потому что плохой кэш
+    # хуже отсутствия кэша: пользователь получит залипший вранливый
+    # ответ снова и снова.
+    if is_cacheable(payload, settings.RAG_CONFIDENCE_RED_ZONE):
+        cache.put(messages, payload)
+
     logger.info(
         "AI Service responded",
         extra={
@@ -277,14 +353,20 @@ async def get_ai_answer(
 
 
 async def generate_ai_message(db: AsyncSession, conversation_id: int) -> Message:
+    # ПСЕВДО-СТРИМИНГ: первый этап — анализируем вопрос.
+    await _set_ai_stage(conversation_id, "thinking")
+
     conversation = await db.get(Conversation, conversation_id)
     if conversation is None:
+        await _set_ai_stage(conversation_id, None)
         raise ValueError(f"Conversation {conversation_id} not found")
     if conversation.status == "escalated":
+        await _set_ai_stage(conversation_id, None)
         raise ValueError(f"Conversation {conversation_id} is already escalated")
 
     history = await load_history_for_ai(db, conversation_id)
     if should_offer_support_draft(history):
+        # Быстрый путь — intake rules; стадию не меняем, сразу сбросим.
         ai_payload = {
             "answer": build_intake_answer(),
             "confidence": 0.5,
@@ -293,9 +375,21 @@ async def generate_ai_message(db: AsyncSession, conversation_id: int) -> Message
             "model_version": "intake-rules-v1",
         }
     else:
+        # ПСЕВДО-СТРИМИНГ: ищем ответ в базе знаний.
+        await _set_ai_stage(conversation_id, "searching")
         ai_payload = await find_knowledge_answer(db, history)
         if ai_payload is None:
+            # ПСЕВДО-СТРИМИНГ: KB не нашла подходящий ответ — идём в LLM.
+            await _set_ai_stage(conversation_id, "generating")
             ai_payload = await get_ai_answer(conversation_id, history)
+        else:
+            # ПСЕВДО-СТРИМИНГ: KB вернула ответ, быстро его формируем.
+            await _set_ai_stage(conversation_id, "found_kb")
+
+    # ПСЕВДО-СТРИМИНГ: обработка завершена, сбрасываем стадию.
+    # Делаем до основного flush'а — клиент увидит сброс сразу после
+    # появления AI-сообщения, не раньше.
+    await _set_ai_stage(conversation_id, None)
 
     # Если AI ушёл в fallback — фиксируем причину для дашборда «Сбои AI».
     # KB-ответ и intake-rules сюда не попадают (там reason не выставляется).

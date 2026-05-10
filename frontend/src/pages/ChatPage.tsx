@@ -124,6 +124,19 @@ export function ChatPage() {
     activeTicket.status === "pending_user" &&
     !activeTicket.confirmed_by_user;
   const isAiProcessing = activeConversation?.status === "ai_processing";
+
+  // Метки для каждой стадии обработки (пользователь не знает, что это «псевдо»).
+  const AI_STAGE_LABELS: Record<string, string> = {
+    thinking: "Анализирую вопрос...",
+    searching: "Ищу в базе знаний...",
+    found_kb: "Нашёл подходящую статью...",
+    generating: "Формирую ответ...",
+  };
+  const aiStageLabel = isAiProcessing
+    ? (activeConversation?.ai_stage
+        ? (AI_STAGE_LABELS[activeConversation.ai_stage] ?? "Обрабатываю запрос...")
+        : "Обрабатываю запрос...")
+    : "";
   const composerDisabled =
     activeConversation?.status === "escalated" || hasPendingDraft || isAiProcessing;
 
@@ -277,7 +290,7 @@ export function ChatPage() {
                 <Group className="ai-processing-indicator" gap="xs">
                   <Loader size="xs" />
                   <Text size="sm" c="dimmed">
-                    Ответ обрабатывается
+                    {aiStageLabel}
                   </Text>
                 </Group>
               )}

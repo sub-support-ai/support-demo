@@ -8,7 +8,17 @@ from app.database import AsyncSessionLocal
 from app.services.ai_jobs import claim_next_ai_job, fail_ai_job, process_ai_job, requeue_stale_ai_jobs
 
 logger = logging.getLogger(__name__)
-POLL_INTERVAL_SECONDS = float(os.getenv("AI_WORKER_POLL_INTERVAL_SECONDS", "1"))
+# Polling-интервал воркера. Раньше был 1s — пользователь мог ждать до 1
+# секунды только пока ai_worker подберёт его сообщение из очереди. На
+# тесте этой латенси не видно (тесты вызывают process_next_ai_job
+# синхронно), но в проде при средней нагрузке `до 1 сек ожидания на
+# каждое сообщение чата` — заметно.
+#
+# 0.2s — компромисс: пустых SQL-запросов в простое в 5 раз больше, но
+# каждый — это `SELECT FROM ai_jobs WHERE status='queued' LIMIT 1`,
+# индексированный, ~1 мс. Дополнительная нагрузка на БД пренебрежимая.
+# При желании клиент задаёт через AI_WORKER_POLL_INTERVAL_SECONDS env.
+POLL_INTERVAL_SECONDS = float(os.getenv("AI_WORKER_POLL_INTERVAL_SECONDS", "0.2"))
 JOB_TIMEOUT_SECONDS = float(os.getenv("AI_WORKER_JOB_TIMEOUT_SECONDS", "240"))
 _stop_event = asyncio.Event()
 

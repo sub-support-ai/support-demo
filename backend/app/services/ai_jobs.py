@@ -95,6 +95,11 @@ async def requeue_stale_ai_jobs(
             job.locked_at = None
             job.started_at = None
             job.error = "Job was requeued after stale running lock"
+            # ПСЕВДО-СТРИМИНГ: сбрасываем зависшую стадию — при повторной
+            # попытке generate_ai_message выставит её заново с "thinking".
+            conversation = await db.get(Conversation, job.conversation_id)
+            if conversation is not None:
+                conversation.ai_stage = None
         else:
             job.status = AI_JOB_FAILED
             job.finished_at = datetime.now(timezone.utc)
@@ -102,6 +107,9 @@ async def requeue_stale_ai_jobs(
             conversation = await db.get(Conversation, job.conversation_id)
             if conversation is not None and conversation.status == "ai_processing":
                 conversation.status = "active"
+            # ПСЕВДО-СТРИМИНГ: финальный провал — сбрасываем стадию.
+            if conversation is not None:
+                conversation.ai_stage = None
     await db.flush()
     return len(jobs)
 
@@ -132,4 +140,8 @@ async def fail_ai_job(db: AsyncSession, job: AIJob, exc: Exception) -> None:
         conversation = await db.get(Conversation, job.conversation_id)
         if conversation is not None and conversation.status == "ai_processing":
             conversation.status = "active"
+        # ПСЕВДО-СТРИМИНГ: сбрасываем стадию при окончательном провале
+        # джобы, чтобы UI не завис с "Формирую ответ..." навсегда.
+        if conversation is not None:
+            conversation.ai_stage = None
     await db.flush()

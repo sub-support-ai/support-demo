@@ -62,6 +62,9 @@ class ConversationRead(BaseModel):
     id: int
     user_id: int
     status: str
+    # ПСЕВДО-СТРИМИНГ: текущая стадия обработки. null — нет активной генерации.
+    # Значения: thinking / searching / found_kb / generating
+    ai_stage: str | None = None
     created_at: datetime
     updated_at: datetime | None = None
 
