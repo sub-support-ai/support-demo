@@ -1,6 +1,6 @@
 """ticket_comments.author_id SET NULL + composite index (agent_id, status)
 
-Revision ID: c3d4e5f6a7b8
+Revision ID: c5d6e7f8a9b0
 Revises: b2c3d4e5f6a7
 Create Date: 2026-05-10 00:00:00.000000
 
@@ -20,7 +20,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = "c3d4e5f6a7b8"
+revision = "c5d6e7f8a9b0"
 down_revision = "b2c3d4e5f6a7"
 branch_labels = None
 depends_on = None

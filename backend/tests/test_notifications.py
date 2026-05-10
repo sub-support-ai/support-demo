@@ -1,11 +1,10 @@
-"""Тесты email и Slack нотификаций.
+"""Тесты email-нотификаций.
 
-Используем monkeypatch для изоляции от реального SMTP и Slack Webhook.
+Используем monkeypatch для изоляции от реального SMTP.
 Проверяем:
   - send_email вызывается с правильными аргументами при смене статуса.
-  - При отсутствии SMTP_HOST / SLACK_WEBHOOK_URL — no-op, нет исключений.
+  - При отсутствии SMTP_HOST — no-op, нет исключений.
   - notify_ticket_status не падает при None requester_email.
-  - post_to_slack не падает при сетевой ошибке.
 """
 
 import asyncio
