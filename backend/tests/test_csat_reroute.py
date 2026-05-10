@@ -174,7 +174,7 @@ async def test_rate_ticket_upsert(client: AsyncClient, db_session: AsyncSession)
         json={"rating": 5, "comment": "Пересмотрел — отличная работа!"},
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert r.status_code == 201, r.text
+    assert r.status_code == 200, r.text  # update → 200, не 201
     assert r.json()["rating"] == 5
 
     # В БД должна быть ровно одна запись

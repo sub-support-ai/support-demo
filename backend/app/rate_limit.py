@@ -205,7 +205,7 @@ def set_backend_for_testing(backend: _Backend) -> None:
 # ── Публичный API ────────────────────────────────────────────────────────────
 
 
-def _client_ip(request: Request) -> str:
+def get_client_ip(request: Request) -> str:
     """Реальный IP клиента для ключа лимитера.
 
     Без прокси (TRUSTED_PROXY_COUNT=0): берём request.client.host — это IP
@@ -262,7 +262,7 @@ def rate_limit(max_calls: int, window_seconds: int):
         backend = _get_backend()
         retry_after = await backend.consume(
             scope=scope,
-            key=_client_ip(request),
+            key=get_client_ip(request),
             max_calls=max_calls,
             window_seconds=window_seconds,
         )

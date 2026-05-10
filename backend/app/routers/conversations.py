@@ -109,6 +109,38 @@ class MessageRead(BaseModel):
     requires_escalation: bool | None = None
 
 
+class AddMessageResponse(BaseModel):
+    """Ответ на отправку сообщения в диалог.
+
+    AI-ответ генерируется асинхронно через job-очередь. HTTP-запрос возвращает
+    управление сразу после сохранения user_message — без ожидания LLM. Клиент
+    получает:
+
+      user_message       — только что сохранённое сообщение пользователя.
+      conversation_status — "ai_processing" (модель ещё работает) или "active"
+                           (если по какой-то причине AI-job не создалась —
+                           деградация, но не блокировка).
+      ai_job_id          — id задачи в очереди ai_jobs. Опционально использовать
+                           для GET /jobs/{id}, чтобы наблюдать прогресс. Когда
+                           job в статусе "done"/"failed" — AI-ответ уже в
+                           GET /messages.
+      poll_hint          — путь, по которому клиент должен поллить, чтобы
+                           забрать AI-ответ. Указан явно, чтобы фронт не
+                           догадывался об URL'е.
+
+    Рекомендованный паттерн на клиенте:
+      1. POST /messages → получить ai_job_id, conversation_status="ai_processing".
+      2. Поллить GET /messages раз в ~1 сек, пока conversation.status не станет
+         "active" (т.е. появится AI-сообщение). Таймаут на клиенте — разумный
+         (60 сек), после чего показать «AI не успел, попробуйте ещё раз».
+    """
+
+    user_message: "MessageRead"
+    conversation_status: str
+    ai_job_id: int | None = None
+    poll_hint: str
+
+
 class EscalationContext(BaseModel):
     requester_name: str = Field(min_length=1, max_length=100)
     requester_email: EmailStr
@@ -218,21 +250,25 @@ async def _get_conversation_for_user(
 
 @router.post(
     "/{conversation_id}/messages",
-    response_model=list[MessageRead],
+    response_model=AddMessageResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Отправить сообщение в диалог",
-    description="Добавляет сообщение пользователя и получает ответ от AI. "
-                "Возвращает оба сообщения. Для AI-сообщения возвращаются "
-                "источники (sources), уверенность модели и флаг "
-                "requires_escalation — клиент по нему решает, предлагать ли "
-                "эскалацию на агента.",
+    description=(
+        "Сохраняет сообщение пользователя и ставит задачу на генерацию "
+        "AI-ответа в очередь (ai_jobs). HTTP-запрос возвращается сразу — "
+        "AI-ответ обрабатывается фоновым воркером.\n\n"
+        "Клиент получает `ai_job_id`, `conversation_status` и `poll_hint`. "
+        "Чтобы получить AI-ответ, клиент должен поллить GET /messages пока "
+        "не появится сообщение с role=ai (или conversation.status снова "
+        "станет 'active')."
+    ),
 )
 async def add_message(
     conversation_id: int,
     payload: MessageCreate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
-):
+) -> AddMessageResponse:
     conversation = await _get_conversation_for_user(
         conversation_id, db, current_user
     )
@@ -251,21 +287,31 @@ async def add_message(
             detail="Дождитесь ответа перед созданием черновика.",
         )
 
-    # Сохраняем сообщение пользователя
+    # PII-маскировка контента до сохранения: содержимое сообщений живёт долго
+    # и попадает в RAG / эскалацию / outbound-логи. Здесь же — единственное
+    # место, где user-input приходит в чат, поэтому маскировка тут.
+    from app.services.pii import mask_pii  # ленивый импорт — pii нужен только здесь
+
+    # Сохраняем сообщение пользователя (с маскировкой)
     user_message = Message(
         conversation_id=conversation_id,
         role="user",
-        content=payload.content,
+        content=mask_pii(payload.content),
     )
     db.add(user_message)
     await db.flush()
     await db.refresh(user_message)
 
     conversation.status = "ai_processing"
-    await enqueue_ai_response_job(db, conversation_id)
+    job = await enqueue_ai_response_job(db, conversation_id)
     await db.flush()
 
-    return [user_message]
+    return AddMessageResponse(
+        user_message=MessageRead.model_validate(user_message),
+        conversation_status=conversation.status,
+        ai_job_id=job.id,
+        poll_hint=f"/api/v1/conversations/{conversation_id}/messages",
+    )
 
 
 # ── GET /conversations/{id}/messages — история сообщений ──────────────────────
@@ -380,16 +426,22 @@ async def escalate_conversation(
         body=classify_body,
     )
 
+    from app.constants.departments import DEPARTMENTS_SET
+
     department = ai_result.get("department") or "IT"
-    # Pydantic-схема Ticket.department принимает только {"IT","HR","finance"};
-    # AI-Lead может вернуть "other" — приземляем в "IT" как безопасный default.
-    if department not in {"IT", "HR", "finance"}:
+    # AI-классификатор обучен на 7-отдельной таксономии (см.
+    # app/constants/departments.py), но иногда возвращает "other" или новый,
+    # не предусмотренный класс — приземляем в "IT" как безопасный default
+    # (а не теряем тикет в 422).
+    if department not in DEPARTMENTS_SET:
         department = "IT"
 
-    # Извлекаем steps_tried из истории — что пользователь уже пробовал.
-    # Простая эвристика на ключевые фразы; полноценное извлечение через
-    # LLM — отдельная задача (iteration 2). Здесь — минимально полезно.
-    steps_tried = _extract_steps_tried(messages)
+    # Извлекаем steps_tried из истории через LLM — `services/ai_extract.py`.
+    # При недоступности AI-сервиса автоматически fallback'нется на
+    # keyword-эвристику (то же поведение, что было раньше, но как
+    # последний рубеж — а не основной способ).
+    from app.services.ai_extract import extract_steps_tried
+    steps_tried = await extract_steps_tried(messages)
     requester_name = clean_text_with_fallback(
         payload.context.requester_name,
         current_user.username,
@@ -513,29 +565,6 @@ async def escalate_conversation(
 
 
 # ── Внутренние функции ────────────────────────────────────────────────────────
-
-def _extract_steps_tried(messages: list[Message]) -> str | None:
-    """Эвристика: достаём из user-сообщений то, что похоже на "уже пробовал".
-
-    Полноценное извлечение через LLM — отдельная задача (iteration 2).
-    Здесь — минимально полезный baseline по ключевым фразам.
-
-    Возвращаем None, если ничего не нашли — лучше пусто, чем мусор:
-    None в БД явно показывает агенту "пользователь ничего не упомянул",
-    в то время как пустая строка выглядела бы как "пробовал, но забыл что".
-    """
-    keywords = (
-        "пробовал", "пыталс", "перезагру", "переустанови",
-        "проверял", "уже делал", "сделал",
-    )
-    found: list[str] = []
-    for m in messages:
-        if m.role != "user":
-            continue
-        text = m.content.strip()
-        lower = text.lower()
-        if any(k in lower for k in keywords):
-            found.append(text)
-    if not found:
-        return None
-    return "\n".join(found)
+#
+# _extract_steps_tried переехал в app/services/ai_extract.py (LLM + heuristic
+# fallback). Здесь больше нет приватных хелперов — всё живёт в сервисах.

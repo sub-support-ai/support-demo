@@ -10,7 +10,7 @@
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.database import get_db
 from app.dependencies import get_current_user, require_role
+from app.rate_limit import rate_limit
 from app.models.ai_log import AILog
 from app.models.ticket import Ticket
 from app.models.ticket_comment import TicketComment
@@ -220,6 +221,10 @@ class ResolvePayload(BaseModel):
     summary="Создать тикет",
     description="Создаёт тикет, вызывает AI классификацию и назначает агента. "
                 "Если AI уверен < 0.8 — назначается старший агент для проверки.",
+    # Лимит только на СОЗДАНИЕ тикета (вызывает AI-классификатор).
+    # Чат-сообщения идут через /conversations/{id}/messages — без лимита,
+    # чтобы бот мог задавать уточняющие вопросы без ограничений.
+    dependencies=[Depends(rate_limit(max_calls=20, window_seconds=60))],
 )
 async def create_ticket(
     payload: TicketCreate,
@@ -242,7 +247,7 @@ async def create_ticket(
         # user_id ВСЕГДА из токена — не из тела запроса. См. комментарий в
         # TicketCreate (app/schemas/ticket.py) про атаку подмены user_id.
         user_id=current_user.id,
-        title=payload.title,
+        title=mask_pii(payload.title.strip()),
         body=mask_pii(payload.body),
         user_priority=payload.user_priority,
         department=department,
@@ -322,12 +327,16 @@ async def create_ticket(
     response_model=list[TicketRead],
     summary="Список тикетов",
     description="Возвращает тикеты с пагинацией. "
-                "Фильтр department: IT, HR, finance.",
+                "Фильтр department: IT, HR, finance, procurement, security, "
+                "facilities, documents.",
 )
 async def list_tickets(
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=200),
-    department: str | None = Query(default=None, description="Фильтр по отделу: IT, HR, finance"),
+    department: str | None = Query(
+        default=None,
+        description="Фильтр по отделу. См. app/constants/departments.py.",
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -459,7 +468,7 @@ async def update_ticket_draft(
         ticket.ticket_source = "ai_assisted"
 
     if "title" in update_data and update_data["title"] is not None:
-        ticket.title = update_data["title"].strip()
+        ticket.title = mask_pii(update_data["title"].strip())
     if "body" in update_data and update_data["body"] is not None:
         ticket.body = mask_pii(update_data["body"].strip())
     if "department" in update_data and update_data["department"] is not None:
@@ -485,7 +494,7 @@ async def update_ticket_draft(
         )
     if "steps_tried" in update_data:
         steps_tried = update_data["steps_tried"]
-        ticket.steps_tried = steps_tried.strip() if steps_tried else None
+        ticket.steps_tried = mask_pii(steps_tried.strip()) if steps_tried else None
     if "office" in update_data:
         ticket.office = clean_optional_text(update_data["office"])
     if "affected_item" in update_data:
@@ -530,6 +539,7 @@ async def update_ticket_draft(
     "/{ticket_id}/confirm",
     response_model=TicketRead,
     summary="Подтвердить отправку тикета",
+    dependencies=[Depends(rate_limit(max_calls=10, window_seconds=60))],
     description=(
         "Подтверждает pre-filled тикет, созданный из диалога AI. "
         "Ставит confirmed_by_user=True и status=confirmed. "
@@ -720,8 +730,14 @@ async def create_ticket_comment(
     )
     db.add(comment)
 
-    # Первый публичный комментарий агента/системы → фиксируем TTFR
-    if ticket.first_response_at is None and current_user.role in {"agent", "admin"}:
+    # Первый ПУБЛИЧНЫЙ комментарий агента/системы → фиксируем TTFR.
+    # Внутренние заметки (internal=True) пользователь не видит —
+    # засчитывать их как "первый ответ" значит искажать метрику.
+    if (
+        ticket.first_response_at is None
+        and current_user.role in {"agent", "admin"}
+        and not payload.internal
+    ):
         ticket.first_response_at = datetime.now(timezone.utc)
 
     await db.flush()
@@ -912,6 +928,7 @@ async def rate_ticket(
     ticket_id: int,
     payload: TicketRatingCreate,
     request: Request,
+    response: Response,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -937,7 +954,8 @@ async def rate_ticket(
     )
     rating_obj = existing_result.scalar_one_or_none()
 
-    if rating_obj is None:
+    is_update = rating_obj is not None
+    if not is_update:
         rating_obj = TicketRating(
             ticket_id=ticket_id,
             user_id=current_user.id,
@@ -949,6 +967,7 @@ async def rate_ticket(
         # Обновляем существующую оценку
         rating_obj.rating = payload.rating
         rating_obj.comment = payload.comment
+        response.status_code = status.HTTP_200_OK
 
     await db.flush()
     await db.refresh(rating_obj)

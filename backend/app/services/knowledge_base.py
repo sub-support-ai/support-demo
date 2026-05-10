@@ -352,6 +352,17 @@ def _apply_common_filters(statement, filters: KnowledgeSearchFilters):
                 KnowledgeArticle.request_type.is_(None),
             )
         )
+    # Expired-статьи отфильтровываем на уровне SQL: _freshness_score штрафует
+    # их через -3.0, но они всё равно попадают в кандидаты и могут пройти
+    # пороги, если text_score высокий. Лучше не показывать совсем — статья
+    # с expires_at в прошлом ≡ «info устарело, не отдавать пользователю».
+    # NULL expires_at ≡ «без срока» — оставляем.
+    statement = statement.where(
+        or_(
+            KnowledgeArticle.expires_at.is_(None),
+            KnowledgeArticle.expires_at > func.now(),
+        )
+    )
     return statement
 
 
@@ -452,6 +463,10 @@ def _semantic_filter_sql(filters: KnowledgeSearchFilters) -> tuple[str, dict[str
     if filters.request_type:
         clauses.append("(ka.request_type = :request_type OR ka.request_type IS NULL)")
         params["request_type"] = filters.request_type
+
+    # Expired-статьи отбрасываем — синхронно с _apply_common_filters
+    # (FTS-путь). NULL expires_at ≡ «без срока», оставляем.
+    clauses.append("(ka.expires_at IS NULL OR ka.expires_at > NOW())")
 
     if not clauses:
         return "", params
@@ -658,8 +673,31 @@ async def search_knowledge_articles(
     if not query_tokens:
         return []
 
+    # ── Cache lookup ──────────────────────────────────────────────────────
+    # Кэш ловит повторные одинаковые запросы (типовые "не работает X" в
+    # рабочие часы). Импорт ленивый — knowledge_cache.py типизирует через
+    # TYPE_CHECKING и без него получим circular import.
+    from app.services.knowledge_cache import get_knowledge_cache
+
+    cache = get_knowledge_cache()
+    cached = cache.get(query, limit, filters)
+    if cached is not None:
+        logger.debug(
+            "Knowledge search cache hit",
+            extra={"query_len": len(query), "limit": limit, "results": len(cached)},
+        )
+        return cached
+
     if _session_dialect_name(db) == "postgresql":
-        return await _search_knowledge_articles_hybrid_postgres(
+        matches = await _search_knowledge_articles_hybrid_postgres(
+            db,
+            query,
+            query_tokens,
+            limit,
+            filters,
+        )
+    else:
+        matches = await _search_knowledge_articles_fallback(
             db,
             query,
             query_tokens,
@@ -667,13 +705,8 @@ async def search_knowledge_articles(
             filters,
         )
 
-    return await _search_knowledge_articles_fallback(
-        db,
-        query,
-        query_tokens,
-        limit,
-        filters,
-    )
+    cache.put(query, limit, filters, matches)
+    return matches
 
 
 def _format_steps(article: KnowledgeArticle) -> str:
@@ -742,6 +775,62 @@ def build_knowledge_answer(match: KnowledgeMatch, query: str) -> dict:
     }
 
 
+# Лимиты на построение KB-запроса. При длинных диалогах склейка всех
+# user-сообщений вырастет до тысяч символов — FTS-токенайзер потащит мусор,
+# а семантический эмбеддинг получит «среднее по больнице».
+_KB_QUERY_MAX_USER_MESSAGES = 8
+_KB_QUERY_MAX_CHARS = 2000
+
+
+def _build_kb_query(user_messages: list[str], assistant_messages: list[str]) -> str:
+    """Склеивает запрос к KB из истории диалога.
+
+    Раньше брали только последние 3 user-сообщения. Проблема: бот часто
+    задаёт уточняющие вопросы, и пользователь отвечает короткими репликами
+    ("win10", "403", "vpn"). Главное описание проблемы оставалось в первом
+    сообщении и выпадало из запроса → KB не находила релевантную статью.
+
+    Стратегия:
+      1) Самое свежее сообщение пользователя — главный источник intent
+         (повторяем его дважды, чтобы поднять вес в FTS).
+      2) Первое сообщение пользователя — обычно описание исходной проблемы.
+      3) Промежуточные user-сообщения — короткие ответы на clarify-вопросы.
+      4) Свежие assistant-сообщения добавляем, потому что бот часто
+         перефразирует проблему точнее ("вы имеете в виду VPN-туннель?").
+
+    После склейки обрезаем до _KB_QUERY_MAX_CHARS — слишком длинный
+    запрос бесполезен для FTS (стоп-слова рассеиваются) и упирается в
+    лимит контекста embedding-модели.
+    """
+    if not user_messages:
+        return ""
+
+    latest_user = user_messages[-1]
+    parts: list[str] = [latest_user, latest_user]  # удвоение даёт +score в FTS
+
+    if len(user_messages) >= 2:
+        parts.append(user_messages[0])  # исходное описание проблемы
+
+    # Промежуточные user-сообщения (без первого/последнего) — берём
+    # последние из середины, ограничиваем количество.
+    middle = user_messages[1:-1] if len(user_messages) >= 3 else []
+    parts.extend(middle[-(_KB_QUERY_MAX_USER_MESSAGES - 3):])
+
+    # Последние 2 ответа бота — там часто перефразирована проблема.
+    if assistant_messages:
+        parts.extend(assistant_messages[-2:])
+
+    query = "\n".join(part for part in parts if part)
+    if len(query) > _KB_QUERY_MAX_CHARS:
+        # Обрезаем по слову, чтобы не рвать токены посередине.
+        truncated = query[:_KB_QUERY_MAX_CHARS]
+        last_space = truncated.rfind(" ")
+        if last_space > _KB_QUERY_MAX_CHARS // 2:
+            truncated = truncated[:last_space]
+        query = truncated
+    return query
+
+
 async def find_knowledge_answer(
     db: AsyncSession,
     messages: list[dict[str, str]],
@@ -758,12 +847,23 @@ async def find_knowledge_answer(
         for message in messages
         if message.get("role") == "user" and message.get("content", "").strip()
     ]
+    assistant_messages = [
+        message.get("content", "").strip()
+        for message in messages
+        if message.get("role") == "assistant" and message.get("content", "").strip()
+    ]
     if not user_messages:
         return None
 
-    latest = user_messages[-1]
-    combined = "\n".join(user_messages[-3:])
-    query = f"{latest}\n{combined}"
+    # LLM-rewrite запроса (feature-flag, default OFF). Если выключено
+    # или вернулся None (таймаут/ошибка/не настроен) — fallback на
+    # keyword-склейку из _build_kb_query.
+    from app.services.ai_query_rewrite import rewrite_query_for_kb
+
+    rewritten = await rewrite_query_for_kb(user_messages, assistant_messages)
+    query = rewritten or _build_kb_query(user_messages, assistant_messages)
+    if not query:
+        return None
 
     started = time.perf_counter()
     matches = await search_knowledge_articles(db, query, limit=1)

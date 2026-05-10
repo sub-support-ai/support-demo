@@ -78,8 +78,19 @@ class Settings(BaseSettings):
     AI_MODEL_VERSION_FALLBACK: str = "mistral-unspecified"
 
     # ── KB / RAG ──────────────────────────────────────────────────────────
-    KNOWLEDGE_SEMANTIC_SEARCH_ENABLED: bool = False
+    # По умолчанию включён: код в knowledge_base.py проверяет _pgvector_available()
+    # и тихо деградирует на FTS-only, если pgvector в БД не установлен. Так
+    # деплои с pgvector получают семантический поиск автоматически, а без него
+    # система продолжает работать как раньше (никаких 500-ок).
+    KNOWLEDGE_SEMANTIC_SEARCH_ENABLED: bool = True
     KNOWLEDGE_EMBEDDING_DIMENSION: int = 768
+
+    # LLM переформулирует диалог в один поисковый запрос перед обращением
+    # к KB. Повышает recall на multi-turn диалогах с уточнениями, но
+    # добавляет +1-3 сек латенси на КАЖДОЕ AI-сообщение в чате.
+    # По умолчанию OFF — включать после A/B-теста на helped%/recall@1.
+    # См. app/services/ai_query_rewrite.py
+    KB_QUERY_REWRITE_ENABLED: bool = False
 
     # Скор у нас вычисляется в _score_article (text_score + context +
     # freshness + feedback) и сильно зависит от: размера KB, длины

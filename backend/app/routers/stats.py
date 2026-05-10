@@ -178,14 +178,14 @@ async def get_stats(
     avg_ttfr = ttfr_result.scalar()
     avg_ttr = ttr_result.scalar()
 
-    # Средняя CSAT-оценка (1–5) по оценённым тикетам из скоупа пользователя
-    csat_query = select(func.avg(TicketRating.rating).label("avg_csat"))
-    if ticket_filters:
-        csat_query = (
-            csat_query
-            .join(Ticket, TicketRating.ticket_id == Ticket.id)
-            .where(*ticket_filters)
-        )
+    # Средняя CSAT-оценка (1–5) по оценённым тикетам из скоупа пользователя.
+    # JOIN всегда: исключаем «осиротевшие» оценки (тикет удалён), а для admin
+    # ticket_filters=[] → WHERE () опускается, возвращается глобальный avg.
+    csat_query = (
+        select(func.avg(TicketRating.rating).label("avg_csat"))
+        .join(Ticket, TicketRating.ticket_id == Ticket.id)
+        .where(*ticket_filters)
+    )
     csat_result = await db.execute(csat_query)
     avg_csat = csat_result.scalar()
 

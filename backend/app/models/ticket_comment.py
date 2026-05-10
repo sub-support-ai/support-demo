@@ -2,6 +2,7 @@ from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from typing import Optional
 
 from app.database import Base
 
@@ -16,7 +17,9 @@ class TicketComment(Base):
         nullable=False,
         index=True,
     )
-    author_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+    author_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     author_username: Mapped[str] = mapped_column(String(100), nullable=False)
     author_role: Mapped[str] = mapped_column(String(20), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)

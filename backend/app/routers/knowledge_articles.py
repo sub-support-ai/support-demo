@@ -23,6 +23,7 @@ from app.services.knowledge_base import (
     search_knowledge_articles,
     sync_knowledge_article_index,
 )
+from app.services.knowledge_cache import get_knowledge_cache
 from app.services.knowledge_embedding_jobs import enqueue_knowledge_embedding_job
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
@@ -165,8 +166,22 @@ async def create_knowledge_article(
     db.add(article)
     await db.flush()
     await sync_knowledge_article_index(db, article)
+    # Авто-enqueue embedding-job: без него только что созданная статья будет
+    # видна только в FTS, а в семантическом поиске не появится до ручного
+    # POST /reindex. Embedding-воркер подхватит job, пройдёт по chunks,
+    # обновит pgvector. enqueue_knowledge_embedding_job сам делает
+    # дедупликацию: если active job на этой статье уже есть — вернёт его.
+    await enqueue_knowledge_embedding_job(
+        db,
+        article_id=article.id,
+        requested_by_user_id=admin.id,
+    )
     await db.flush()
     await db.refresh(article)
+
+    # Сбрасываем кэш поиска: новая статья должна сразу появляться в выдаче,
+    # а не висеть TTL=60c, пока кто-то не дождётся истечения.
+    get_knowledge_cache().clear()
 
     await log_event(
         db,
@@ -268,8 +283,24 @@ async def update_knowledge_article(
     if "version" not in updates:
         article.version = (article.version or 1) + 1
     await sync_knowledge_article_index(db, article)
+    # Поля, при изменении которых embedding обязательно надо пересчитать.
+    # Если правится только access_scope или is_active — текст чанков не
+    # меняется, sync_knowledge_article_index не сбросит embedding_model,
+    # и worker'у нечего будет делать. Но мы всё равно enqueue'им — сам
+    # worker через needs_embedding/_chunk_ids_missing_embeddings поймёт,
+    # что обновлять нечего, и закроет job как done(updated=0). Это дешевле,
+    # чем городить набор «трогающих текст» полей здесь.
+    await enqueue_knowledge_embedding_job(
+        db,
+        article_id=article.id,
+        requested_by_user_id=admin.id,
+    )
     await db.flush()
     await db.refresh(article)
+
+    # Сбрасываем кэш — правки статьи (текст, флаги, expires_at) должны
+    # отражаться в поиске сразу, а не через TTL.
+    get_knowledge_cache().clear()
 
     await log_event(
         db,

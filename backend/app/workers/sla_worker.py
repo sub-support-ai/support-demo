@@ -104,13 +104,13 @@ async def run_forever() -> None:
             logger.exception("SLA worker iteration failed")
 
         # Retention — раз в час, независимо от SLA-тика
-        now = asyncio.get_event_loop().time()
+        now = asyncio.get_running_loop().time()
         if now - _last_retention_run >= _RETENTION_INTERVAL_SECONDS:
             try:
                 await _run_retention_once()
             except Exception:
                 logger.exception("Retention worker iteration failed")
-            _last_retention_run = asyncio.get_event_loop().time()
+            _last_retention_run = asyncio.get_running_loop().time()
 
         await asyncio.sleep(POLL_INTERVAL_SECONDS)
 
