@@ -24,8 +24,10 @@ class Ticket(Base):
       "user_written"  — пользователь написал сам после отказа от AI-варианта
       "ai_assisted"   — пользователь написал, AI помог с отделом и приоритетом
 
-    department — куда направить тикет: "IT" | "HR" | "finance"
-      AI определяет автоматически, пользователь может изменить.
+    department — куда направить тикет. Полный список — в
+      app/constants/departments.py (IT, HR, finance, procurement,
+      security, facilities, documents). AI определяет автоматически,
+      пользователь может изменить.
 
     confirmed_by_user — подтвердил ли пользователь отправку.
       False = тикет создан но ещё не отправлен (ждёт подтверждения)

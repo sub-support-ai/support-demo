@@ -27,3 +27,7 @@ alembic>=1.14,<2
 # in-memory-счётчики у каждого инстанса свои, и общий лимит «5 попыток в
 # минуту с IP» превращается в «5 × N инстансов» — брутфорс не остановить.
 redis>=5,<6
+# PyYAML — нужен импортёру KB из Markdown-файлов с YAML frontmatter
+# (scripts/import_knowledge_from_markdown.py). Confluence-export и docs-as-code
+# в Git — типичные источники таких файлов у заказчиков.
+PyYAML>=6.0,<7

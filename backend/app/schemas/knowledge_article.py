@@ -3,7 +3,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-DepartmentLiteral = Literal["IT", "HR", "finance"]
+from app.constants.departments import DepartmentLiteral
+
 AccessScopeLiteral = Literal["public", "internal"]
 KnowledgeFeedbackLiteral = Literal["helped", "not_helped", "not_relevant"]
 KnowledgeDecisionLiteral = Literal["answer", "clarify", "escalate"]

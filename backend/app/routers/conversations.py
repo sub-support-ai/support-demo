@@ -426,10 +426,14 @@ async def escalate_conversation(
         body=classify_body,
     )
 
+    from app.constants.departments import DEPARTMENTS_SET
+
     department = ai_result.get("department") or "IT"
-    # Pydantic-схема Ticket.department принимает только {"IT","HR","finance"};
-    # AI-Lead может вернуть "other" — приземляем в "IT" как безопасный default.
-    if department not in {"IT", "HR", "finance"}:
+    # AI-классификатор обучен на 7-отдельной таксономии (см.
+    # app/constants/departments.py), но иногда возвращает "other" или новый,
+    # не предусмотренный класс — приземляем в "IT" как безопасный default
+    # (а не теряем тикет в 422).
+    if department not in DEPARTMENTS_SET:
         department = "IT"
 
     # Извлекаем steps_tried из истории через LLM — `services/ai_extract.py`.

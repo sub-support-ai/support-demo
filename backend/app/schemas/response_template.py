@@ -1,9 +1,8 @@
 from datetime import datetime
-from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-DepartmentLiteral = Literal["IT", "HR", "finance"]
+from app.constants.departments import DepartmentLiteral
 
 
 class ResponseTemplateBase(BaseModel):

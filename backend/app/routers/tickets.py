@@ -327,12 +327,16 @@ async def create_ticket(
     response_model=list[TicketRead],
     summary="Список тикетов",
     description="Возвращает тикеты с пагинацией. "
-                "Фильтр department: IT, HR, finance.",
+                "Фильтр department: IT, HR, finance, procurement, security, "
+                "facilities, documents.",
 )
 async def list_tickets(
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=200),
-    department: str | None = Query(default=None, description="Фильтр по отделу: IT, HR, finance"),
+    department: str | None = Query(
+        default=None,
+        description="Фильтр по отделу. См. app/constants/departments.py.",
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):

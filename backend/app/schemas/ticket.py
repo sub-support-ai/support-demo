@@ -21,7 +21,11 @@ TicketStatusLiteral = Literal[
 # ALLOWED_OPERATOR_TRANSITIONS).
 OperatorStatusLiteral = Literal["confirmed", "in_progress", "resolved", "closed"]
 
-DepartmentLiteral = Literal["IT", "HR", "finance"]
+# Источник истины для списка отделов — app/constants/departments.py.
+# Импортим Literal оттуда, чтобы Pydantic-валидация была согласована с
+# CHECK-constraint в БД и AI-классификатором.
+from app.constants.departments import DepartmentLiteral  # noqa: E402
+
 EditableTicketPriorityLiteral = Literal["высокий", "средний", "низкий"]
 
 

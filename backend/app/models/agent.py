@@ -19,7 +19,9 @@ class Agent(Base):
     Отделён от User намеренно: у агента есть принадлежность к отделу
     и метрики которые AI использует при роутинге тикетов.
 
-    department        — отдел агента: "IT" | "HR" | "finance"
+    department        — отдел агента. Полный список — в
+                        app/constants/departments.py (IT, HR, finance,
+                        procurement, security, facilities, documents).
                         AI направляет тикет в нужный отдел на основе
                         классификации диалога локальным Mistral (через AI Service).
 

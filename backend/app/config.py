@@ -85,6 +85,13 @@ class Settings(BaseSettings):
     KNOWLEDGE_SEMANTIC_SEARCH_ENABLED: bool = True
     KNOWLEDGE_EMBEDDING_DIMENSION: int = 768
 
+    # LLM переформулирует диалог в один поисковый запрос перед обращением
+    # к KB. Повышает recall на multi-turn диалогах с уточнениями, но
+    # добавляет +1-3 сек латенси на КАЖДОЕ AI-сообщение в чате.
+    # По умолчанию OFF — включать после A/B-теста на helped%/recall@1.
+    # См. app/services/ai_query_rewrite.py
+    KB_QUERY_REWRITE_ENABLED: bool = False
+
     # Скор у нас вычисляется в _score_article (text_score + context +
     # freshness + feedback) и сильно зависит от: размера KB, длины
     # запросов, веса ts_rank_cd / cosine. На каждом клиенте распределение
