@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 """Тесты email и Slack нотификаций.
 
 Используем monkeypatch для изоляции от реального SMTP и Slack Webhook.
@@ -6,6 +7,15 @@
   - При отсутствии SMTP_HOST / SLACK_WEBHOOK_URL — no-op, нет исключений.
   - notify_ticket_status не падает при None requester_email.
   - post_to_slack не падает при сетевой ошибке.
+=======
+"""Тесты email-нотификаций.
+
+Используем monkeypatch для изоляции от реального SMTP.
+Проверяем:
+  - send_email вызывается с правильными аргументами при смене статуса.
+  - При отсутствии SMTP_HOST — no-op, нет исключений.
+  - notify_ticket_status не падает при None requester_email.
+>>>>>>> 381505c1ad1a211574bae4e0656e1003860877d3
 """
 
 import asyncio
@@ -14,7 +24,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.services.email import notify_ticket_status, send_email
+<<<<<<< HEAD
 from app.services.slack import notify_ticket_created, notify_ticket_resolved, post_to_slack
+=======
+>>>>>>> 381505c1ad1a211574bae4e0656e1003860877d3
 
 
 # ── send_email ────────────────────────────────────────────────────────────────
@@ -140,6 +153,7 @@ async def test_notify_ticket_status_confirmed_sends_email():
     assert "IT" in sent[0]["body"]
 
 
+<<<<<<< HEAD
 # ── post_to_slack / notify_ticket_created ─────────────────────────────────────
 
 
@@ -221,6 +235,8 @@ async def test_notify_ticket_created_formats_message(monkeypatch):
     assert "IT" in text
 
 
+=======
+>>>>>>> 381505c1ad1a211574bae4e0656e1003860877d3
 # ── Retention config ──────────────────────────────────────────────────────────
 
 

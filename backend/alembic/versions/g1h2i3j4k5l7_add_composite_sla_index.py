@@ -24,5 +24,3 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index("ix_tickets_status_sla_deadline", table_name="tickets")
-
-    #пункт 1, норм название исправил

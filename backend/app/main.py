@@ -138,10 +138,6 @@ app.include_router(knowledge_articles_router, prefix="/api/v1")
 app.include_router(response_templates_router, prefix="/api/v1")
 app.include_router(conversations_router, prefix="/api/v1")
 app.include_router(audit_router, prefix="/api/v1")
-#пункт 3
-#/healthcheck в main.py - реально проверяет Postgres через SELECT 1, возвращает 503 если БД упала
-# В docker-compose.prod.yml уже настроен healthcheck который стучится на этот эндпоинт
-# Тимлид просил /healthz — это просто другое название, функционально абсолютно то же самое. Покажи ему /healthcheck
 
 @app.get("/healthcheck", tags=["system"])
 async def healthcheck(db: AsyncSession = Depends(get_db)):

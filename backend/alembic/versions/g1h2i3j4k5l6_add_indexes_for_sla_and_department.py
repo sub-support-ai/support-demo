@@ -21,6 +21,4 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index("ix_tickets_department", table_name="tickets")
 
-    #пункт 2
-
     
