@@ -23,8 +23,6 @@ Pipeline:
 
 Возможные расширения (todo):
   - Batch-промоут: «промоутни всё с helped=true за месяц».
-  - Дедупликация: проверять similarity к существующим статьям, чтобы не
-    плодить дубликаты вроде «VPN не работает / VPN не подключается».
   - Auto-publish для admin-флага «trusted agent».
 """
 
@@ -40,6 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.constants.departments import DEPARTMENTS_SET
+from app.models.knowledge_article import KnowledgeArticle
 from app.models.ticket import Ticket
 from app.models.ticket_comment import TicketComment
 from app.services.ai_service_client import ai_service_headers
@@ -195,6 +194,29 @@ async def promote_ticket_to_kb_draft(
         Если нет — статья создастся с department=None, админ выберет
         при ревью.
     """
+    # ── Дедупликация: тикет уже промоутили ──────────────────────────────────
+    # Если статья с source_url=ticket://{id} уже существует — повторный
+    # промоут только перезапишет черновик теми же данными, что бесполезно.
+    # Возвращаем существующую статью без вызова LLM.
+    existing_by_source = await db.execute(
+        select(KnowledgeArticle).where(
+            KnowledgeArticle.source_url == f"ticket://{ticket.id}"
+        )
+    )
+    existing_article = existing_by_source.scalar_one_or_none()
+    if existing_article is not None:
+        logger.info(
+            "Ticket %d already promoted → article %d (skip)",
+            ticket.id,
+            existing_article.id,
+        )
+        return {
+            "article_id": existing_article.id,
+            "title": existing_article.title,
+            "is_active": existing_article.is_active,
+            "created": False,
+        }
+
     # Подгружаем последние комментарии агента (любого, не только
     # текущего assigned'а: тикет могли передавать).
     comments_result = await db.execute(
@@ -219,6 +241,33 @@ async def promote_ticket_to_kb_draft(
     cleaned = _validate_extracted(extracted)
     if cleaned is None:
         return None
+
+    # ── Дедупликация: похожий заголовок уже есть ────────────────────────────
+    # Сравниваем по нормализованному title (lowercase, strip). Полное
+    # семантическое сравнение требует embeddings — оставляем на будущее.
+    # Этот check ловит очевидные случаи: повторный промоут другого тикета
+    # с тем же LLM-заголовком.
+    candidate_title = cleaned["title"].lower().strip()
+    existing_by_title = await db.execute(
+        select(KnowledgeArticle).where(
+            KnowledgeArticle.title.ilike(cleaned["title"])
+        )
+    )
+    title_duplicate = existing_by_title.scalar_one_or_none()
+    if title_duplicate is not None:
+        logger.info(
+            "Ticket %d → title «%s» already exists as article %d (skip)",
+            ticket.id,
+            cleaned["title"],
+            title_duplicate.id,
+        )
+        return {
+            "article_id": title_duplicate.id,
+            "title": title_duplicate.title,
+            "is_active": title_duplicate.is_active,
+            "created": False,
+        }
+    del candidate_title  # использовался только для наглядности
 
     # Department — из тикета, если он валидный. Иначе None (админ
     # выберет при ревью).

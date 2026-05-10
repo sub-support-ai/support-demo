@@ -6,6 +6,25 @@
 
 ## [Unreleased]
 
+### Added — тесты и self-hosted деплой
+
+- **Тесты backend → AI-сервис** (`tests/test_ai_integration.py`): 13 тестов
+  проверяют happy-path нового контракта (`messages: list`, `department`,
+  `model_version`, `sources`) и все fallback-сценарии (422, 5xx, timeout,
+  invalid JSON). Регрессионный тест фиксирует формат запроса к `/ai/answer`.
+
+- **AI-service тесты в CI** (`.github/workflows/ci.yml`): новый job
+  `ai-service-tests` гоняет `ai/ai-service/tests/` без реального Ollama
+  (requests замокирован на уровне модуля).
+
+- **Self-hosted deployment**: `frontend/Dockerfile` (multi-stage node+nginx),
+  `frontend/nginx.conf` (SPA fallback + proxy `/api/`), корневой
+  `docker-compose.yml` (весь стек через `docker compose up -d`), `setup.sh`
+  (первый запуск: JWT-генерация, пароль БД, admin email), `scripts/backup_db.sh`
+  (pg_dump + ротация 30 дампов).
+
+## [0.2.0] — AI-интеграция, контракт согласован
+
 ### Added — критические фиксы AI-интеграции (R1–R4)
 
 - **R1. Контракт `/ai/answer` — переход на multi-turn `messages: list`.**

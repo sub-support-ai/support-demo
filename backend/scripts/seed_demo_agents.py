@@ -28,6 +28,30 @@ DEMO_AGENTS = [
         "department": "finance",
         "ai_routing_score": 0.92,
     },
+    {
+        "email": "procurement.agent@example.com",
+        "username": "procurement_agent",
+        "department": "procurement",
+        "ai_routing_score": 0.88,
+    },
+    {
+        "email": "security.agent@example.com",
+        "username": "security_agent",
+        "department": "security",
+        "ai_routing_score": 0.91,
+    },
+    {
+        "email": "facilities.agent@example.com",
+        "username": "facilities_agent",
+        "department": "facilities",
+        "ai_routing_score": 0.87,
+    },
+    {
+        "email": "documents.agent@example.com",
+        "username": "documents_agent",
+        "department": "documents",
+        "ai_routing_score": 0.89,
+    },
 ]
 
 DEFAULT_DEMO_PASSWORD = "DemoPass123!"

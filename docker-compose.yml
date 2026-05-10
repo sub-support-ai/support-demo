@@ -1,0 +1,183 @@
+# Self-hosted: весь стек одной командой.
+#
+#   Первый запуск:
+#     bash setup.sh                        # создаёт backend/.env с секретами
+#     docker compose up -d --build
+#
+#   Обновление:
+#     git pull
+#     docker compose up -d --build
+#
+#   Логи:
+#     docker compose logs -f app
+#     docker compose logs -f frontend
+#
+#   Бэкап БД:
+#     bash scripts/backup_db.sh
+#
+# Порты наружу:
+#   80  — frontend (единственная точка входа; nginx проксирует /api/ на app:8000)
+#
+# Всё остальное (app:8000, db:5432, redis:6379, ai-service:8001) —
+# только внутри compose-сети. Снаружи недоступно.
+#
+# env_file: backend/.env применяется ко всем сервисам, которым нужен доступ к
+# настройкам приложения. db и redis читают оттуда только свои переменные
+# (POSTGRES_*, REDIS_*); лишние переменные они игнорируют.
+
+services:
+
+  # ── Frontend (React/Vite → nginx) ─────────────────────────────────────────
+  frontend:
+    build:
+      context: frontend
+    image: support-demo-frontend:latest
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      app:
+        condition: service_healthy
+
+  # ── Backend API ────────────────────────────────────────────────────────────
+  app:
+    build:
+      context: backend
+    image: support-demo-backend:latest
+    restart: unless-stopped
+    # Порт НЕ публикуется наружу: доступ только через nginx (frontend → app:8000).
+    expose:
+      - "8000"
+    env_file:
+      - backend/.env
+    environment:
+      POSTGRES_HOST: db
+      AI_SERVICE_URL: http://ai-service:8001
+      REDIS_URL: redis://redis:6379/0
+      RATE_LIMIT_BACKEND: redis
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Миграции идемпотентны: повторный запуск при rolling-restart безопасен.
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://localhost:8000/healthcheck', timeout=3).status==200 else sys.exit(1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ── AI worker ─────────────────────────────────────────────────────────────
+  ai-worker:
+    build:
+      context: backend
+    image: support-demo-backend:latest
+    restart: unless-stopped
+    env_file:
+      - backend/.env
+    environment:
+      POSTGRES_HOST: db
+      AI_SERVICE_URL: http://ai-service:8001
+      REDIS_URL: redis://redis:6379/0
+      RATE_LIMIT_BACKEND: redis
+    depends_on:
+      app:
+        condition: service_healthy
+    command: python -m app.workers.ai_worker
+
+  # ── SLA worker ────────────────────────────────────────────────────────────
+  sla-worker:
+    build:
+      context: backend
+    image: support-demo-backend:latest
+    restart: unless-stopped
+    env_file:
+      - backend/.env
+    environment:
+      POSTGRES_HOST: db
+    depends_on:
+      app:
+        condition: service_healthy
+    command: python -m app.workers.sla_worker
+
+  # ── Knowledge embedding worker ────────────────────────────────────────────
+  knowledge-embedding-worker:
+    build:
+      context: backend
+    image: support-demo-backend:latest
+    restart: unless-stopped
+    env_file:
+      - backend/.env
+    environment:
+      POSTGRES_HOST: db
+      AI_SERVICE_URL: http://ai-service:8001
+    depends_on:
+      app:
+        condition: service_healthy
+    command: python -m app.workers.knowledge_embedding_worker
+
+  # ── AI Service (Mistral / LLM) ────────────────────────────────────────────
+  # Образ собирается отдельной командой (AI-Lead). Подставьте конкретный тег
+  # при деплое:  image: support-demo/ai-service:v1.2.3
+  # Пока образ не готов — закомментируйте этот блок; тогда запросы через
+  # fallback уйдут сразу к агентам (confidence=0.0, escalate=true).
+  ai-service:
+    image: support-demo/ai-service:prod
+    restart: unless-stopped
+    env_file:
+      - backend/.env
+    environment:
+      APP_ENV: production
+    expose:
+      - "8001"
+    volumes:
+      # Mistral 7B (~4 ГБ) хранится в томе — не скачивается при каждом
+      # пересоздании контейнера.
+      - ai_models:/models
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://localhost:8001/healthcheck', timeout=3).status==200 else sys.exit(1)\""]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      # Mistral на CPU прогревается 60-120 с при первом старте.
+      start_period: 120s
+
+  # ── PostgreSQL ─────────────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    env_file:
+      - backend/.env
+    expose:
+      - "5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # POSTGRES_USER берётся из env_file, который postgres-контейнер уже получил.
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis ──────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    expose:
+      - "6379"
+    volumes:
+      - redis_data:/data
+    # appendonly: счётчики rate-limiter переживают restart контейнера.
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  postgres_data:
+  redis_data:
+  ai_models:

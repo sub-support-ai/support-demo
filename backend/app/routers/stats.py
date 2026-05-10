@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select, case, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.database import get_db
 from app.dependencies import get_current_user, require_role
 from app.models.ai_fallback_event import AIFallbackEvent
