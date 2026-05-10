@@ -27,9 +27,13 @@ const STATUS_OPTIONS = [
 ].map((status) => ({ value: status, label: getStatusLabel(status) }));
 
 const DEPARTMENT_OPTIONS = [
-  { value: "IT", label: "IT" },
-  { value: "HR", label: "HR" },
+  { value: "IT", label: "ИТ" },
+  { value: "HR", label: "Кадры" },
   { value: "finance", label: "Финансы" },
+  { value: "procurement", label: "Закупки" },
+  { value: "security", label: "Безопасность" },
+  { value: "facilities", label: "АХО" },
+  { value: "documents", label: "Документооборот" },
 ];
 
 const SLA_OPTIONS = [

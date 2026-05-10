@@ -20,9 +20,9 @@ Stop-Port 8001
 
 Write-Host 'Останавливаем docker compose (backend)...'
 $backendDir = Join-Path $root 'backend'
-if (Test-Path (Join-Path $backendDir 'docker-compose.yml')) {
+if (Test-Path (Join-Path $backendDir 'docker-compose.dev.yml')) {
     Push-Location $backendDir
-    docker compose down 2>$null
+    docker compose -f docker-compose.dev.yml down 2>$null
     Pop-Location
 }
 

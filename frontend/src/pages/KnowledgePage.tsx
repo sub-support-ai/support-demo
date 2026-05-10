@@ -31,9 +31,13 @@ import type { KnowledgeArticle, KnowledgeArticlePayload } from "../api/types";
 import { feedbackBadgeColor, summarizeFeedback } from "../lib/knowledgeFeedback";
 
 const departmentOptions = [
-  { value: "IT", label: "IT" },
-  { value: "HR", label: "HR" },
-  { value: "finance", label: "finance" },
+  { value: "IT", label: "ИТ" },
+  { value: "HR", label: "Кадры" },
+  { value: "finance", label: "Финансы" },
+  { value: "procurement", label: "Закупки" },
+  { value: "security", label: "Безопасность" },
+  { value: "facilities", label: "АХО" },
+  { value: "documents", label: "Документооборот" },
 ];
 
 const scopeOptions = [
@@ -42,7 +46,7 @@ const scopeOptions = [
 ];
 
 type KnowledgeFormState = {
-  department: "IT" | "HR" | "finance" | "";
+  department: "IT" | "HR" | "finance" | "procurement" | "security" | "facilities" | "documents" | "";
   request_type: string;
   title: string;
   body: string;

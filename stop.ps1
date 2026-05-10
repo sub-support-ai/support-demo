@@ -1,8 +1,9 @@
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
  
 Write-Host 'Stopping backend + Postgres...'
-Set-Location (Join-Path $root 'backend')
+Push-Location (Join-Path $root 'backend')
 docker compose -f docker-compose.dev.yml down
+Pop-Location
  
 Write-Host 'Stopping frontend and AI service...'
 @(5173, 5174, 8001) | ForEach-Object {

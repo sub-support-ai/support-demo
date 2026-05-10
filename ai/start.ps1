@@ -95,7 +95,7 @@ if (-not (Test-Path -LiteralPath $pythonExe)) {
 Start-Process `
     -FilePath $pythonExe `
     -WorkingDirectory $serviceRoot `
-    -ArgumentList @('-m', 'uvicorn', 'main:app', '--host', '0.0.0.0', '--port', '8001') `
+    -ArgumentList @('-m', 'uvicorn', 'main:app', '--host', '0.0.0.0', '--port', '8001', '--reload') `
     -WindowStyle Hidden
 
 Wait-ForHttp -Uri 'http://localhost:8001/healthcheck' -TimeoutSeconds 120

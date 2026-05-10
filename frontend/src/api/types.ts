@@ -120,7 +120,7 @@ export interface Ticket {
 export interface TicketDraftUpdate {
   title?: string;
   body?: string;
-  department?: "IT" | "HR" | "finance";
+  department?: "IT" | "HR" | "finance" | "procurement" | "security" | "facilities" | "documents";
   ai_priority?: "низкий" | "средний" | "высокий";
   requester_name?: string | null;
   requester_email?: string | null;
@@ -191,7 +191,7 @@ export interface KnowledgeFeedbackPayload {
 
 export interface KnowledgeArticle {
   id: number;
-  department?: "IT" | "HR" | "finance" | null;
+  department?: "IT" | "HR" | "finance" | "procurement" | "security" | "facilities" | "documents" | null;
   request_type?: string | null;
   title: string;
   body: string;
@@ -218,7 +218,7 @@ export interface KnowledgeArticle {
 }
 
 export interface KnowledgeArticlePayload {
-  department?: "IT" | "HR" | "finance" | null;
+  department?: "IT" | "HR" | "finance" | "procurement" | "security" | "facilities" | "documents" | null;
   request_type?: string | null;
   title: string;
   body: string;
@@ -284,7 +284,7 @@ export interface JobsResponse {
 
 export interface ResponseTemplate {
   id: number;
-  department?: "IT" | "HR" | "finance" | null;
+  department?: "IT" | "HR" | "finance" | "procurement" | "security" | "facilities" | "documents" | null;
   request_type?: string | null;
   title: string;
   body: string;

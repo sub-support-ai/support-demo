@@ -15,15 +15,20 @@ import { useEffect, useState } from "react";
 
 import type { Ticket, TicketDraftUpdate } from "../../api/types";
 import {
+  getDepartmentLabel,
   getStatusLabel,
   getTicketPriorityLabel,
 } from "../../lib/ticketLabels";
 import { validateEmail } from "../../lib/validation";
 
 const DEPARTMENT_OPTIONS = [
-  { value: "IT", label: "IT" },
-  { value: "HR", label: "HR" },
+  { value: "IT", label: "ИТ" },
+  { value: "HR", label: "Кадры" },
   { value: "finance", label: "Финансы" },
+  { value: "procurement", label: "Закупки" },
+  { value: "security", label: "Безопасность" },
+  { value: "facilities", label: "АХО" },
+  { value: "documents", label: "Документооборот" },
 ];
 
 const PRIORITY_OPTIONS = [
@@ -119,7 +124,7 @@ export function PrefilledTicketPanel({
     const payload: TicketDraftUpdate = {
       title: title.trim(),
       body: body.trim(),
-      department: department as "IT" | "HR" | "finance",
+      department: department as TicketDraftUpdate["department"],
       requester_name: requesterName.trim(),
       requester_email: requesterEmail.trim(),
       office: office.trim() || null,
@@ -145,7 +150,7 @@ export function PrefilledTicketPanel({
               Проверьте, что агент увидит правильное описание проблемы.
             </Text>
           </div>
-          <Badge>{department}</Badge>
+          <Badge>{getDepartmentLabel(department)}</Badge>
         </Group>
 
         <Group gap="xs">

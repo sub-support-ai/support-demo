@@ -30,6 +30,7 @@ import {
   useUpdateTicketStatus,
 } from "../../api/tickets";
 import {
+  getDepartmentLabel,
   getStatusLabel,
   getTicketPriorityLabel,
 } from "../../lib/ticketLabels";
@@ -194,7 +195,7 @@ export function TicketCard({
         )}
 
         <Group gap="xs">
-          <Badge variant="light">{ticket.department}</Badge>
+          <Badge variant="light">{getDepartmentLabel(ticket.department)}</Badge>
           <Badge variant="light">{getTicketPriorityLabel(ticket)}</Badge>
           {slaDeadline && (
             <Badge color={ticket.is_sla_breached ? "red" : "yellow"} variant="light">

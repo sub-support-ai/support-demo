@@ -1,5 +1,15 @@
 import type { Ticket } from "../api/types";
 
+const DEPARTMENT_LABELS: Record<string, string> = {
+  IT: "ИТ",
+  HR: "Кадры",
+  finance: "Финансы",
+  procurement: "Закупки",
+  security: "Безопасность",
+  facilities: "АХО",
+  documents: "Документооборот",
+};
+
 const STATUS_LABELS: Record<string, string> = {
   new: "Новый",
   pending_user: "Ожидает подтверждения",
@@ -50,4 +60,9 @@ export function getAiPriorityLabel(priority?: string | null): string | null {
 
 export function getTicketPriorityLabel(ticket: Ticket): string {
   return getAiPriorityLabel(ticket.ai_priority) ?? getUserPriorityLabel(ticket.user_priority);
+}
+
+export function getDepartmentLabel(department?: string | null): string {
+  if (!department) return "Без отдела";
+  return DEPARTMENT_LABELS[department] ?? department;
 }
