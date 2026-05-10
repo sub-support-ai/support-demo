@@ -21,6 +21,39 @@ Backend: FastAPI + PostgreSQL + SQLAlchemy + Alembic
 AI-service: FastAPI + Ollama + Mistral + nomic-embed-text  
 RAG: база знаний + full-text search + semantic search через embeddings
 
+### Фоновые воркеры
+
+Backend поднимается не одним процессом, а четырьмя — API + три воркера. Это
+видно в `backend/docker-compose.dev.yml` как отдельные сервисы:
+
+| Сервис | Что делает | Что сломается, если не запустить |
+|--------|------------|----------------------------------|
+| `app` | FastAPI — принимает HTTP-запросы | Без него ничего не работает |
+| `ai-worker` | Достаёт `ai_jobs` из очереди, генерирует AI-ответы в чате | Чат принимает сообщения, но AI-ответов не будет — `conversation.status` навсегда зависнет в `ai_processing` |
+| `knowledge-embedding-worker` | Считает embeddings для чанков базы знаний (Ollama → pgvector) | Семантический поиск не работает — RAG деградирует до FTS-only |
+| `sla-worker` | Эскалирует тикеты, у которых истёк SLA, и крутит retention-задачи | SLA не эскалируется автоматически; старые `audit_logs` / `ai_jobs` копятся вечно |
+
+В Docker'е (`start.ps1`) все четыре стартуют автоматически — править ничего
+не нужно. Если backend поднимается без Docker (чистый `uvicorn` для
+разработки) — воркеры надо запустить руками в отдельных терминалах:
+
+```powershell
+cd backend
+$env:PYTHONPATH = "."
+# Терминал 1 — API
+.\.venv\Scripts\python -m uvicorn app.main:app --reload
+# Терминал 2 — AI-ответы в чате
+.\.venv\Scripts\python -m app.workers.ai_worker
+# Терминал 3 — индексация knowledge_chunks
+.\.venv\Scripts\python -m app.workers.knowledge_embedding_worker
+# Терминал 4 — SLA-эскалация и retention
+.\.venv\Scripts\python -m app.workers.sla_worker
+```
+
+Каждый воркер — отдельный python-процесс с polling-циклом
+(см. `backend/app/workers/*.py`). Останавливаются через `Ctrl+C` или SIGTERM
+(в Docker — `docker compose stop ai-worker`).
+
 ## Предусловия
 
 Перед первым запуском должны быть установлены:

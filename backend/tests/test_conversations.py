@@ -188,9 +188,13 @@ async def test_post_message_ai_unavailable_marks_red_zone(client: AsyncClient, d
     )
     assert msg_resp.status_code == 201
 
-    # HTTP-запрос больше не ждёт модель: сразу возвращается только user message.
-    messages = msg_resp.json()
-    assert len(messages) == 1
+    # HTTP-запрос больше не ждёт модель: сразу возвращается user_message
+    # + ai_job_id + conversation_status. AI-ответ — в фоновом воркере.
+    body = msg_resp.json()
+    assert body["user_message"]["role"] == "user"
+    assert body["conversation_status"] == "ai_processing"
+    assert isinstance(body["ai_job_id"], int)
+    assert body["poll_hint"].endswith(f"/conversations/{conv_id}/messages")
     await process_next_ai_job(db_session)
 
     history_resp = await client.get(
@@ -670,7 +674,7 @@ async def test_load_history_maps_roles_and_limits_length(db_session, client: Asy
 def test_extract_steps_tried_finds_attempts():
     """Если пользователь упомянул "пробовал/перезагружал" — забираем строку."""
     from app.models.message import Message
-    from app.routers.conversations import _extract_steps_tried
+    from app.services.ai_extract import _extract_steps_tried_heuristic as _extract_steps_tried
 
     msgs = [
         Message(role="user", content="Не работает SAP"),
@@ -690,7 +694,7 @@ def test_extract_steps_tried_finds_attempts():
 def test_extract_steps_tried_returns_none_when_nothing_found():
     """Никаких упоминаний попыток → None, не пустая строка."""
     from app.models.message import Message
-    from app.routers.conversations import _extract_steps_tried
+    from app.services.ai_extract import _extract_steps_tried_heuristic as _extract_steps_tried
 
     msgs = [
         Message(role="user", content="Просто вопрос"),

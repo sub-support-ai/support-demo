@@ -352,6 +352,17 @@ def _apply_common_filters(statement, filters: KnowledgeSearchFilters):
                 KnowledgeArticle.request_type.is_(None),
             )
         )
+    # Expired-статьи отфильтровываем на уровне SQL: _freshness_score штрафует
+    # их через -3.0, но они всё равно попадают в кандидаты и могут пройти
+    # пороги, если text_score высокий. Лучше не показывать совсем — статья
+    # с expires_at в прошлом ≡ «info устарело, не отдавать пользователю».
+    # NULL expires_at ≡ «без срока» — оставляем.
+    statement = statement.where(
+        or_(
+            KnowledgeArticle.expires_at.is_(None),
+            KnowledgeArticle.expires_at > func.now(),
+        )
+    )
     return statement
 
 
@@ -452,6 +463,10 @@ def _semantic_filter_sql(filters: KnowledgeSearchFilters) -> tuple[str, dict[str
     if filters.request_type:
         clauses.append("(ka.request_type = :request_type OR ka.request_type IS NULL)")
         params["request_type"] = filters.request_type
+
+    # Expired-статьи отбрасываем — синхронно с _apply_common_filters
+    # (FTS-путь). NULL expires_at ≡ «без срока», оставляем.
+    clauses.append("(ka.expires_at IS NULL OR ka.expires_at > NOW())")
 
     if not clauses:
         return "", params
@@ -658,8 +673,31 @@ async def search_knowledge_articles(
     if not query_tokens:
         return []
 
+    # ── Cache lookup ──────────────────────────────────────────────────────
+    # Кэш ловит повторные одинаковые запросы (типовые "не работает X" в
+    # рабочие часы). Импорт ленивый — knowledge_cache.py типизирует через
+    # TYPE_CHECKING и без него получим circular import.
+    from app.services.knowledge_cache import get_knowledge_cache
+
+    cache = get_knowledge_cache()
+    cached = cache.get(query, limit, filters)
+    if cached is not None:
+        logger.debug(
+            "Knowledge search cache hit",
+            extra={"query_len": len(query), "limit": limit, "results": len(cached)},
+        )
+        return cached
+
     if _session_dialect_name(db) == "postgresql":
-        return await _search_knowledge_articles_hybrid_postgres(
+        matches = await _search_knowledge_articles_hybrid_postgres(
+            db,
+            query,
+            query_tokens,
+            limit,
+            filters,
+        )
+    else:
+        matches = await _search_knowledge_articles_fallback(
             db,
             query,
             query_tokens,
@@ -667,13 +705,8 @@ async def search_knowledge_articles(
             filters,
         )
 
-    return await _search_knowledge_articles_fallback(
-        db,
-        query,
-        query_tokens,
-        limit,
-        filters,
-    )
+    cache.put(query, limit, filters, matches)
+    return matches
 
 
 def _format_steps(article: KnowledgeArticle) -> str:

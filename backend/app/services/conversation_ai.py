@@ -19,7 +19,24 @@ from app.services.knowledge_base import LATENCY_PAYLOAD_KEY, find_knowledge_answ
 
 logger = logging.getLogger(__name__)
 
+# Лимиты на историю, передаваемую в LLM:
+#  - MESSAGES — потолок по штукам (защита от диалогов на 200 сообщений).
+#  - TOKENS   — потолок по бюджету токенов (защита от длинных простыней).
+#
+# AI-сервис принимает list[ChatMessage] с каждым content до 10000 символов,
+# но контекстное окно Mistral-7B ~8k токенов; если сложить 20 сообщений
+# по 2000 символов, мы переполним окно и модель отрежет начало (или упадёт).
+# Соответственно: берём ПОСЛЕДНИЕ 20 сообщений, но если их суммарный
+# объём в токенах превышает MAX_HISTORY_TOKENS — выкидываем самые старые,
+# пока не уложимся. Самый свежий user-message сохраняем всегда — без него
+# у модели нет точки отсчёта.
 MAX_HISTORY_MESSAGES = 20
+# 1 русский токен ≈ 2-3 символа, английский ≈ 4. Используем оценку 1 токен ≈ 3 символа
+# (см. estimate_token_count в knowledge_embeddings — там по словам, что грубее).
+# 4096 токенов на историю = ~12'288 символов: оставляет ~3-4k токенов для
+# system-промпта + RAG-контекста + ответа модели.
+MAX_HISTORY_TOKENS = 4096
+_CHARS_PER_TOKEN = 3
 
 SUPPORT_DRAFT_INTENT_TERMS = (
     "тикет", "заявк", "черновик", "обращен", "запрос", "техподдерж", "тех поддерж",
@@ -37,27 +54,119 @@ PHYSICAL_INCIDENT_TERMS = (
 )
 
 
+# Поля, которые мы соглашаемся хранить в Message.sources. Всё, что приходит
+# от AI-сервиса/KB вне этого whitelist'а — отбрасываем: фронтовая схема
+# SourceRead типизирована, и неизвестные поля только добавят шум в JSON.
+_SOURCE_FIELDS = {
+    "title", "url", "article_id", "chunk_id",
+    "snippet", "retrieval", "score", "decision",
+}
+# Sources на одно AI-сообщение лимитируются: 5 ссылок — потолок UX'а.
+# Всё, что больше, перегружает чат и обычно не релевантно.
+_MAX_SOURCES = 5
+
+
+def _normalize_sources(raw: object) -> list[dict] | None:
+    """Приводит ai_payload['sources'] к консистентному формату для БД.
+
+    Зачем нормализуем:
+      - LLM возвращает {title, url}; KB-build возвращает 8 полей; intake/fallback
+        возвращают [] (или вообще не возвращают). Сохраняя как есть, JSON-колонка
+        обрастает полиморфизмом, и фронт ломается на неожиданном формате.
+      - Без `title` source бесполезен (UI рендерит «Источник: <title>»),
+        такие записи режем.
+      - Дубликаты по `article_id` — частые при гибридном поиске (FTS+semantic
+        нашли одну и ту же статью в разных чанках); merge оставляет одну.
+
+    Возвращаем None, если после нормализации список пуст — это
+    отличает «AI не присылал источников вообще» от «список приехал, но
+    после фильтра остался пустым» (оба → None в БД, но при отладке хорошо
+    видеть, что в логах source_input был непустым).
+    """
+    if not isinstance(raw, list):
+        return None
+
+    seen_article_ids: set[int] = set()
+    cleaned: list[dict] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        title = item.get("title")
+        if not isinstance(title, str) or not title.strip():
+            continue
+        # Дедуплицируем по article_id (если есть — KB-источники).
+        article_id = item.get("article_id")
+        if isinstance(article_id, int):
+            if article_id in seen_article_ids:
+                continue
+            seen_article_ids.add(article_id)
+        # Оставляем только whitelisted-поля. Если score пришёл строкой
+        # ("0.85") — приведение в float делать не будем, фронт сам справится
+        # с union[float | str | None]. Главное — не пропускать мусор.
+        normalized = {k: v for k, v in item.items() if k in _SOURCE_FIELDS}
+        normalized["title"] = title.strip()
+        cleaned.append(normalized)
+        if len(cleaned) >= _MAX_SOURCES:
+            break
+    return cleaned or None
+
+
+def _estimate_tokens(text: str) -> int:
+    """Грубая оценка токенов для русско-английских текстов.
+
+    Точный токенайзер (tiktoken/sentencepiece) тянуть в backend не хочется —
+    это +30 МБ в Docker-образ ради метрики «сколько примерно». Оценка
+    `len(text) / 3` стабильно даёт верхнюю границу для русского текста
+    и нижнюю для английского — нам важно не переоценить и обрезать
+    лишнее, поэтому занижаем символы на токен (округление вверх).
+    """
+    return max(1, (len(text) + _CHARS_PER_TOKEN - 1) // _CHARS_PER_TOKEN)
+
+
 async def load_history_for_ai(
     db: AsyncSession,
     conversation_id: int,
 ) -> list[dict[str, str]]:
+    """История диалога для LLM с учётом токенного бюджета.
+
+    Алгоритм:
+      1) Берём последние MAX_HISTORY_MESSAGES сообщений из БД (DESC).
+      2) Идём от свежих к старым, копим бюджет MAX_HISTORY_TOKENS.
+      3) Как только следующее сообщение не влезает — отбрасываем его и всё,
+         что старше (середину диалога не вырезаем — это ломает связность).
+      4) Разворачиваем в хронологический порядок для модели.
+
+    Самый свежий user-message — всегда в выдаче, даже если он один превышает
+    бюджет (модель сама обрежет, но мы не хотим тихо удалять последний вопрос
+    пользователя — он точно нужен).
+    """
     result = await db.execute(
         select(Message)
         .where(Message.conversation_id == conversation_id)
         .order_by(Message.created_at.desc(), Message.id.desc())
         .limit(MAX_HISTORY_MESSAGES)
     )
-    rows = list(result.scalars().all())
-    rows.reverse()
+    rows = list(result.scalars().all())  # DESC: [last, ..., first]
 
-    history: list[dict[str, str]] = []
-    for message in rows:
-        if message.role == "user":
-            role = "user"
-        elif message.role == "ai":
-            role = "assistant"
-        else:
+    # Копим с самого свежего, отбрасываем старые при переполнении бюджета.
+    budget = MAX_HISTORY_TOKENS
+    kept_desc: list[Message] = []
+    for index, message in enumerate(rows):
+        if message.role not in {"user", "ai"}:
             continue
+        cost = _estimate_tokens(message.content)
+        if cost <= budget or index == 0:
+            # Первое (самое свежее) сообщение — всегда оставляем, даже если
+            # оно одно перебирает бюджет: без него у LLM нет вопроса.
+            kept_desc.append(message)
+            budget -= cost
+        else:
+            break
+
+    kept = list(reversed(kept_desc))
+    history: list[dict[str, str]] = []
+    for message in kept:
+        role = "user" if message.role == "user" else "assistant"
         history.append({"role": role, "content": message.content})
     return history
 
@@ -214,7 +323,7 @@ async def generate_ai_message(db: AsyncSession, conversation_id: int) -> Message
         content=ai_payload.get("answer", ""),
         ai_confidence=confidence,
         ai_escalate=escalate,
-        sources=ai_payload.get("sources") or None,
+        sources=_normalize_sources(ai_payload.get("sources")),
         requires_escalation=requires_escalation,
     )
     db.add(ai_message)

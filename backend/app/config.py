@@ -78,7 +78,11 @@ class Settings(BaseSettings):
     AI_MODEL_VERSION_FALLBACK: str = "mistral-unspecified"
 
     # ── KB / RAG ──────────────────────────────────────────────────────────
-    KNOWLEDGE_SEMANTIC_SEARCH_ENABLED: bool = False
+    # По умолчанию включён: код в knowledge_base.py проверяет _pgvector_available()
+    # и тихо деградирует на FTS-only, если pgvector в БД не установлен. Так
+    # деплои с pgvector получают семантический поиск автоматически, а без него
+    # система продолжает работать как раньше (никаких 500-ок).
+    KNOWLEDGE_SEMANTIC_SEARCH_ENABLED: bool = True
     KNOWLEDGE_EMBEDDING_DIMENSION: int = 768
 
     # Скор у нас вычисляется в _score_article (text_score + context +
