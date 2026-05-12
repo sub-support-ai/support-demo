@@ -18,6 +18,7 @@ node_modules/
 dist/
 
 # Local databases and logs
+*.db-journal
 *.db
 *.sqlite
 *.sqlite3

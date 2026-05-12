@@ -42,17 +42,12 @@ import logging
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-
-from app.database import AsyncSessionLocal
-from app.services.knowledge_base import (
-    KnowledgeMatch,
-    KnowledgeSearchFilters,
-    search_knowledge_articles,
-)
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_GOLD_SET = Path(__file__).parent / "eval_data" / "kb_gold.json"
+DEFAULT_ARTICLES_DIR = Path(__file__).parent / "seed_data" / "articles"
 
 
 @dataclass
@@ -64,12 +59,58 @@ class CaseResult:
     top_titles: list[str]
 
 
-def _find_rank(matches: list[KnowledgeMatch], expected_title: str) -> tuple[int | None, float | None]:
+def _find_rank(matches: list[Any], expected_title: str) -> tuple[int | None, float | None]:
     expected_norm = expected_title.strip().lower()
     for index, match in enumerate(matches, start=1):
         if match.article.title.strip().lower() == expected_norm:
             return index, match.score
     return None, None
+
+
+def _load_article_titles(articles_dir: Path) -> tuple[set[str], list[str]]:
+    titles: set[str] = set()
+    duplicates: list[str] = []
+    seen: set[str] = set()
+
+    if not articles_dir.exists():
+        return titles, [f"Articles directory not found: {articles_dir}"]
+
+    for path in sorted(articles_dir.glob("*.json")):
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        if not isinstance(data, list):
+            duplicates.append(f"{path.name}: root JSON value must be a list")
+            continue
+        for item in data:
+            title = str(item.get("title", "")).strip()
+            if not title:
+                duplicates.append(f"{path.name}: article without title")
+                continue
+            if title in seen:
+                duplicates.append(f"Duplicate article title: {title}")
+            seen.add(title)
+            titles.add(title)
+    return titles, duplicates
+
+
+def _validate_cases(cases: list[dict], article_titles: set[str]) -> list[str]:
+    errors: list[str] = []
+    seen: set[tuple[str, str]] = set()
+
+    for index, case in enumerate(cases, start=1):
+        query = str(case.get("query", "")).strip()
+        expected = str(case.get("expected_title", "")).strip()
+        if not query:
+            errors.append(f"Case #{index}: missing query")
+        if not expected:
+            errors.append(f"Case #{index}: missing expected_title")
+        if query and expected:
+            key = (query.lower(), expected.lower())
+            if key in seen:
+                errors.append(f"Case #{index}: duplicate query/expected pair")
+            seen.add(key)
+        if expected and article_titles and expected not in article_titles:
+            errors.append(f"Case #{index}: expected_title not found in seed articles: {expected}")
+    return errors
 
 
 async def _run_case(query: str, expected_title: str, top_k: int) -> CaseResult:
@@ -80,6 +121,12 @@ async def _run_case(query: str, expected_title: str, top_k: int) -> CaseResult:
     поэтому повторный одинаковый query будет cache-hit, что нам и нужно
     для замера latency, но не аффектит качество).
     """
+    from app.database import AsyncSessionLocal
+    from app.services.knowledge_base import (
+        KnowledgeSearchFilters,
+        search_knowledge_articles,
+    )
+
     async with AsyncSessionLocal() as db:
         # Без access_scope-фильтра — eval гоняем как админ, видим всё.
         filters = KnowledgeSearchFilters(access_scopes=("public", "internal"))
@@ -144,16 +191,42 @@ def _print_human(summary: dict, results: list[CaseResult], verbose: bool, top_k:
             print()
 
 
-async def run_eval(gold_path: Path, top_k: int, verbose: bool, output_json: Path | None) -> int:
+async def run_eval(
+    gold_path: Path,
+    top_k: int,
+    verbose: bool,
+    output_json: Path | None,
+    articles_dir: Path,
+    skip_validation: bool,
+    validate_only: bool,
+    min_recall_at_1: float,
+    min_recall_at_k: float,
+) -> int:
     if not gold_path.exists():
         print(f"Gold-set не найден: {gold_path}", file=sys.stderr)
         return 1
 
-    data = json.loads(gold_path.read_text(encoding="utf-8"))
+    data = json.loads(gold_path.read_text(encoding="utf-8-sig"))
     cases = data.get("cases") or []
     if not cases:
         print("Gold-set пуст", file=sys.stderr)
         return 1
+    if not isinstance(cases, list):
+        print("Gold-set invalid: cases must be a list", file=sys.stderr)
+        return 1
+
+    if not skip_validation:
+        article_titles, article_errors = _load_article_titles(articles_dir)
+        validation_errors = article_errors + _validate_cases(cases, article_titles)
+        if validation_errors:
+            print("Gold-set validation failed:", file=sys.stderr)
+            for error in validation_errors:
+                print(f"  - {error}", file=sys.stderr)
+            return 1
+
+    if validate_only:
+        print(f"Gold-set validation OK: {len(cases)} cases")
+        return 0
 
     results: list[CaseResult] = []
     for case in cases:
@@ -173,8 +246,11 @@ async def run_eval(gold_path: Path, top_k: int, verbose: bool, output_json: Path
         output_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"\nРезультат сохранён в {output_json}")
 
-    # Exit code: 0 если recall@1 ≥ 0.5, иначе 1 — для CI.
-    return 0 if summary["recall@1"] >= 0.5 else 1
+    if summary["recall@1"] < min_recall_at_1:
+        return 1
+    if summary[f"recall@{top_k}"] < min_recall_at_k:
+        return 1
+    return 0
 
 
 def main() -> None:
@@ -183,10 +259,50 @@ def main() -> None:
     parser.add_argument("--top-k", type=int, default=3, help="K для recall@K (default: 3)")
     parser.add_argument("--verbose", "-v", action="store_true", help="Печатать каждый кейс")
     parser.add_argument("--output", type=Path, default=None, help="Сохранить результат в JSON")
+    parser.add_argument(
+        "--articles-dir",
+        type=Path,
+        default=DEFAULT_ARTICLES_DIR,
+        help="Папка seed-статей для проверки expected_title",
+    )
+    parser.add_argument(
+        "--skip-validation",
+        action="store_true",
+        help="Не проверять gold-set на дубли и отсутствующие статьи",
+    )
+    parser.add_argument(
+        "--validate-only",
+        action="store_true",
+        help="Только проверить gold-set и seed-статьи, без запросов к БД",
+    )
+    parser.add_argument(
+        "--min-recall-at-1",
+        type=float,
+        default=0.5,
+        help="Минимальный recall@1 для успешного exit code",
+    )
+    parser.add_argument(
+        "--min-recall-at-k",
+        type=float,
+        default=0.0,
+        help="Минимальный recall@K для успешного exit code",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    exit_code = asyncio.run(run_eval(args.gold, args.top_k, args.verbose, args.output))
+    exit_code = asyncio.run(
+        run_eval(
+            args.gold,
+            args.top_k,
+            args.verbose,
+            args.output,
+            args.articles_dir,
+            args.skip_validation,
+            args.validate_only,
+            args.min_recall_at_1,
+            args.min_recall_at_k,
+        )
+    )
     sys.exit(exit_code)
 
 
