@@ -3,7 +3,7 @@
  *
  * Покрывает:
  *   - Badge отдела использует getDepartmentLabel (русский, не сырое значение)
- *   - Кнопка «Отправить как есть» disabled при пустых обязательных полях
+ *   - Кнопка «Отправить» disabled при пустых обязательных полях
  *   - Компонент рендерится без ошибок в разных состояниях
  */
 
@@ -40,10 +40,11 @@ describe("PrefilledTicketPanel — department badge", () => {
       <PrefilledTicketPanel
         ticket={makeDraftTicket({ department: "IT" })}
         onConfirm={vi.fn()}
+        onDecline={vi.fn()}
         onSave={vi.fn()}
       />,
     );
-    expect(screen.getByText("ИТ")).toBeInTheDocument();
+    expect(screen.getAllByText("ИТ").length).toBeGreaterThan(0);
   });
 
   it("показывает 'АХО' для department='facilities'", () => {
@@ -51,10 +52,11 @@ describe("PrefilledTicketPanel — department badge", () => {
       <PrefilledTicketPanel
         ticket={makeDraftTicket({ department: "facilities" })}
         onConfirm={vi.fn()}
+        onDecline={vi.fn()}
         onSave={vi.fn()}
       />,
     );
-    expect(screen.getByText("АХО")).toBeInTheDocument();
+    expect(screen.getAllByText("АХО").length).toBeGreaterThan(0);
   });
 });
 
@@ -64,10 +66,11 @@ describe("PrefilledTicketPanel — кнопка «Отправить»", () => {
       <PrefilledTicketPanel
         ticket={makeDraftTicket()}
         onConfirm={vi.fn()}
+        onDecline={vi.fn()}
         onSave={vi.fn()}
       />,
     );
-    const btn = screen.getByRole("button", { name: /Отправить как есть/i });
+    const btn = screen.getByRole("button", { name: /^Отправить$/i });
     expect(btn).not.toBeDisabled();
   });
 
@@ -76,10 +79,11 @@ describe("PrefilledTicketPanel — кнопка «Отправить»", () => {
       <PrefilledTicketPanel
         ticket={makeDraftTicket({ requester_name: "" })}
         onConfirm={vi.fn()}
+        onDecline={vi.fn()}
         onSave={vi.fn()}
       />,
     );
-    const btn = screen.getByRole("button", { name: /Отправить как есть/i });
+    const btn = screen.getByRole("button", { name: /^Отправить$/i });
     expect(btn).toBeDisabled();
   });
 
@@ -88,10 +92,11 @@ describe("PrefilledTicketPanel — кнопка «Отправить»", () => {
       <PrefilledTicketPanel
         ticket={makeDraftTicket({ office: "" })}
         onConfirm={vi.fn()}
+        onDecline={vi.fn()}
         onSave={vi.fn()}
       />,
     );
-    const btn = screen.getByRole("button", { name: /Отправить как есть/i });
+    const btn = screen.getByRole("button", { name: /^Отправить$/i });
     expect(btn).toBeDisabled();
   });
 });
@@ -104,6 +109,7 @@ describe("PrefilledTicketPanel — состояние confirmed", () => {
       <PrefilledTicketPanel
         ticket={makeDraftTicket({ confirmed_by_user: true, status: "open" })}
         onConfirm={vi.fn()}
+        onDecline={vi.fn()}
         onSave={vi.fn()}
       />,
     );

@@ -25,6 +25,7 @@ import { getApiError } from "../api/client";
 import { useMe } from "../api/auth";
 import {
   useConfirmTicket,
+  useDeclineTicket,
   useTickets,
   useUpdateTicketDraft,
 } from "../api/tickets";
@@ -89,6 +90,7 @@ export function ChatPage() {
   const sendMessage = useSendMessage();
   const escalate = useEscalateConversation();
   const confirmTicket = useConfirmTicket();
+  const declineTicket = useDeclineTicket();
   const updateTicketDraft = useUpdateTicketDraft();
   const tickets = useTickets();
   const [activeConversationId, setActiveConversationId] = useState<number>();
@@ -211,6 +213,19 @@ export function ChatPage() {
     }
   }
 
+  async function handleDecline() {
+    if (!activeTicket) {
+      return;
+    }
+    try {
+      const ticket = await declineTicket.mutateAsync(activeTicket.id);
+      setDraftTicket(ticket);
+      await conversations.refetch();
+    } catch {
+      // Ошибка уже хранится в mutation state и показывается в Alert.
+    }
+  }
+
   async function handleSaveDraft(payload: TicketDraftUpdate) {
     if (!activeTicket) {
       return;
@@ -232,6 +247,7 @@ export function ChatPage() {
     sendMessage.error ||
     escalate.error ||
     confirmTicket.error ||
+    declineTicket.error ||
     updateTicketDraft.error ||
     createConversation.error ||
     me.error ||
@@ -350,8 +366,10 @@ export function ChatPage() {
           <PrefilledTicketPanel
             ticket={activeTicket}
             confirmLoading={confirmTicket.isPending}
+            declineLoading={declineTicket.isPending}
             saveLoading={updateTicketDraft.isPending}
             onConfirm={handleConfirm}
+            onDecline={handleDecline}
             onSave={handleSaveDraft}
           />
         ) : (

@@ -9,6 +9,19 @@ from app.models.user import User
 from app.security import hash_password
 
 
+DEMO_USERS = [
+    {
+        "email": "demo.user@example.com",
+        "username": "demo_user",
+        "role": "user",
+    },
+    {
+        "email": "demo.admin@example.com",
+        "username": "demo_admin",
+        "role": "admin",
+    },
+]
+
 DEMO_AGENTS = [
     {
         "email": "it.agent@example.com",
@@ -58,17 +71,46 @@ DEFAULT_DEMO_PASSWORD = "DemoPass123!"
 
 
 async def seed_demo_agents() -> None:
-    demo_password = os.getenv("DEMO_AGENT_PASSWORD", DEFAULT_DEMO_PASSWORD)
+    demo_password = (
+        os.getenv("DEMO_PASSWORD")
+        or os.getenv("DEMO_AGENT_PASSWORD")
+        or DEFAULT_DEMO_PASSWORD
+    )
 
     async with AsyncSessionLocal() as db:
         agents_created = 0
         agents_updated = 0
         users_created = 0
         users_updated = 0
+        password_hash = hash_password(demo_password)
+
+        for item in DEMO_USERS:
+            user_result = await db.execute(
+                select(User).where(
+                    (User.email == item["email"]) | (User.username == item["username"])
+                )
+            )
+            user = user_result.scalar_one_or_none()
+            if user is None:
+                db.add(
+                    User(
+                        email=item["email"],
+                        username=item["username"],
+                        hashed_password=password_hash,
+                        role=item["role"],
+                        is_active=True,
+                    )
+                )
+                users_created += 1
+            else:
+                user.email = item["email"]
+                user.username = item["username"]
+                user.hashed_password = password_hash
+                user.role = item["role"]
+                user.is_active = True
+                users_updated += 1
 
         for item in DEMO_AGENTS:
-            password_hash = hash_password(demo_password)
-
             user_result = await db.execute(
                 select(User).where(
                     (User.email == item["email"]) | (User.username == item["username"])
@@ -127,7 +169,7 @@ async def seed_demo_agents() -> None:
         "Demo agents ready: "
         f"agents_created={agents_created}, agents_updated={agents_updated}, "
         f"users_created={users_created}, users_updated={users_updated}. "
-        "Password source: DEMO_AGENT_PASSWORD env or documented demo default."
+        "Password source: DEMO_PASSWORD, DEMO_AGENT_PASSWORD, or documented demo default."
     )
 
 

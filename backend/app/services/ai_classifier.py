@@ -25,7 +25,7 @@ _CLASSIFICATION_FALLBACK = {
     "department": "IT",
     "priority": "средний",
     "confidence": 0.0,
-    "draft_response": "[AI Service недоступен — требует агента]",
+    "draft_response": "Требуется ручная проверка специалистом поддержки.",
     "model_version": settings.AI_MODEL_VERSION_FALLBACK,
 }
 

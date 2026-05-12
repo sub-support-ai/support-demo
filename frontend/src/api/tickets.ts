@@ -46,6 +46,22 @@ export function useConfirmTicket() {
   });
 }
 
+export function useDeclineTicket() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (ticketId: number) => {
+      const { data } = await api.patch<Ticket>(`/tickets/${ticketId}/decline`);
+      return data;
+    },
+    onSuccess: (ticket) => {
+      updateTicketInCache(queryClient, ticket);
+      queryClient.invalidateQueries({ queryKey: ["tickets"] });
+      queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      queryClient.invalidateQueries({ queryKey: ["stats"] });
+    },
+  });
+}
+
 export function useUpdateTicketDraft() {
   const queryClient = useQueryClient();
   return useMutation({

@@ -10,7 +10,7 @@ import {
   TextInput,
   Title,
 } from "@mantine/core";
-import { IconCheck, IconEdit, IconFileText } from "@tabler/icons-react";
+import { IconCheck, IconEdit, IconFileText, IconX } from "@tabler/icons-react";
 import { useEffect, useState } from "react";
 
 import type { Ticket, TicketDraftUpdate } from "../../api/types";
@@ -56,14 +56,18 @@ function normalizePriority(value?: string | null) {
 export function PrefilledTicketPanel({
   ticket,
   confirmLoading,
+  declineLoading,
   saveLoading,
   onConfirm,
+  onDecline,
   onSave,
 }: {
   ticket: Ticket;
   confirmLoading?: boolean;
+  declineLoading?: boolean;
   saveLoading?: boolean;
   onConfirm: () => void;
+  onDecline: () => void;
   onSave: (payload: TicketDraftUpdate) => Promise<void>;
 }) {
   const [isEditing, setIsEditing] = useState(false);
@@ -86,6 +90,12 @@ export function PrefilledTicketPanel({
     !requesterEmailError &&
     office.trim().length > 0 &&
     affectedItem.trim().length > 0;
+  const missingContext = [
+    requesterName.trim() ? null : "заявитель",
+    requesterEmail.trim() && !requesterEmailError ? null : "корректный email",
+    office.trim() ? null : "офис",
+    affectedItem.trim() ? null : "что затронуто",
+  ].filter((item): item is string => Boolean(item));
   const canSubmit =
     title.trim().length > 0 &&
     body.trim().length > 0 &&
@@ -155,7 +165,8 @@ export function PrefilledTicketPanel({
 
         <Group gap="xs">
           <Badge variant="light">{getStatusLabel(ticket.status)}</Badge>
-          <Badge variant="light">{getTicketPriorityLabel(ticket)}</Badge>
+          <Badge variant="light">Отдел: {getDepartmentLabel(ticket.department)}</Badge>
+          <Badge variant="light">Приоритет: {getTicketPriorityLabel(ticket)}</Badge>
         </Group>
 
         {isEditing ? (
@@ -279,7 +290,7 @@ export function PrefilledTicketPanel({
           <Stack gap="sm">
             {!hasRequiredContext && canEdit && (
               <Alert color="yellow" variant="light">
-                Заполните заявителя, корректный email, офис и затронутый объект перед отправкой.
+                Нужно уточнить перед отправкой: {missingContext.join(", ")}.
               </Alert>
             )}
             <div>
@@ -297,6 +308,18 @@ export function PrefilledTicketPanel({
                 {ticket.office ? ` · ${ticket.office}` : ""}
                 {ticket.affected_item ? ` · ${ticket.affected_item}` : ""}
               </Text>
+            </div>
+            <div>
+              <Text size="xs" c="dimmed" fw={600}>
+                Отдел поддержки
+              </Text>
+              <Text size="sm">{getDepartmentLabel(ticket.department)}</Text>
+            </div>
+            <div>
+              <Text size="xs" c="dimmed" fw={600}>
+                Приоритет
+              </Text>
+              <Text size="sm">{getTicketPriorityLabel(ticket)}</Text>
             </div>
             {(ticket.request_type || ticket.request_details) && (
               <div>
@@ -318,18 +341,6 @@ export function PrefilledTicketPanel({
                 {ticket.body}
               </Text>
             </div>
-            {(ticket.request_type || ticket.request_details) && (
-              <div>
-                <Text size="xs" c="dimmed" fw={600}>
-                  Форма запроса
-                </Text>
-                <Text size="sm">
-                  {[ticket.request_type, ticket.request_details]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </Text>
-              </div>
-            )}
             {ticket.steps_tried && (
               <div>
                 <Text size="xs" c="dimmed" fw={600}>
@@ -350,7 +361,7 @@ export function PrefilledTicketPanel({
               onClick={onConfirm}
               disabled={isEditing || !hasRequiredContext}
             >
-              Отправить как есть
+              Отправить
             </Button>
             <Button
               variant="light"
@@ -359,6 +370,16 @@ export function PrefilledTicketPanel({
               onClick={() => setIsEditing(true)}
             >
               Изменить
+            </Button>
+            <Button
+              variant="subtle"
+              color="red"
+              leftSection={<IconX size={16} />}
+              loading={declineLoading}
+              disabled={confirmLoading || saveLoading || isEditing}
+              onClick={onDecline}
+            >
+              Отменить
             </Button>
           </Group>
         )}

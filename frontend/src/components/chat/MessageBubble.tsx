@@ -17,21 +17,25 @@ import { Sources } from "./Sources";
  *  null  — не показываем (intake-сообщения, fallback'и без conf'а)
  */
 function ConfidenceBadge({ confidence }: { confidence?: number | null }) {
-  if (typeof confidence !== "number") return null;
+  if (typeof confidence !== "number" || confidence <= 0) return null;
   let color: string;
   let label: string;
+  let tooltip: string;
   if (confidence >= 0.8) {
     color = "green";
     label = "уверен";
+    tooltip = "Ответ найден с высокой уверенностью";
   } else if (confidence >= 0.6) {
     color = "yellow";
     label = "средне";
+    tooltip = "Ответ требует осторожной проверки";
   } else {
     color = "red";
     label = "не уверен";
+    tooltip = "Лучше передать вопрос специалисту";
   }
   return (
-    <Tooltip label={`Уверенность модели: ${(confidence * 100).toFixed(0)}%`} withArrow>
+    <Tooltip label={tooltip} withArrow>
       <Badge size="xs" variant="light" color={color}>
         {label}
       </Badge>

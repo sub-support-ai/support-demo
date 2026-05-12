@@ -40,7 +40,7 @@ TERMINAL_STATUSES: frozenset[str] = frozenset({"closed"})
 # Полный граф разрешённых переходов по всем endpoint'ам.
 # Источник истины для админских / системных путей (confirm / resolve / reopen).
 ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
-    "pending_user": frozenset({"confirmed"}),
+    "pending_user": frozenset({"confirmed", "declined"}),
     "confirmed": frozenset({"in_progress", "resolved", "closed"}),
     "in_progress": frozenset({"confirmed", "resolved", "closed"}),
     "resolved": frozenset({"in_progress", "closed", "confirmed"}),  # последнее = reopen

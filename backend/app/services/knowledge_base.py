@@ -696,6 +696,15 @@ async def search_knowledge_articles(
             limit,
             filters,
         )
+        if len(matches) < limit:
+            keyword_matches = await _search_knowledge_articles_fallback(
+                db,
+                query,
+                query_tokens,
+                limit,
+                filters,
+            )
+            matches = _merge_matches(matches, keyword_matches, limit)
     else:
         matches = await _search_knowledge_articles_fallback(
             db,

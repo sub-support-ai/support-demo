@@ -20,6 +20,7 @@ from app.database import get_db
 from app.dependencies import get_current_user, require_role
 from app.rate_limit import rate_limit
 from app.models.ai_log import AILog
+from app.models.conversation import Conversation
 from app.models.ticket import Ticket
 from app.models.ticket_comment import TicketComment
 from app.models.user import User
@@ -602,6 +603,56 @@ async def confirm_ticket(
                 agent_name=assigned_agent.username,
             )
 
+    return ticket
+
+
+# ── PATCH /tickets/{id}/decline — пользователь отменяет черновик ──────────────
+
+@router.patch(
+    "/{ticket_id}/decline",
+    response_model=TicketRead,
+    summary="Отменить черновик тикета",
+    dependencies=[Depends(rate_limit(max_calls=10, window_seconds=60))],
+    description=(
+        "Позволяет владельцу отменить неподтверждённый pre-filled тикет. "
+        "Подтверждённые и рабочие тикеты этим endpoint'ом не откатываются."
+    ),
+)
+async def decline_ticket(
+    ticket_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    ticket = await get_ticket_for_user(ticket_id, db, current_user)
+
+    if ticket.status != "pending_user" or ticket.confirmed_by_user:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Отменить можно только неподтверждённый черновик тикета",
+        )
+
+    transition(ticket, "declined")
+    await unassign_agent(db, ticket)
+    ticket.agent_id = None
+
+    if ticket.conversation_id is not None:
+        conversation = await db.get(Conversation, ticket.conversation_id)
+        if conversation is not None and conversation.status == "escalated":
+            conversation.status = "active"
+
+    await log_event(
+        db,
+        action="ticket.decline",
+        user_id=current_user.id,
+        target_type="ticket",
+        target_id=ticket.id,
+        request=request,
+        details={"department": ticket.department},
+    )
+
+    await db.flush()
+    await db.refresh(ticket)
     return ticket
 
 

@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent import Agent
 from app.models.ai_log import AILog
+from app.models.conversation import Conversation
 from app.models.ticket import Ticket
 from app.models.user import User
 from app.security import hash_password
@@ -827,6 +828,81 @@ async def test_confirm_ticket_rejects_non_pending_draft(
     assert current.status_code == 200
     assert current.json()["status"] == "in_progress"
     assert current.json()["confirmed_by_user"] is False
+
+
+@pytest.mark.asyncio
+async def test_decline_ticket_cancels_pending_draft_and_reopens_conversation(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    user_id, token = await register_user(client, suffix="declinedraft")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    conversation = Conversation(user_id=user_id, status="escalated")
+    db_session.add(conversation)
+    await db_session.flush()
+
+    ticket = Ticket(
+        user_id=user_id,
+        conversation_id=conversation.id,
+        title="Черновик из диалога",
+        body="Пользователь хочет отменить отправку запроса.",
+        user_priority=3,
+        department="IT",
+        status="pending_user",
+        confirmed_by_user=False,
+        ai_priority="средний",
+        ai_confidence=0.2,
+    )
+    db_session.add(ticket)
+    await db_session.flush()
+
+    response = await client.patch(
+        f"/api/v1/tickets/{ticket.id}/decline",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "declined"
+    assert data["confirmed_by_user"] is False
+    assert data["agent_id"] is None
+
+    await db_session.refresh(conversation)
+    assert conversation.status == "active"
+
+
+@pytest.mark.asyncio
+async def test_decline_ticket_rejects_confirmed_ticket(client: AsyncClient):
+    _, token = await register_user(client, suffix="declineconfirmed")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    create = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "Подтвержденный запрос",
+            "body": "Такой запрос уже отправлен агентам.",
+            "user_priority": 3,
+            "office": "HQ",
+            "affected_item": "VPN",
+        },
+        headers=headers,
+    )
+    assert create.status_code == 201
+    ticket_id = create.json()["id"]
+
+    confirm = await client.patch(
+        f"/api/v1/tickets/{ticket_id}/confirm",
+        headers=headers,
+    )
+    assert confirm.status_code == 200
+
+    decline = await client.patch(
+        f"/api/v1/tickets/{ticket_id}/decline",
+        headers=headers,
+    )
+
+    assert decline.status_code == 409
 
 
 @pytest.mark.asyncio

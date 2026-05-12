@@ -113,6 +113,7 @@ export function TicketCard({
   const mutationError =
     updateStatus.error ?? resolveTicket.error ?? createComment.error ?? comments.error;
   const slaDeadline = formatDateTime(ticket.sla_deadline_at);
+  const createdAt = formatDateTime(ticket.created_at);
 
   const templates = useResponseTemplates({
     department: ticket.department,
@@ -160,9 +161,11 @@ export function TicketCard({
         <Group justify="space-between" align="start">
           <div>
             <Title order={4}>{ticket.title}</Title>
-            <Text size="xs" c="dimmed">
-              #{ticket.id}
-            </Text>
+            {createdAt && (
+              <Text size="xs" c="dimmed">
+                Создан {createdAt}
+              </Text>
+            )}
           </div>
           <Badge>{getStatusLabel(ticket.status)}</Badge>
         </Group>
@@ -302,13 +305,12 @@ export function TicketCard({
             </Button>
             {promotedKbId !== null && (
               <Text size="xs" c="dimmed">
-                Черновик #{promotedKbId} создан — на ревью у админа
+                Черновик статьи создан — на ревью у админа
               </Text>
             )}
             {promoteToKb.error && (
               <Text size="xs" c="red">
-                Не удалось создать статью (LLM-сервис недоступен или
-                тикет слишком специфичный)
+                Не удалось подготовить статью автоматически. Проверьте тикет и попробуйте позже.
               </Text>
             )}
           </Group>
