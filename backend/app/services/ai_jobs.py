@@ -128,6 +128,17 @@ async def process_ai_job(db: AsyncSession, job: AIJob) -> None:
     await db.flush()
 
 
+async def notify_ai_jobs_channel(database_url: str) -> None:
+    """Послать pg_notify после коммита новой джобы.
+
+    Вызывается как BackgroundTask после db.commit() в роутере, чтобы
+    ai_worker проснулся немедленно, не ожидая следующего таймаута.
+    No-op для SQLite (тесты) и при недоступном asyncpg.
+    """
+    from app.pg_notify import notify
+    await notify(database_url, "ai_jobs")
+
+
 async def fail_ai_job(db: AsyncSession, job: AIJob, exc: Exception) -> None:
     now = datetime.now(timezone.utc)
     job.error = str(exc)[:2000]

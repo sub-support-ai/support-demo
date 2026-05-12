@@ -1,0 +1,42 @@
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes (неиспользуемые импорты, неопределённые имена)
+    "I",   # isort (порядок импортов)
+    "UP",  # pyupgrade (современный синтаксис Python 3.12)
+    "B",   # flake8-bugbear (частые баги)
+    "C4",  # flake8-comprehensions (лишние list()/dict() вызовы)
+    "SIM", # flake8-simplify (упрощение if/else, context managers)
+]
+ignore = [
+    "E501",  # длина строки — контролируется ruff format, не lint
+    "B008",  # вызов функции в default-аргументе (FastAPI Depends-паттерн)
+    "SIM117", # вложенные with — не всегда можно упростить с asynccontextmanager
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]  # assert допустим в тестах
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+
+[tool.mypy]
+python_version = "3.12"
+# Не strict (много существующего кода без аннотаций), но самые ценные проверки:
+disallow_untyped_defs = true      # все функции должны иметь аннотации
+check_untyped_defs = true         # проверять тело функций без аннотаций
+warn_return_any = true            # предупреждение при возврате Any
+warn_unused_ignores = true        # убирать лишние # type: ignore
+no_implicit_optional = true       # X = None не делает тип Optional[X] автоматически
+ignore_missing_imports = true     # не ломаться на библиотеках без стабов
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false     # в тестах аннотации опциональны

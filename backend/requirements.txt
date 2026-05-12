@@ -31,3 +31,8 @@ redis>=5,<6
 # (scripts/import_knowledge_from_markdown.py). Confluence-export и docs-as-code
 # в Git — типичные источники таких файлов у заказчиков.
 PyYAML>=6.0,<7
+# Prometheus-метрики: HTTP-инструментация (request_total, latency) и
+# кастомные gauges/histograms для очередей и времени обработки джоб.
+# /metrics endpoint закрывается на уровне nginx/ingress в production.
+prometheus-fastapi-instrumentator>=7,<8
+prometheus-client>=0.22,<1

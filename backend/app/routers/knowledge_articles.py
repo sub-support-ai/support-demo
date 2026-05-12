@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,7 +24,10 @@ from app.services.knowledge_base import (
     sync_knowledge_article_index,
 )
 from app.services.knowledge_cache import get_knowledge_cache
-from app.services.knowledge_embedding_jobs import enqueue_knowledge_embedding_job
+from app.services.knowledge_embedding_jobs import (
+    enqueue_knowledge_embedding_job,
+    notify_knowledge_embedding_jobs_channel,
+)
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
@@ -139,6 +142,7 @@ async def search_knowledge(
 )
 async def create_knowledge_article(
     payload: KnowledgeArticleCreate,
+    background_tasks: BackgroundTasks,
     request: Request,
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_role("admin")),
@@ -195,11 +199,16 @@ async def create_knowledge_article(
             "request_type": article.request_type,
         },
     )
+    from app.config import get_settings
+    background_tasks.add_task(
+        notify_knowledge_embedding_jobs_channel, get_settings().DATABASE_URL
+    )
     return article
 
 
 @router.post("/reindex", response_model=KnowledgeEmbeddingJobRead)
 async def reindex_all_knowledge_articles(
+    background_tasks: BackgroundTasks,
     request: Request,
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_role("admin")),
@@ -221,12 +230,17 @@ async def reindex_all_knowledge_articles(
         request=request,
         details={"job_id": job.id, "status": job.status},
     )
+    from app.config import get_settings
+    background_tasks.add_task(
+        notify_knowledge_embedding_jobs_channel, get_settings().DATABASE_URL
+    )
     return job
 
 
 @router.post("/{article_id}/reindex", response_model=KnowledgeEmbeddingJobRead)
 async def reindex_knowledge_article(
     article_id: int,
+    background_tasks: BackgroundTasks,
     request: Request,
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_role("admin")),
@@ -256,6 +270,10 @@ async def reindex_knowledge_article(
         request=request,
         details={"job_id": job.id, "status": job.status},
     )
+    from app.config import get_settings
+    background_tasks.add_task(
+        notify_knowledge_embedding_jobs_channel, get_settings().DATABASE_URL
+    )
     return job
 
 
@@ -263,6 +281,7 @@ async def reindex_knowledge_article(
 async def update_knowledge_article(
     article_id: int,
     payload: KnowledgeArticleUpdate,
+    background_tasks: BackgroundTasks,
     request: Request,
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_role("admin")),
@@ -310,6 +329,10 @@ async def update_knowledge_article(
         target_id=article.id,
         request=request,
         details={"fields": sorted(updates.keys())},
+    )
+    from app.config import get_settings
+    background_tasks.add_task(
+        notify_knowledge_embedding_jobs_channel, get_settings().DATABASE_URL
     )
     return article
 

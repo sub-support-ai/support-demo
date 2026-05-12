@@ -21,7 +21,9 @@ from app.routers.response_templates import router as response_templates_router
 from app.routers.users import router as users_router
 from app.routers.stats import router as stats_router
 from app.routers.tickets import router as tickets_router
+from app.context import request_id_ctx
 from app.logging_config import setup_logging
+from app.metrics import setup_metrics
 from app.sentry_config import setup_sentry
 
 setup_logging()
@@ -32,6 +34,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup_sentry()
+    setup_metrics(app)
     # ВАЖНО: схема БД создаётся и обновляется ТОЛЬКО через Alembic-миграции.
     # Перед первым запуском и после каждого git pull у клиента:
     #   alembic upgrade head
@@ -99,6 +102,11 @@ async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSON
 @app.middleware("http")
 async def request_observability_middleware(request: Request, call_next):
     request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex
+    # Устанавливаем ПЕРЕД call_next: все корутины в рамках этого запроса
+    # наследуют значение через copy-on-create семантику contextvars.
+    # Это позволяет любому сервису и воркеру прочитать rid без передачи
+    # через параметры, а logging-фильтр подмешивает его в каждую строку лога.
+    token = request_id_ctx.set(request_id)
     started = time.perf_counter()
     try:
         response = await call_next(request)
@@ -107,20 +115,20 @@ async def request_observability_middleware(request: Request, call_next):
         logger.exception(
             "HTTP request failed",
             extra={
-                "request_id": request_id,
                 "method": request.method,
                 "path": request.url.path,
                 "duration_ms": duration_ms,
             },
         )
         raise
+    finally:
+        request_id_ctx.reset(token)
 
     duration_ms = round((time.perf_counter() - started) * 1000, 2)
     response.headers["X-Request-ID"] = request_id
     logger.info(
         "HTTP request completed",
         extra={
-            "request_id": request_id,
             "method": request.method,
             "path": request.url.path,
             "status_code": response.status_code,

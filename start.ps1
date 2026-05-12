@@ -32,9 +32,9 @@ Write-Host 'Запуск AI-сервиса...'
 
 Write-Host 'Запуск backend (docker compose)...'
 Start-Process powershell `
-    -WindowStyle Hidden `
+    -WindowStyle Normal `
     -WorkingDirectory $backendDir `
-    -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'start.ps1'
+    -ArgumentList '-NoExit', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'start.ps1'
 
 $frontendDir = Join-Path $root 'frontend'
 if (-not (Test-Path (Join-Path $frontendDir '.env.local'))) {
@@ -44,9 +44,9 @@ if (-not (Test-Path (Join-Path $frontendDir '.env.local'))) {
 
 Write-Host 'Запуск frontend...'
 Start-Process powershell `
-    -WindowStyle Hidden `
+    -WindowStyle Normal `
     -WorkingDirectory (Join-Path $root 'frontend') `
-    -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', 'npm run dev'
+    -ArgumentList '-NoExit', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', 'if (-not (Test-Path node_modules)) { npm install }; npm run dev'
 
 Write-Host ''
 Write-Host '✓ Всё запущено.'

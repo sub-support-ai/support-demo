@@ -7,6 +7,8 @@ from sqlalchemy import delete
 
 from app.database import AsyncSessionLocal
 from app.services.sla_escalation import escalate_overdue_tickets
+from app.metrics import refresh_queue_depth_metrics
+from app.workers.base import BaseWorker
 
 logger = logging.getLogger(__name__)
 POLL_INTERVAL_SECONDS = float(os.getenv("SLA_WORKER_POLL_INTERVAL_SECONDS", "30"))
@@ -15,7 +17,6 @@ SLA_ESCALATION_BATCH_SIZE = int(os.getenv("SLA_ESCALATION_BATCH_SIZE", "50"))
 # Retention: удаляем старые записи раз в час, не при каждом тике (30 с),
 # чтобы не нагружать БД мелкими DELETE-запросами.
 _RETENTION_INTERVAL_SECONDS = 3600
-_last_retention_run: float = 0.0
 
 
 async def run_once() -> int:
@@ -93,9 +94,19 @@ async def _run_retention_once() -> None:
         )
 
 
-async def run_forever() -> None:
-    global _last_retention_run
-    while True:
+class SLAWorker(BaseWorker):
+    # SLA — timer-based, не event-driven: нет очереди, которую нужно ждать.
+    # NOTIFY_CHANNEL="" — BaseWorker не поднимает LISTEN-соединение.
+    # NOTIFY_TIMEOUT_SECONDS = POLL_INTERVAL_SECONDS — это таймаут между тиками.
+    NOTIFY_CHANNEL = ""
+    NOTIFY_TIMEOUT_SECONDS = POLL_INTERVAL_SECONDS
+    WORKER_NAME = "SLA worker"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._last_retention_run: float = 0.0
+
+    async def run_once(self) -> bool:
         try:
             escalated = await run_once()
             if escalated:
@@ -105,14 +116,32 @@ async def run_forever() -> None:
 
         # Retention — раз в час, независимо от SLA-тика
         now = asyncio.get_running_loop().time()
-        if now - _last_retention_run >= _RETENTION_INTERVAL_SECONDS:
+        if now - self._last_retention_run >= _RETENTION_INTERVAL_SECONDS:
             try:
                 await _run_retention_once()
             except Exception:
                 logger.exception("Retention worker iteration failed")
-            _last_retention_run = asyncio.get_running_loop().time()
+            self._last_retention_run = asyncio.get_running_loop().time()
 
-        await asyncio.sleep(POLL_INTERVAL_SECONDS)
+        # Обновляем Prometheus-gauges глубины очередей: SLA-воркер уже тикает
+        # каждые 30 с, используем его тик чтобы не поднимать отдельный поллер.
+        from app.config import get_settings
+        try:
+            await refresh_queue_depth_metrics(get_settings().DATABASE_URL)
+        except Exception:
+            logger.exception("Metrics refresh failed")
+
+        # Всегда возвращаем True: это говорит BaseWorker, что надо сразу же
+        # подождать NOTIFY_TIMEOUT_SECONDS (= POLL_INTERVAL_SECONDS), а не
+        # немедленно вызывать следующую итерацию.
+        return True
+
+
+_sla_worker = SLAWorker()
+
+
+async def run_forever() -> None:
+    await _sla_worker.run_forever()
 
 
 if __name__ == "__main__":

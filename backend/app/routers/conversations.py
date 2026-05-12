@@ -26,7 +26,7 @@
 import logging
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,7 +40,7 @@ from app.models.message import Message
 from app.models.ticket import Ticket
 from app.models.user import User
 from app.schemas.ticket import TicketRead
-from app.services.ai_jobs import enqueue_ai_response_job
+from app.services.ai_jobs import enqueue_ai_response_job, notify_ai_jobs_channel
 from app.services.audit import log_event
 from app.services.routing import assign_agent
 from app.services.ticket_body import (
@@ -269,6 +269,7 @@ async def _get_conversation_for_user(
 async def add_message(
     conversation_id: int,
     payload: MessageCreate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> AddMessageResponse:
@@ -308,6 +309,12 @@ async def add_message(
     conversation.status = "ai_processing"
     job = await enqueue_ai_response_job(db, conversation_id)
     await db.flush()
+
+    # pg_notify: будим ai_worker после того как транзакция закоммитится.
+    # BackgroundTask гарантированно запускается после завершения yield-зависимостей
+    # (get_db коммитит сессию), поэтому джоба уже в БД к моменту NOTIFY.
+    from app.config import get_settings
+    background_tasks.add_task(notify_ai_jobs_channel, get_settings().DATABASE_URL)
 
     return AddMessageResponse(
         user_message=MessageRead.model_validate(user_message),

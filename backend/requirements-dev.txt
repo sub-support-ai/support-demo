@@ -9,3 +9,10 @@ aiosqlite>=0.21,<1
 # (FakeAsyncRedis) совместим с redis>=5 async API. extras [lua] подтягивает
 # `lupa` (Lua-интерпретатор для Python), без него fakeredis не понимает EVAL.
 fakeredis[lua]>=2,<3
+# Линтер + форматтер (заменяет flake8 + isort + black единым инструментом).
+# Запуск: ruff check . && ruff format --check .
+ruff>=0.9,<1
+# Статическая проверка типов. Запуск: mypy app/
+mypy>=1.15,<2
+# Стабы для PyYAML (mypy требует при strict-режиме)
+types-PyYAML>=6.0,<7

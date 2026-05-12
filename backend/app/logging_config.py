@@ -24,6 +24,24 @@ from app.config import get_settings
 settings = get_settings()
 
 
+class RequestIdFilter(logging.Filter):
+    """Добавляет request_id из contextvars в каждую запись лога.
+
+    Работает как Filter (не Formatter) — совместим с любым форматтером:
+    JSONFormatter в production и plain-text в development.
+
+    При вызове вне HTTP-запроса (воркеры, startup) request_id = "".
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        # Отложенный импорт: logging_config загружается раньше app.context
+        # на первом старте. Deferred import безопасен — модуль уже в sys.modules
+        # к моменту первого лог-вызова из реального запроса.
+        from app.context import request_id_ctx
+        record.request_id = request_id_ctx.get()
+        return True
+
+
 class JSONFormatter(logging.Formatter):
     """Форматирует лог-запись в одну строку JSON."""
 
@@ -64,13 +82,17 @@ def setup_logging() -> None:
     """
     handler = logging.StreamHandler(sys.stdout)
 
+    # RequestIdFilter добавляется ДО форматтера — так request_id попадает
+    # и в JSON-поля, и в plain-text формат, без изменения форматтеров.
+    handler.addFilter(RequestIdFilter())
+
     if settings.APP_ENV == "production":
         handler.setFormatter(JSONFormatter())
         log_level = logging.INFO
     else:
-        # В development — обычный читаемый формат
+        # В development — читаемый формат с rid= для удобной фильтрации логов
         handler.setFormatter(logging.Formatter(
-            "%(asctime)s | %(levelname)-8s | %(name)s — %(message)s",
+            "%(asctime)s | %(levelname)-8s | %(name)s | rid=%(request_id)s — %(message)s",
             datefmt="%H:%M:%S",
         ))
         log_level = logging.DEBUG

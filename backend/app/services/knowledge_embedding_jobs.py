@@ -56,6 +56,16 @@ async def enqueue_knowledge_embedding_job(
     return job
 
 
+async def notify_knowledge_embedding_jobs_channel(database_url: str) -> None:
+    """Послать pg_notify после коммита новой embedding-джобы.
+
+    Аналог notify_ai_jobs_channel — будит knowledge_embedding_worker,
+    чтобы он немедленно взял джобу без ожидания таймаута.
+    """
+    from app.pg_notify import notify
+    await notify(database_url, "knowledge_embedding_jobs")
+
+
 async def claim_next_knowledge_embedding_job(db: AsyncSession) -> KnowledgeEmbeddingJob | None:
     now = datetime.now(timezone.utc)
     result = await db.execute(
