@@ -341,25 +341,27 @@ export function PrefilledTicketPanel({
           </Stack>
         )}
 
-        <Group gap="xs">
-          <Button
-            color="teal"
-            leftSection={<IconCheck size={16} />}
-            loading={confirmLoading}
-            onClick={onConfirm}
-            disabled={!canEdit || isEditing || !hasRequiredContext}
-          >
-            Отправить как есть
-          </Button>
-          <Button
-            variant="light"
-            leftSection={<IconEdit size={16} />}
-            disabled={!canEdit || confirmLoading || saveLoading}
-            onClick={() => setIsEditing(true)}
-          >
-            Изменить
-          </Button>
-        </Group>
+        {canEdit && (
+          <Group gap="xs">
+            <Button
+              color="teal"
+              leftSection={<IconCheck size={16} />}
+              loading={confirmLoading}
+              onClick={onConfirm}
+              disabled={isEditing || !hasRequiredContext}
+            >
+              Отправить как есть
+            </Button>
+            <Button
+              variant="light"
+              leftSection={<IconEdit size={16} />}
+              disabled={confirmLoading || saveLoading}
+              onClick={() => setIsEditing(true)}
+            >
+              Изменить
+            </Button>
+          </Group>
+        )}
       </Stack>
     </Alert>
   );
