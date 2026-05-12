@@ -34,7 +34,6 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup_sentry()
-    setup_metrics(app)
     # ВАЖНО: схема БД создаётся и обновляется ТОЛЬКО через Alembic-миграции.
     # Перед первым запуском и после каждого git pull у клиента:
     #   alembic upgrade head
@@ -64,6 +63,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+setup_metrics(app)
 # ── CORS ──────────────────────────────────────────────────────────────────────
 # Подключаем только если список origins задан в .env. Пустой список → не
 # регистрируем middleware (сокращает overhead и риск "accidentally allow all").

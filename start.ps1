@@ -22,8 +22,24 @@ Write-Host 'Останавливаем docker compose (backend)...'
 $backendDir = Join-Path $root 'backend'
 if (Test-Path (Join-Path $backendDir 'docker-compose.dev.yml')) {
     Push-Location $backendDir
-    docker compose -f docker-compose.dev.yml down 2>$null
-    Pop-Location
+    try {
+        $oldErrorActionPreference = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+
+        docker compose -f docker-compose.dev.yml down
+
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  docker compose down завершился с кодом $LASTEXITCODE, продолжаем запуск..."
+        }
+    }
+    catch {
+        Write-Host "  Не удалось остановить docker compose, продолжаем запуск..."
+        Write-Host "  $($_.Exception.Message)"
+    }
+    finally {
+        $ErrorActionPreference = $oldErrorActionPreference
+        Pop-Location
+    }
 }
 
 # ── Запуск сервисов ───────────────────────────────────────────────────────────
