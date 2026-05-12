@@ -551,3 +551,58 @@ async def test_requeue_ai_job_marks_is_stale_for_old_lock(
     by_id = {item["id"]: item for item in data["ai"]}
     assert by_id[fresh_job.id]["is_stale"] is False
     assert by_id[stale_job.id]["is_stale"] is True
+
+
+@pytest.mark.asyncio
+async def test_list_jobs_marks_stale_knowledge_embedding_job(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    admin_id, token = await _register_user_with_id(client, "knowledgejobstale")
+    admin = await db_session.get(User, admin_id)
+    assert admin is not None
+    admin.role = "admin"
+
+    fresh_job = KnowledgeEmbeddingJob(
+        article_id=None,
+        requested_by_user_id=admin_id,
+        status="running",
+        attempts=1,
+        max_attempts=3,
+        run_after=datetime.now(timezone.utc),
+        locked_at=datetime.now(timezone.utc),
+        started_at=datetime.now(timezone.utc),
+    )
+    stale_job = KnowledgeEmbeddingJob(
+        article_id=None,
+        requested_by_user_id=admin_id,
+        status="running",
+        attempts=1,
+        max_attempts=3,
+        run_after=datetime.now(timezone.utc),
+        locked_at=datetime.now(timezone.utc) - timedelta(minutes=20),
+        started_at=datetime.now(timezone.utc) - timedelta(minutes=20),
+    )
+    queued_old_lock_job = KnowledgeEmbeddingJob(
+        article_id=None,
+        requested_by_user_id=admin_id,
+        status="queued",
+        attempts=0,
+        max_attempts=3,
+        run_after=datetime.now(timezone.utc),
+        locked_at=datetime.now(timezone.utc) - timedelta(minutes=20),
+    )
+    db_session.add_all([fresh_job, stale_job, queued_old_lock_job])
+    await db_session.flush()
+
+    response = await client.get(
+        "/api/v1/jobs/?kind=knowledge_embeddings&status=all",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    by_id = {item["id"]: item for item in data["knowledge_embeddings"]}
+    assert by_id[fresh_job.id]["is_stale"] is False
+    assert by_id[stale_job.id]["is_stale"] is True
+    assert by_id[queued_old_lock_job.id]["is_stale"] is False

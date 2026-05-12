@@ -209,6 +209,16 @@ class Settings(BaseSettings):
             )
         return normalized
 
+    @field_validator(
+        "AI_WORKER_STALE_RUNNING_SECONDS",
+        "KNOWLEDGE_EMBEDDING_WORKER_STALE_RUNNING_SECONDS",
+    )
+    @classmethod
+    def _validate_worker_stale_running_seconds(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("Worker stale running timeout must be greater than 0.")
+        return value
+
     @model_validator(mode="after")
     def __post_init_check__(self) -> "Settings":
         """Кросс-полевые инварианты + проверки production-секретов.
