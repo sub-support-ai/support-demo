@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent import Agent
+from app.models.notification import Notification
 from app.models.ticket import Ticket
 from app.models.ticket_comment import TicketComment
 from app.models.user import User
@@ -130,6 +131,15 @@ async def test_sla_escalation_reassigns_overdue_ticket_to_senior_agent(
     assert comments[0].internal is True
     assert "SLA просрочен" in comments[0].content
     assert senior_agent.username in comments[0].content
+
+    notifications = (
+        await db_session.execute(
+            select(Notification).where(Notification.target_id == ticket.id)
+        )
+    ).scalars().all()
+    assert len(notifications) == 1
+    assert notifications[0].user_id == senior_agent.user_id
+    assert notifications[0].event_type == "ticket.sla_overdue"
 
     assert await escalate_overdue_tickets(db_session, now=now) == 0
 

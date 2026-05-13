@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.agent import Agent
 from app.models.ticket import Ticket
 from app.models.ticket_comment import TicketComment
+from app.services.notifications import create_notification, notify_active_admins
 from app.services.sla import OPEN_STATUSES
 
 
@@ -57,6 +58,26 @@ async def escalate_overdue_ticket(
 
     ticket.sla_escalated_at = current_time
     ticket.sla_escalation_count += 1
+
+    if senior_agent.user_id is not None:
+        await create_notification(
+            db,
+            user_id=senior_agent.user_id,
+            event_type="ticket.sla_overdue",
+            title="SLA запроса просрочен",
+            body=f"{ticket.department}: {ticket.title}",
+            target_type="ticket",
+            target_id=ticket.id,
+        )
+    else:
+        await notify_active_admins(
+            db,
+            event_type="ticket.sla_overdue_unassigned",
+            title="SLA просрочен, но у агента нет учетной записи",
+            body=f"{ticket.department}: {ticket.title}",
+            target_type="ticket",
+            target_id=ticket.id,
+        )
 
     if previous_agent_id == senior_agent.id:
         content = (

@@ -17,6 +17,7 @@ from app.routers.auth import router as auth_router
 from app.routers.conversations import router as conversations_router
 from app.routers.jobs import router as jobs_router
 from app.routers.knowledge_articles import router as knowledge_articles_router
+from app.routers.notifications import router as notifications_router
 from app.routers.response_templates import router as response_templates_router
 from app.routers.users import router as users_router
 from app.routers.stats import router as stats_router
@@ -143,6 +144,7 @@ app.include_router(stats_router, prefix="/api/v1")
 app.include_router(tickets_router, prefix="/api/v1")
 app.include_router(jobs_router, prefix="/api/v1")
 app.include_router(knowledge_articles_router, prefix="/api/v1")
+app.include_router(notifications_router, prefix="/api/v1")
 app.include_router(response_templates_router, prefix="/api/v1")
 app.include_router(conversations_router, prefix="/api/v1")
 app.include_router(audit_router, prefix="/api/v1")
