@@ -2,12 +2,14 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.ai_job import AIJob
 from app.models.conversation import Conversation
 from app.models.knowledge_article import KnowledgeArticle
 from app.models.knowledge_embedding_job import KnowledgeEmbeddingJob
+from app.models.message import Message
 from app.models.user import User
 
 
@@ -28,6 +30,71 @@ async def _register_user_with_id(client: AsyncClient, suffix: str) -> tuple[int,
     )
     assert me.status_code == 200
     return me.json()["id"], token
+
+
+@pytest.mark.asyncio
+async def test_process_ai_job_skips_duplicate_response_for_same_user_turn(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    user_id, _ = await _register_user_with_id(client, "skipduplicate")
+    conversation = Conversation(
+        user_id=user_id,
+        status="ai_processing",
+        ai_stage="generating",
+    )
+    db_session.add(conversation)
+    await db_session.flush()
+    db_session.add_all(
+        [
+            Message(
+                conversation_id=conversation.id,
+                role="user",
+                content="Не открывается 1С",
+            ),
+            Message(
+                conversation_id=conversation.id,
+                role="ai",
+                content="Уже созданный ответ по этому сообщению.",
+            ),
+        ]
+    )
+    job = AIJob(
+        conversation_id=conversation.id,
+        status="running",
+        attempts=1,
+        max_attempts=3,
+        run_after=datetime.now(timezone.utc),
+        locked_at=datetime.now(timezone.utc),
+        started_at=datetime.now(timezone.utc),
+    )
+    db_session.add(job)
+    await db_session.flush()
+
+    async def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("duplicate AI response generation")
+
+    monkeypatch.setattr("app.services.ai_jobs.generate_ai_message", fail_if_called)
+
+    from app.services.ai_jobs import process_ai_job
+
+    await process_ai_job(db_session, job)
+
+    await db_session.refresh(conversation)
+    assert job.status == "done"
+    assert conversation.status == "active"
+    assert conversation.ai_stage is None
+
+    ai_messages = (
+        await db_session.execute(
+            select(Message).where(
+                Message.conversation_id == conversation.id,
+                Message.role == "ai",
+            )
+        )
+    ).scalars().all()
+    assert len(ai_messages) == 1
 
 
 @pytest.mark.asyncio

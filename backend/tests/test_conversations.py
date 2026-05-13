@@ -54,6 +54,30 @@ def _stub_ai_services(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(ai_classifier, "classify_ticket", classify_fallback)
 
 
+def test_kb_repeat_guard_skips_recent_article_after_any_followup():
+    from app.services.conversation_ai import should_avoid_repeating_kb_answer
+
+    history = [
+        {"role": "user", "content": "Не открывается 1С"},
+        {"role": "assistant", "content": "Нашёл решение в базе знаний: ..."},
+        {"role": "user", "content": "У меня другая ошибка при входе"},
+    ]
+
+    assert should_avoid_repeating_kb_answer(history) is True
+
+
+def test_kb_repeat_guard_allows_explicit_repeat_request():
+    from app.services.conversation_ai import should_avoid_repeating_kb_answer
+
+    history = [
+        {"role": "user", "content": "Не открывается 1С"},
+        {"role": "assistant", "content": "Нашёл решение в базе знаний: ..."},
+        {"role": "user", "content": "Повтори инструкцию еще раз"},
+    ]
+
+    assert should_avoid_repeating_kb_answer(history) is False
+
+
 async def register_user(client: AsyncClient, suffix: str) -> tuple[int, str]:
     """Регистрирует пользователя и возвращает (id, access_token)."""
     response = await client.post("/api/v1/auth/register", json={

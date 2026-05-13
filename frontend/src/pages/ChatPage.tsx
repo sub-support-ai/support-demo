@@ -95,6 +95,8 @@ export function ChatPage() {
   const tickets = useTickets();
   const [activeConversationId, setActiveConversationId] = useState<number>();
   const [draftTicket, setDraftTicket] = useState<Ticket | null>(null);
+  const [awaitingAiConversationId, setAwaitingAiConversationId] =
+    useState<number>();
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
   const activeConversation = useMemo(() => {
@@ -126,6 +128,10 @@ export function ChatPage() {
     activeTicket.status === "pending_user" &&
     !activeTicket.confirmed_by_user;
   const isAiProcessing = activeConversation?.status === "ai_processing";
+  const isAwaitingAiResponse =
+    awaitingAiConversationId !== undefined &&
+    awaitingAiConversationId === activeConversationId;
+  const shouldPollMessages = isAiProcessing || isAwaitingAiResponse;
 
   // Метки для каждой стадии обработки (пользователь не знает, что это «псевдо»).
   const AI_STAGE_LABELS: Record<string, string> = {
@@ -134,13 +140,15 @@ export function ChatPage() {
     found_kb: "Нашёл подходящую статью...",
     generating: "Формирую ответ...",
   };
-  const aiStageLabel = isAiProcessing
+  const aiStageLabel = shouldPollMessages
     ? (activeConversation?.ai_stage
         ? (AI_STAGE_LABELS[activeConversation.ai_stage] ?? "Обрабатываю запрос...")
         : "Обрабатываю запрос...")
     : "";
   const composerDisabled =
-    activeConversation?.status === "escalated" || hasPendingDraft || isAiProcessing;
+    activeConversation?.status === "escalated" ||
+    hasPendingDraft ||
+    shouldPollMessages;
 
   useEffect(() => {
     if (!activeConversationId && conversations.data?.length) {
@@ -148,11 +156,32 @@ export function ChatPage() {
     }
   }, [activeConversationId, conversations.data]);
 
-  const messages = useMessages(activeConversationId, isAiProcessing);
+  const messages = useMessages(activeConversationId, shouldPollMessages);
+
+  useEffect(() => {
+    if (!isAwaitingAiResponse) {
+      return;
+    }
+
+    let latestUserMessageId = 0;
+    let latestAiMessageId = 0;
+    for (const message of messages.data ?? []) {
+      if (message.role === "user") {
+        latestUserMessageId = Math.max(latestUserMessageId, message.id);
+      }
+      if (message.role === "ai") {
+        latestAiMessageId = Math.max(latestAiMessageId, message.id);
+      }
+    }
+
+    if (latestUserMessageId > 0 && latestAiMessageId > latestUserMessageId) {
+      setAwaitingAiConversationId(undefined);
+    }
+  }, [isAwaitingAiResponse, messages.data]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.data?.length, isAiProcessing]);
+  }, [messages.data?.length, shouldPollMessages]);
 
   async function ensureConversation() {
     const activeConversationExists =
@@ -173,6 +202,7 @@ export function ChatPage() {
     try {
       const conversationId = await ensureConversation();
       await sendMessage.mutateAsync({ conversationId, content });
+      setAwaitingAiConversationId(conversationId);
     } catch {
       // Ошибка уже хранится в mutation/query state и показывается в Alert.
     }
@@ -305,7 +335,7 @@ export function ChatPage() {
                   onEscalate={handleEscalate}
                 />
               ))}
-              {isAiProcessing && (
+              {shouldPollMessages && (
                 <Group className="ai-processing-indicator" gap="xs">
                   <Loader size="xs" />
                   <Text size="sm" c="dimmed">

@@ -99,10 +99,9 @@ PHYSICAL_INCIDENT_TERMS = (
     "провод", "кабел", "розетк", "удлинител", "электр", "питани", "сломал",
     "сломался", "порвал", "порвался", "оторвал", "поврежд",
 )
-KB_UNSUCCESSFUL_FOLLOWUP_TERMS = (
-    "не помог", "не помогло", "не сработ", "не получилось", "не подходит",
-    "это не то", "не то", "всё еще", "все еще", "по-прежнему",
-    "ничего не изменилось", "та же ошибка", "осталось",
+KB_REPEAT_REQUEST_TERMS = (
+    "повтори", "повторите", "еще раз", "ещё раз", "покажи инструкцию",
+    "покажите инструкцию", "напомни", "напомните",
 )
 
 
@@ -237,7 +236,9 @@ def should_avoid_repeating_kb_answer(messages: list[dict[str, str]]) -> bool:
         return False
 
     latest = latest_user.casefold()
-    return any(term in latest for term in KB_UNSUCCESSFUL_FOLLOWUP_TERMS)
+    if any(term in latest for term in KB_REPEAT_REQUEST_TERMS):
+        return False
+    return True
 
 
 async def recent_kb_article_ids_for_conversation(

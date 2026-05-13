@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.ai_job import AIJob
 from app.models.conversation import Conversation
+from app.models.message import Message
 from app.services.conversation_ai import generate_ai_message
 
 AI_JOB_QUEUED = "queued"
@@ -12,6 +13,44 @@ AI_JOB_RUNNING = "running"
 AI_JOB_DONE = "done"
 AI_JOB_FAILED = "failed"
 ACTIVE_AI_JOB_STATUSES = (AI_JOB_QUEUED, AI_JOB_RUNNING)
+
+
+async def has_ai_response_after_latest_user(
+    db: AsyncSession,
+    conversation_id: int,
+) -> bool:
+    latest_user_result = await db.execute(
+        select(Message.id)
+        .where(
+            Message.conversation_id == conversation_id,
+            Message.role == "user",
+        )
+        .order_by(Message.id.desc())
+        .limit(1)
+    )
+    latest_user_id = latest_user_result.scalar_one_or_none()
+    if latest_user_id is None:
+        return False
+
+    latest_ai_result = await db.execute(
+        select(Message.id)
+        .where(
+            Message.conversation_id == conversation_id,
+            Message.role == "ai",
+        )
+        .order_by(Message.id.desc())
+        .limit(1)
+    )
+    latest_ai_id = latest_ai_result.scalar_one_or_none()
+    return latest_ai_id is not None and latest_ai_id > latest_user_id
+
+
+async def finish_ai_job(db: AsyncSession, job: AIJob) -> None:
+    now = datetime.now(timezone.utc)
+    job.status = AI_JOB_DONE
+    job.finished_at = now
+    job.error = None
+    await db.flush()
 
 
 async def enqueue_ai_response_job(
@@ -115,17 +154,21 @@ async def requeue_stale_ai_jobs(
 
 
 async def process_ai_job(db: AsyncSession, job: AIJob) -> None:
+    if await has_ai_response_after_latest_user(db, job.conversation_id):
+        conversation = await db.get(Conversation, job.conversation_id)
+        if conversation is not None and conversation.status == "ai_processing":
+            conversation.status = "active"
+            conversation.ai_stage = None
+        await finish_ai_job(db, job)
+        return
+
     try:
         await generate_ai_message(db, job.conversation_id)
     except Exception as exc:
         await fail_ai_job(db, job, exc)
         return
 
-    now = datetime.now(timezone.utc)
-    job.status = AI_JOB_DONE
-    job.finished_at = now
-    job.error = None
-    await db.flush()
+    await finish_ai_job(db, job)
 
 
 async def notify_ai_jobs_channel(database_url: str) -> None:
