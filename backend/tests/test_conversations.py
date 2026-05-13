@@ -55,7 +55,7 @@ def _stub_ai_services(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_kb_repeat_guard_skips_recent_article_after_any_followup():
-    from app.services.conversation_ai import should_avoid_repeating_kb_answer
+    from app.services.conversation_intent import should_avoid_repeating_kb_answer
 
     history = [
         {"role": "user", "content": "Не открывается 1С"},
@@ -67,7 +67,7 @@ def test_kb_repeat_guard_skips_recent_article_after_any_followup():
 
 
 def test_kb_repeat_guard_allows_explicit_repeat_request():
-    from app.services.conversation_ai import should_avoid_repeating_kb_answer
+    from app.services.conversation_intent import should_avoid_repeating_kb_answer
 
     history = [
         {"role": "user", "content": "Не открывается 1С"},
@@ -76,6 +76,101 @@ def test_kb_repeat_guard_allows_explicit_repeat_request():
     ]
 
     assert should_avoid_repeating_kb_answer(history) is False
+
+
+def test_failed_kb_followup_forces_support_handoff():
+    from app.services.conversation_intent import should_escalate_failed_kb_followup
+
+    history = [
+        {"role": "user", "content": "Не работает монитор, скорее всего сгорел"},
+        {
+            "role": "assistant",
+            "content": "Нашёл решение в базе знаний: Не работает или мерцает второй монитор",
+        },
+        {"role": "user", "content": "Не поможет, надо менять"},
+    ]
+
+    assert should_escalate_failed_kb_followup(history) is True
+
+
+def test_failed_kb_followup_does_not_block_repeat_request():
+    from app.services.conversation_intent import should_escalate_failed_kb_followup
+
+    history = [
+        {"role": "user", "content": "Не работает монитор"},
+        {
+            "role": "assistant",
+            "content": "Нашёл решение в базе знаний: Не работает или мерцает второй монитор",
+        },
+        {"role": "user", "content": "Повтори инструкцию еще раз"},
+    ]
+
+    assert should_escalate_failed_kb_followup(history) is False
+
+
+def test_dialog_policy_routes_failed_kb_followup_before_rag():
+    from app.services.conversation_intent import (
+        ConversationAction,
+        ConversationIntent,
+        detect_conversation_policy,
+    )
+
+    policy = detect_conversation_policy([
+        {"role": "user", "content": "У меня не работает монитор, скорее всего сгорел"},
+        {
+            "role": "assistant",
+            "content": "Нашёл решение в базе знаний: Не работает или мерцает второй монитор",
+        },
+        {"role": "user", "content": "Не поможет, надо менять"},
+    ])
+
+    assert policy.intent == ConversationIntent.FAILED_KB_HANDOFF
+    assert policy.action == ConversationAction.ESCALATE
+    assert policy.requires_draft is True
+    assert policy.avoid_repeating_kb is False
+    assert "случайную статью" in (policy.answer_override or "")
+
+
+def test_dialog_policy_routes_direct_hardware_handoff_before_rag():
+    from app.services.conversation_intent import (
+        ConversationAction,
+        ConversationIntent,
+        detect_conversation_policy,
+    )
+
+    policy = detect_conversation_policy([
+        {"role": "user", "content": "У меня не работает монитор, скорее всего сгорел"},
+    ])
+
+    assert policy.intent == ConversationIntent.DIRECT_HANDOFF
+    assert policy.action == ConversationAction.ESCALATE
+    assert policy.requires_draft is True
+    assert "Не буду начинать с общей инструкции" in (policy.answer_override or "")
+
+
+def test_dialog_policy_keeps_collecting_context_after_handoff_prompt():
+    from app.services.conversation_intent import (
+        ConversationAction,
+        ConversationIntent,
+        detect_conversation_policy,
+    )
+
+    policy = detect_conversation_policy([
+        {"role": "user", "content": "У меня не работает монитор, скорее всего сгорел"},
+        {
+            "role": "assistant",
+            "content": (
+                "Понял, инструкция из базы знаний не решает ситуацию. "
+                "После этого подготовлю черновик запроса и передам его в нужный отдел."
+            ),
+        },
+        {"role": "user", "content": "Офис Южный, кабинет 210, монитор Dell"},
+    ])
+
+    assert policy.intent == ConversationIntent.COLLECT_CONTEXT
+    assert policy.action == ConversationAction.ESCALATE
+    assert policy.requires_draft is True
+    assert "Не буду снова искать статью" in (policy.answer_override or "")
 
 
 async def register_user(client: AsyncClient, suffix: str) -> tuple[int, str]:
@@ -181,6 +276,88 @@ async def test_post_message_uses_knowledge_base_before_external_ai(
     # «не None и неотрицательно», а точное значение покрывает отдельный тест.
     assert log.ai_response_time_ms is not None
     assert log.ai_response_time_ms >= 0
+
+
+@pytest.mark.asyncio
+async def test_failed_knowledge_answer_followup_creates_escalation_card(
+    client: AsyncClient,
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from app.models.knowledge_article import KnowledgeArticle
+    from app.services import conversation_ai
+
+    async def fail_if_called(conversation_id: int, messages: list[dict[str, str]]):
+        raise AssertionError("External AI must not be called for failed KB follow-up")
+
+    monkeypatch.setattr(conversation_ai, "get_ai_answer", fail_if_called)
+    db_session.add(
+        KnowledgeArticle(
+            department="IT",
+            request_type="Монитор",
+            title="Не работает или мерцает второй монитор",
+            body="Проверьте кабель и док-станцию.",
+            steps=[
+                "Проверьте кабель HDMI/DisplayPort.",
+                "Попробуйте подключить монитор напрямую.",
+            ],
+            when_to_escalate="создавать запрос, если монитор физически повреждён",
+            keywords="монитор экран кабель hdmi displayport сгорел мерцает",
+            is_active=True,
+        )
+    )
+    db_session.add(
+        KnowledgeArticle(
+            department="IT",
+            request_type="Видеосвязь",
+            title="Teams или Zoom не работает",
+            body="Проверьте микрофон, камеру и разрешения приложения.",
+            keywords="teams zoom звук видео камера микрофон",
+            is_active=True,
+        )
+    )
+    await db_session.flush()
+
+    _, token = await register_user(client, "kbfailedhandoff")
+    headers = {"Authorization": f"Bearer {token}"}
+    conv_id = (await client.post("/api/v1/conversations/", headers=headers)).json()["id"]
+
+    first_response = await client.post(
+        f"/api/v1/conversations/{conv_id}/messages",
+        json={"content": "У меня не работает второй монитор"},
+        headers=headers,
+    )
+    assert first_response.status_code == 201
+    await process_next_ai_job(db_session)
+
+    first_history = await client.get(
+        f"/api/v1/conversations/{conv_id}/messages",
+        headers=headers,
+    )
+    assert first_history.status_code == 200
+    assert first_history.json()[-1]["sources"][0]["title"] == (
+        "Не работает или мерцает второй монитор"
+    )
+
+    followup_response = await client.post(
+        f"/api/v1/conversations/{conv_id}/messages",
+        json={"content": "Не поможет, надо менять"},
+        headers=headers,
+    )
+    assert followup_response.status_code == 201
+    await process_next_ai_job(db_session)
+
+    followup_history = await client.get(
+        f"/api/v1/conversations/{conv_id}/messages",
+        headers=headers,
+    )
+    assert followup_history.status_code == 200
+    ai_msg = followup_history.json()[-1]
+    assert ai_msg["requires_escalation"] is True
+    assert ai_msg["ai_escalate"] is True
+    assert ai_msg["sources"] is None
+    assert "инструкция из базы знаний не решает ситуацию" in ai_msg["content"]
+    assert "Teams" not in ai_msg["content"]
 
 
 # ── POST /messages: AI fallback должен дать requires_escalation=True ─────────
@@ -728,11 +905,19 @@ def test_extract_steps_tried_returns_none_when_nothing_found():
 
 
 def test_support_draft_detection_handles_draft_request_and_urgent_wire():
-    from app.services.conversation_ai import should_offer_support_draft
+    from app.services.conversation_intent import (
+        ConversationIntent,
+        detect_conversation_policy,
+        should_offer_support_draft,
+    )
 
     assert should_offer_support_draft([
         {"role": "user", "content": "порвался провод, срочно"},
     ])
+    urgent_policy = detect_conversation_policy([
+        {"role": "user", "content": "порвался провод, срочно"},
+    ])
+    assert urgent_policy.intent == ConversationIntent.EMERGENCY
     assert should_offer_support_draft([
         {"role": "user", "content": "порвался провод, срочно"},
         {"role": "assistant", "content": "Потребуется специалист."},

@@ -15,6 +15,10 @@ from app.services.ai_fallback import (
     record_ai_fallback,
 )
 from app.services.ai_service_client import ai_service_headers
+from app.services.conversation_intent import (
+    ConversationAction,
+    detect_conversation_policy,
+)
 from app.services.knowledge_base import LATENCY_PAYLOAD_KEY, find_knowledge_answer
 
 logger = logging.getLogger(__name__)
@@ -84,26 +88,6 @@ MAX_HISTORY_MESSAGES = 20
 # отдельную настройку, но дефолт оптимизируем под скорость.
 MAX_HISTORY_TOKENS = 2048
 _CHARS_PER_TOKEN = 3
-
-SUPPORT_DRAFT_INTENT_TERMS = (
-    "тикет", "заявк", "черновик", "обращен", "запрос", "техподдерж", "тех поддерж",
-    "специалист", "саппорт", "support",
-)
-SUPPORT_DRAFT_ACTION_TERMS = (
-    "созда", "сформир", "оформ", "заведи", "завести", "отправ", "эскал",
-)
-URGENT_TERMS = (
-    "срочно", "авар", "критич", "опасн", "горит", "дым", "искр",
-)
-PHYSICAL_INCIDENT_TERMS = (
-    "провод", "кабел", "розетк", "удлинител", "электр", "питани", "сломал",
-    "сломался", "порвал", "порвался", "оторвал", "поврежд",
-)
-KB_REPEAT_REQUEST_TERMS = (
-    "повтори", "повторите", "еще раз", "ещё раз", "покажи инструкцию",
-    "покажите инструкцию", "напомни", "напомните",
-)
-
 
 # Поля, которые мы соглашаемся хранить в Message.sources. Всё, что приходит
 # от AI-сервиса/KB вне этого whitelist'а — отбрасываем: фронтовая схема
@@ -220,25 +204,6 @@ async def load_history_for_ai(
         role = "user" if message.role == "user" else "assistant"
         history.append({"role": role, "content": message.content})
     return history
-
-
-def should_avoid_repeating_kb_answer(messages: list[dict[str, str]]) -> bool:
-    latest_user = ""
-    has_prior_assistant = False
-    for message in messages:
-        content = message.get("content", "").strip()
-        if message.get("role") == "assistant" and content:
-            has_prior_assistant = True
-        elif message.get("role") == "user" and content:
-            latest_user = content
-
-    if not latest_user or not has_prior_assistant:
-        return False
-
-    latest = latest_user.casefold()
-    if any(term in latest for term in KB_REPEAT_REQUEST_TERMS):
-        return False
-    return True
 
 
 async def recent_kb_article_ids_for_conversation(
@@ -406,20 +371,14 @@ async def generate_ai_message(db: AsyncSession, conversation_id: int) -> Message
         raise ValueError(f"Conversation {conversation_id} is already escalated")
 
     history = await load_history_for_ai(db, conversation_id)
-    if should_offer_support_draft(history):
-        # Быстрый путь — intake rules; стадию не меняем, сразу сбросим.
-        ai_payload = {
-            "answer": build_intake_answer(),
-            "confidence": 0.5,
-            "escalate": True,
-            "sources": [],
-            "model_version": "intake-rules-v1",
-        }
+    policy = detect_conversation_policy(history)
+    if policy.action == ConversationAction.ESCALATE:
+        ai_payload = policy.to_ai_payload()
     else:
         # ПСЕВДО-СТРИМИНГ: ищем ответ в базе знаний.
         await _set_ai_stage(conversation_id, "searching")
         exclude_article_ids: set[int] | None = None
-        if should_avoid_repeating_kb_answer(history):
+        if policy.avoid_repeating_kb:
             exclude_article_ids = await recent_kb_article_ids_for_conversation(db, conversation_id)
         if exclude_article_ids:
             ai_payload = await find_knowledge_answer(
@@ -514,37 +473,3 @@ async def generate_ai_message(db: AsyncSession, conversation_id: int) -> Message
     await db.flush()
     await db.refresh(ai_message)
     return ai_message
-
-
-def should_offer_support_draft(messages: list[dict[str, str]]) -> bool:
-    user_messages = [
-        message.get("content", "").strip().lower()
-        for message in messages
-        if message.get("role") == "user" and message.get("content", "").strip()
-    ]
-    if not user_messages:
-        return False
-
-    latest = user_messages[-1]
-    combined = "\n".join(user_messages)
-
-    has_draft_action = any(term in latest for term in SUPPORT_DRAFT_ACTION_TERMS)
-    has_draft_object = any(term in latest for term in SUPPORT_DRAFT_INTENT_TERMS)
-    if has_draft_action and has_draft_object:
-        return True
-
-    has_urgent_context = any(term in combined for term in URGENT_TERMS)
-    has_physical_incident = any(term in combined for term in PHYSICAL_INCIDENT_TERMS)
-    if has_urgent_context and has_physical_incident:
-        return True
-
-    return False
-
-
-def build_intake_answer() -> str:
-    return (
-        "Соберу данные для черновика обращения. Из истории возьму описание проблемы "
-        "и уже упомянутые действия. Уточните тип запроса, заявителя, офис, затронутый объект "
-        "и конкретные детали по форме; "
-        "после этого сформирую черновик для специалиста."
-    )

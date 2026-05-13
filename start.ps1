@@ -76,7 +76,7 @@ Write-Host 'Запуск AI-сервиса...'
 
 Write-Host 'Запуск backend (docker compose)...'
 Start-Process powershell `
-    -WindowStyle Normal `
+    -WindowStyle Hidden `
     -WorkingDirectory $backendDir `
     -ArgumentList '-NoExit', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'start.ps1'
 
@@ -100,7 +100,7 @@ if (-not (Test-Path (Join-Path $frontendDir '.env.local'))) {
 
 Write-Host 'Запуск frontend...'
 Start-Process powershell `
-    -WindowStyle Normal `
+    -WindowStyle Hidden `
     -WorkingDirectory $frontendDir `
     -ArgumentList '-NoExit', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', 'if (-not (Test-Path node_modules)) { npm install }; npm run dev'
 
