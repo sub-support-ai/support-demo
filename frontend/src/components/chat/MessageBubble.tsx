@@ -103,12 +103,14 @@ export function MessageBubble({
   escalationDisabled,
   escalationLoading,
   contextDefaults,
+  showAiConfidence = false,
   onEscalate,
 }: {
   message: Message;
   escalationDisabled?: boolean;
   escalationLoading?: boolean;
   contextDefaults?: RequestContextDefaults | null;
+  showAiConfidence?: boolean;
   onEscalate: (conversationId: number, context: EscalationContext) => void;
 }) {
   const isUser = message.role === "user";
@@ -123,7 +125,9 @@ export function MessageBubble({
                 <Text size="xs" fw={600} c="dimmed">
                   AI
                 </Text>
-                <ConfidenceBadge confidence={message.ai_confidence} />
+                {showAiConfidence && (
+                  <ConfidenceBadge confidence={message.ai_confidence} />
+                )}
               </Group>
               <Text size="sm" className="message-text">
                 {message.content}
@@ -152,7 +156,9 @@ export function MessageBubble({
           <Text size="xs" fw={600} c="dimmed">
             {isUser ? "Вы" : "AI"}
           </Text>
-          {!isUser && <ConfidenceBadge confidence={message.ai_confidence} />}
+          {!isUser && showAiConfidence && (
+            <ConfidenceBadge confidence={message.ai_confidence} />
+          )}
         </Group>
         <Text size="sm" className="message-text">
           {message.content}

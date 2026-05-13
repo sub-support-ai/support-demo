@@ -45,7 +45,30 @@ STOP_WORDS = {
     "the",
     "and",
     "with",
+    "надо",
+    "нужно",
+    "хочу",
 }
+
+BLOCKING_SYSTEM_ALIASES: dict[str, tuple[str, ...]] = {
+    "1c": ("1с", "1c", "1с:", "1c:"),
+    "bitlocker": ("bitlocker", "битлокер", "recovery key", "ключ восстановления"),
+    "filevault": ("filevault",),
+    "vpn": ("vpn", "впн"),
+    "wifi": ("wi-fi", "wifi", "вайфай"),
+    "printer": ("принтер", "мфу", "печать"),
+    "sap": ("sap",),
+    "jira": ("jira", "джира"),
+    "confluence": ("confluence",),
+    "bitrix": ("bitrix", "битрикс"),
+}
+
+
+@dataclass(frozen=True)
+class _SystemAlignment:
+    reject: bool = False
+    cap_to_clarify: bool = False
+    score_bonus: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -107,6 +130,34 @@ def build_search_text(article: KnowledgeArticle) -> str:
     parts.extend(_iter_json_values(article.steps))
     parts.extend(_iter_json_values(article.required_context))
     return "\n".join(part for part in parts if part)
+
+
+def _normalise_for_system_match(text: str) -> str:
+    return " ".join(text.casefold().replace("ё", "е").split())
+
+
+def _mentioned_blocking_systems(text: str) -> set[str]:
+    normalised = _normalise_for_system_match(text)
+    if not normalised:
+        return set()
+    return {
+        system
+        for system, aliases in BLOCKING_SYSTEM_ALIASES.items()
+        if any(alias in normalised for alias in aliases)
+    }
+
+
+def _system_alignment(query: str, article: KnowledgeArticle) -> _SystemAlignment:
+    query_systems = _mentioned_blocking_systems(query)
+    if not query_systems:
+        return _SystemAlignment()
+
+    article_systems = _mentioned_blocking_systems(article.search_text or build_search_text(article))
+    if query_systems & article_systems:
+        return _SystemAlignment(score_bonus=4.0)
+    if article_systems:
+        return _SystemAlignment(reject=True)
+    return _SystemAlignment(cap_to_clarify=True)
 
 
 def _section_text(title: str, value: object) -> str | None:
@@ -392,12 +443,19 @@ def _build_matches(
             now,
             text_score=text_score,
         )
+        alignment = _system_alignment(query, article)
+        if alignment.reject:
+            continue
+        score += alignment.score_bonus
         if score >= medium_threshold:
+            decision = _decision_for_score(score)
+            if alignment.cap_to_clarify and decision == "answer":
+                decision = "clarify"
             matches.append(
                 KnowledgeMatch(
                     article=article,
                     score=score,
-                    decision=_decision_for_score(score),
+                    decision=decision,
                     snippet=_article_snippet(article, query_tokens),
                     retrieval="full_text" if postgres_fts_score is not None else "keyword",
                 )
@@ -598,12 +656,19 @@ async def _search_knowledge_articles_semantic_postgres(
             now,
             text_score=float(chunk["score"]) * POSTGRES_SEMANTIC_SCORE_WEIGHT,
         )
+        alignment = _system_alignment(query, article)
+        if alignment.reject:
+            continue
+        score += alignment.score_bonus
         if score >= medium_threshold:
+            decision = _decision_for_score(score)
+            if alignment.cap_to_clarify and decision == "answer":
+                decision = "clarify"
             matches.append(
                 KnowledgeMatch(
                     article=article,
                     score=score,
-                    decision=_decision_for_score(score),
+                    decision=decision,
                     snippet=_excerpt_from_text(str(chunk["content"]), query_tokens),
                     chunk_id=int(chunk["chunk_id"]),
                     retrieval="semantic",

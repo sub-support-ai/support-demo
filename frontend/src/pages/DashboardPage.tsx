@@ -181,6 +181,7 @@ export function DashboardPage() {
   const stats = useStats();
   const data = stats.data;
   const isAdmin = me?.role === "admin";
+  const isOperator = me?.role === "admin" || me?.role === "agent";
   const failedJobs = useFailedJobs(isAdmin);
   const aiFallbacks = useAIFallbacksStats(isAdmin);
   const retryAIJob = useRetryAIJob();
@@ -189,6 +190,10 @@ export function DashboardPage() {
     (data?.tickets.by_status.confirmed ?? 0) +
     (data?.tickets.by_status.in_progress ?? 0) +
     (data?.tickets.by_status.ai_processing ?? 0);
+  const userDraftRequests = data?.tickets.by_status.pending_user ?? 0;
+  const resolvedRequests =
+    (data?.tickets.by_status.resolved ?? 0) +
+    (data?.tickets.by_status.closed ?? 0);
 
   return (
     <div className="content-page dashboard-page">
@@ -198,7 +203,9 @@ export function DashboardPage() {
           <div>
             <Title order={2}>Обзор</Title>
             <Text size="sm" c="dimmed">
-              Живая статистика по запросам, SLA, маршрутизации и качеству ответов.
+              {isOperator
+                ? "Живая статистика по запросам, SLA, маршрутизации и качеству ответов."
+                : "Краткий обзор ваших запросов в службу поддержки."}
             </Text>
           </div>
         </div>
@@ -212,8 +219,19 @@ export function DashboardPage() {
         {data && (
           <Stack gap="lg">
             <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
-              <MetricCard label="Всего запросов" value={data.tickets.total} />
+              <MetricCard
+                label={isOperator ? "Всего запросов" : "Мои запросы"}
+                value={data.tickets.total}
+              />
               <MetricCard label="Активно" value={activeRequests} />
+              {!isOperator && (
+                <>
+                  <MetricCard label="Черновики" value={userDraftRequests} />
+                  <MetricCard label="Закрыто" value={resolvedRequests} />
+                </>
+              )}
+              {isOperator && (
+                <>
               <MetricCard
                 label="SLA просрочен"
                 value={data.tickets.sla_overdue_count}
@@ -276,6 +294,8 @@ export function DashboardPage() {
                 }
                 hint="время полного решения"
               />
+                </>
+              )}
             </SimpleGrid>
 
             {isAdmin && (
@@ -404,7 +424,8 @@ export function DashboardPage() {
               </Paper>
             )}
 
-            <SimpleGrid cols={{ base: 1, md: 3 }} spacing="md">
+            {isOperator ? (
+              <SimpleGrid cols={{ base: 1, md: 3 }} spacing="md">
               <Paper className="quiet-panel dashboard-section" withBorder>
                 <Title order={4} mb="sm">
                   По статусам
@@ -426,9 +447,20 @@ export function DashboardPage() {
                 </Title>
                 <BreakdownList items={data.tickets.by_source} />
               </Paper>
-            </SimpleGrid>
+              </SimpleGrid>
+            ) : (
+              <Paper className="quiet-panel dashboard-section" withBorder>
+                <Title order={4} mb="sm">
+                  По статусам
+                </Title>
+                <BreakdownList
+                  items={data.tickets.by_status}
+                  labeler={getStatusLabel}
+                />
+              </Paper>
+            )}
 
-            {Object.keys(data.tickets.by_category ?? {}).length > 0 && (
+            {isOperator && Object.keys(data.tickets.by_category ?? {}).length > 0 && (
               <Paper className="quiet-panel dashboard-section" withBorder>
                 <Title order={4} mb="xs">
                   Топ-темы обращений
@@ -441,7 +473,8 @@ export function DashboardPage() {
               </Paper>
             )}
 
-            <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
+            {isOperator && (
+              <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
               <MetricCard label="Эскалации" value={data.ai.escalated_count} />
               <MetricCard
                 label="Решено без специалиста"
@@ -452,7 +485,8 @@ export function DashboardPage() {
                 label="Помогло / не помогло"
                 value={`${data.ai.user_feedback_helped} / ${data.ai.user_feedback_not_helped}`}
               />
-            </SimpleGrid>
+              </SimpleGrid>
+            )}
           </Stack>
         )}
       </Paper>

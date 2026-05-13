@@ -253,6 +253,8 @@ export function ChatPage() {
     me.error ||
     tickets.error;
   const requestContext = me.data?.request_context ?? null;
+  const showAiConfidence =
+    me.data?.role === "agent" || me.data?.role === "admin";
 
   return (
     <div className="page-grid">
@@ -299,6 +301,7 @@ export function ChatPage() {
                   escalationDisabled={composerDisabled}
                   escalationLoading={escalate.isPending}
                   contextDefaults={requestContext}
+                  showAiConfidence={showAiConfidence}
                   onEscalate={handleEscalate}
                 />
               ))}

@@ -21,8 +21,11 @@ from app.services.knowledge_embeddings import (
 from app.services.knowledge_base import find_knowledge_answer, search_knowledge_articles
 from app.services.knowledge_base import (
     KnowledgeMatch,
+    KnowledgeSearchFilters,
     split_knowledge_text,
     sync_knowledge_article_index,
+    tokenize,
+    _build_matches,
     _merge_matches,
 )
 from app.services.knowledge_embedding_jobs import (
@@ -111,6 +114,60 @@ def test_merge_knowledge_matches_deduplicates_by_highest_score():
     assert matches[0].snippet == "best chunk"
     assert matches[0].chunk_id == 10
     assert matches[0].retrieval == "semantic"
+
+
+def test_knowledge_search_rejects_conflicting_explicit_system():
+    bitlocker = KnowledgeArticle(
+        title="Просит пароль BitLocker / FileVault при загрузке",
+        body="При включении ноутбука просит ключ восстановления BitLocker.",
+        keywords="bitlocker filevault пароль recovery key ключ восстановления",
+        applies_to={"systems": ["BitLocker", "FileVault"]},
+        is_active=True,
+    )
+    bitlocker.id = 1
+    query = "я хочу поменять пароль в 1С"
+
+    matches = _build_matches(
+        [(bitlocker, 1.0)],
+        query,
+        tokenize(query),
+        KnowledgeSearchFilters(),
+        datetime.now(timezone.utc),
+    )
+
+    assert matches == []
+
+
+def test_knowledge_search_prefers_matching_system_password_article():
+    one_c = KnowledgeArticle(
+        title="Смена или сброс пароля в 1С",
+        body="Проверьте, используется ли корпоративный вход или отдельная учетная запись 1С.",
+        keywords="1с 1c пароль сменить поменять сбросить учетная запись",
+        applies_to={"systems": ["1С", "1С:Бухгалтерия", "1С:ЗУП"]},
+        is_active=True,
+    )
+    one_c.id = 1
+    bitlocker = KnowledgeArticle(
+        title="Просит пароль BitLocker / FileVault при загрузке",
+        body="При включении ноутбука просит ключ восстановления BitLocker.",
+        keywords="bitlocker filevault пароль recovery key ключ восстановления",
+        applies_to={"systems": ["BitLocker", "FileVault"]},
+        is_active=True,
+    )
+    bitlocker.id = 2
+    query = "я хочу поменять пароль в 1С"
+
+    matches = _build_matches(
+        [(bitlocker, 1.0), (one_c, None)],
+        query,
+        tokenize(query),
+        KnowledgeSearchFilters(),
+        datetime.now(timezone.utc),
+    )
+
+    assert matches
+    assert matches[0].article.id == one_c.id
+    assert matches[0].decision == "answer"
 
 
 def test_split_knowledge_text_uses_overlap_for_long_content():
