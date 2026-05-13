@@ -1,13 +1,20 @@
 import {
+  ActionIcon,
   AppShell,
   Badge,
   Button,
+  Divider,
   Group,
+  Indicator,
+  Menu,
   NavLink,
+  ScrollArea,
   Text,
   Title,
 } from "@mantine/core";
+import { useState } from "react";
 import {
+  IconBell,
   IconChartBar,
   IconDatabaseSearch,
   IconFileText,
@@ -18,12 +25,23 @@ import {
 import { NavLink as RouterNavLink, Outlet, useLocation } from "react-router-dom";
 
 import { useMe } from "../../api/auth";
+import {
+  useMarkAllNotificationsRead,
+  useMarkNotificationRead,
+  useNotificationUnreadCount,
+  useNotifications,
+} from "../../api/notifications";
 import { useTickets } from "../../api/tickets";
 import { useAuth } from "../../stores/auth";
 
 export function ShellLayout() {
   const { token, logout } = useAuth();
+  const [notificationsOpened, setNotificationsOpened] = useState(false);
   const { data: me } = useMe(Boolean(token));
+  const unreadNotifications = useNotificationUnreadCount(Boolean(token));
+  const notifications = useNotifications(Boolean(token) && notificationsOpened);
+  const markNotificationRead = useMarkNotificationRead();
+  const markAllNotificationsRead = useMarkAllNotificationsRead();
   const tickets = useTickets({
     enabled: Boolean(token),
     refetchInterval: 30000,
@@ -51,6 +69,7 @@ export function ShellLayout() {
     : userDraftCount;
   const requestAlertColor =
     overdueCount > 0 ? "red" : unassignedCount > 0 ? "orange" : "blue";
+  const unreadNotificationCount = unreadNotifications.data?.unread_count ?? 0;
 
   return (
     <AppShell
@@ -65,6 +84,74 @@ export function ShellLayout() {
             {me?.role && <Badge variant="light">{me.role}</Badge>}
           </Group>
           <Group gap="sm">
+            <Menu
+              width={360}
+              position="bottom-end"
+              shadow="md"
+              opened={notificationsOpened}
+              onChange={setNotificationsOpened}
+            >
+              <Menu.Target>
+                <Indicator
+                  disabled={unreadNotificationCount === 0}
+                  label={unreadNotificationCount}
+                  size={18}
+                  color="red"
+                  offset={4}
+                >
+                  <ActionIcon variant="subtle" color="gray" aria-label="Уведомления">
+                    <IconBell size={20} />
+                  </ActionIcon>
+                </Indicator>
+              </Menu.Target>
+              <Menu.Dropdown>
+                <Group justify="space-between" px="sm" py={6}>
+                  <Text fw={600} size="sm">
+                    Уведомления
+                  </Text>
+                  <Button
+                    size="compact-xs"
+                    variant="subtle"
+                    disabled={unreadNotificationCount === 0}
+                    loading={markAllNotificationsRead.isPending}
+                    onClick={() => markAllNotificationsRead.mutate()}
+                  >
+                    Прочитать все
+                  </Button>
+                </Group>
+                <Divider />
+                <ScrollArea h={260}>
+                  {notifications.isLoading ? (
+                    <Text size="sm" c="dimmed" p="sm">
+                      Загрузка...
+                    </Text>
+                  ) : notifications.data?.length ? (
+                    notifications.data.map((notification) => (
+                      <Menu.Item
+                        key={notification.id}
+                        className={notification.is_read ? undefined : "notification-unread"}
+                        onClick={() => {
+                          if (!notification.is_read) {
+                            markNotificationRead.mutate(notification.id);
+                          }
+                        }}
+                      >
+                        <Text size="sm" fw={notification.is_read ? 500 : 700}>
+                          {notification.title}
+                        </Text>
+                        <Text size="xs" c="dimmed" lineClamp={2}>
+                          {notification.body}
+                        </Text>
+                      </Menu.Item>
+                    ))
+                  ) : (
+                    <Text size="sm" c="dimmed" p="sm">
+                      Новых уведомлений нет
+                    </Text>
+                  )}
+                </ScrollArea>
+              </Menu.Dropdown>
+            </Menu>
             {me && (
               <Text size="sm" c="dimmed">
                 {me.username}

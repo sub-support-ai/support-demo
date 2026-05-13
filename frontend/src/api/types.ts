@@ -177,6 +177,23 @@ export interface ApiErrorPayload {
     | Array<{ loc?: Array<string | number>; msg?: string; type?: string }>;
 }
 
+export interface AppNotification {
+  id: number;
+  user_id: number;
+  event_type: string;
+  title: string;
+  body: string;
+  target_type?: string | null;
+  target_id?: number | null;
+  is_read: boolean;
+  created_at: string;
+  read_at?: string | null;
+}
+
+export interface NotificationUnreadCount {
+  unread_count: number;
+}
+
 export interface TicketComment {
   id: number;
   ticket_id: number;

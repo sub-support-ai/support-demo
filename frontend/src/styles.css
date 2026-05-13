@@ -458,6 +458,10 @@ body {
   background: #f8fbfa;
 }
 
+.notification-unread {
+  background: #eef6ff;
+}
+
 .ticket-comment {
   padding: 8px;
   border: 1px solid #dce5e2;

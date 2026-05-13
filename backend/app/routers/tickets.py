@@ -47,6 +47,11 @@ from app.services.ai_fallback import (
 from app.services.audit import log_event
 from app.models.agent import Agent
 from app.services.email import notify_agent_assigned, notify_ticket_status
+from app.services.notifications import (
+    create_notification,
+    notify_active_admins,
+    notify_ticket_user,
+)
 from app.services.pii import mask_pii
 from app.services.routing import assign_agent, unassign_agent
 from app.services.sla import OPEN_STATUSES, start_ticket_sla
@@ -116,6 +121,52 @@ async def _get_latest_ai_log(ticket_id: int, db: AsyncSession) -> AILog | None:
         .limit(1)
     )
     return result.scalar_one_or_none()
+
+
+async def _notify_assigned_agent_in_app(db: AsyncSession, ticket: Ticket) -> None:
+    if ticket.agent_id is None:
+        await notify_active_admins(
+            db,
+            event_type="ticket.unassigned",
+            title="Запрос без исполнителя",
+            body=f"{ticket.department}: {ticket.title}",
+            target_type="ticket",
+            target_id=ticket.id,
+        )
+        return
+
+    agent_result = await db.execute(select(Agent).where(Agent.id == ticket.agent_id))
+    assigned_agent = agent_result.scalar_one_or_none()
+    if assigned_agent is None or assigned_agent.user_id is None:
+        await notify_active_admins(
+            db,
+            event_type="ticket.agent_without_user",
+            title="Запрос назначен агенту без учетной записи",
+            body=f"{ticket.department}: {ticket.title}",
+            target_type="ticket",
+            target_id=ticket.id,
+        )
+        return
+
+    await create_notification(
+        db,
+        user_id=assigned_agent.user_id,
+        event_type="ticket.assigned",
+        title="Вам назначен запрос",
+        body=f"{ticket.department}: {ticket.title}",
+        target_type="ticket",
+        target_id=ticket.id,
+    )
+
+
+def _ticket_status_title(status_value: str) -> str:
+    labels = {
+        "confirmed": "Запрос отправлен в поддержку",
+        "in_progress": "Запрос взят в работу",
+        "resolved": "Запрос решен",
+        "closed": "Запрос закрыт",
+    }
+    return labels.get(status_value, "Статус запроса изменен")
 
 
 # ── Хелпер: загрузка тикета с проверкой доступа ───────────────────────────────
@@ -536,6 +587,15 @@ async def update_ticket_status(
         details={"from": old_status, "to": payload.status},
     )
 
+    if old_status != payload.status and current_user.id != ticket.user_id:
+        await notify_ticket_user(
+            db,
+            ticket=ticket,
+            event_type="ticket.status_changed",
+            title=_ticket_status_title(payload.status),
+            body=f"{ticket.title}: статус изменен на {payload.status}",
+        )
+
     await db.flush()
     await db.refresh(ticket)
     return ticket
@@ -720,6 +780,8 @@ async def confirm_ticket(
                 agent_name=assigned_agent.username,
             )
 
+    await _notify_assigned_agent_in_app(db, ticket)
+
     return ticket
 
 
@@ -834,6 +896,15 @@ async def resolve_ticket(
         department=ticket.department,
     )
 
+    if current_user.id != ticket.user_id:
+        await notify_ticket_user(
+            db,
+            ticket=ticket,
+            event_type="ticket.resolved",
+            title="Запрос закрыт",
+            body=f"{ticket.title}: специалист закрыл запрос.",
+        )
+
     return ticket
 
 
@@ -907,6 +978,15 @@ async def create_ticket_comment(
         and not payload.internal
     ):
         ticket.first_response_at = datetime.now(timezone.utc)
+
+    if not payload.internal and current_user.id != ticket.user_id:
+        await notify_ticket_user(
+            db,
+            ticket=ticket,
+            event_type="ticket.comment_added",
+            title="Новый ответ по запросу",
+            body=f"{ticket.title}: специалист добавил комментарий.",
+        )
 
     await db.flush()
     await db.refresh(comment)
@@ -982,6 +1062,9 @@ async def submit_ticket_feedback(
         request=request,
         details={"feedback": payload.feedback, "reopened": reopened},
     )
+
+    if reopened:
+        await _notify_assigned_agent_in_app(db, ticket)
 
     return ticket
 
@@ -1061,6 +1144,16 @@ async def reroute_ticket(
                 agent_email=new_agent.email,
                 agent_name=new_agent.username,
             )
+
+    await _notify_assigned_agent_in_app(db, ticket)
+    if current_user.id != ticket.user_id:
+        await notify_ticket_user(
+            db,
+            ticket=ticket,
+            event_type="ticket.rerouted",
+            title="Запрос передан в другой отдел",
+            body=f"{ticket.title}: {old_department} -> {payload.department}.",
+        )
 
     await log_event(
         db,
