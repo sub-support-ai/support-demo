@@ -854,6 +854,35 @@ def build_knowledge_answer(match: KnowledgeMatch, query: str) -> dict:
 # а семантический эмбеддинг получит «среднее по больнице».
 _KB_QUERY_MAX_USER_MESSAGES = 8
 _KB_QUERY_MAX_CHARS = 2000
+_ASSISTANT_KB_ANSWER_MARKERS = (
+    "нашёл решение в базе знаний:",
+    "нашел решение в базе знаний:",
+    "похоже на статью базы знаний:",
+    "если это не поможет",
+)
+
+
+def _assistant_messages_for_kb_query(assistant_messages: list[str]) -> list[str]:
+    """Оставляет только короткие уточняющие вопросы ассистента для KB-query.
+
+    Полные ответы из базы знаний нельзя возвращать обратно в retrieval:
+    следующий пользовательский ответ вроде "не помогло" иначе будет искать
+    по тексту уже выданной статьи и бот начнёт повторять одно и то же.
+    """
+    safe_messages: list[str] = []
+    for message in assistant_messages:
+        compact = _compact_text(message)
+        lower = compact.casefold()
+        if not compact:
+            continue
+        if any(marker in lower for marker in _ASSISTANT_KB_ANSWER_MARKERS):
+            continue
+        if len(compact) > 280:
+            continue
+        if "?" not in compact and "уточните" not in lower:
+            continue
+        safe_messages.append(compact)
+    return safe_messages[-2:]
 
 
 def _build_kb_query(user_messages: list[str], assistant_messages: list[str]) -> str:
@@ -869,8 +898,10 @@ def _build_kb_query(user_messages: list[str], assistant_messages: list[str]) -> 
          (повторяем его дважды, чтобы поднять вес в FTS).
       2) Первое сообщение пользователя — обычно описание исходной проблемы.
       3) Промежуточные user-сообщения — короткие ответы на clarify-вопросы.
-      4) Свежие assistant-сообщения добавляем, потому что бот часто
+      4) Свежие уточняющие вопросы ассистента добавляем, потому что бот часто
          перефразирует проблему точнее ("вы имеете в виду VPN-туннель?").
+         Полные KB-ответы ассистента не добавляем: они загрязняют следующий
+         поиск и заставляют повторять ту же статью после "не помогло".
 
     После склейки обрезаем до _KB_QUERY_MAX_CHARS — слишком длинный
     запрос бесполезен для FTS (стоп-слова рассеиваются) и упирается в
@@ -890,9 +921,8 @@ def _build_kb_query(user_messages: list[str], assistant_messages: list[str]) -> 
     middle = user_messages[1:-1] if len(user_messages) >= 3 else []
     parts.extend(middle[-(_KB_QUERY_MAX_USER_MESSAGES - 3):])
 
-    # Последние 2 ответа бота — там часто перефразирована проблема.
-    if assistant_messages:
-        parts.extend(assistant_messages[-2:])
+    # Последние короткие уточнения бота — там часто перефразирована проблема.
+    parts.extend(_assistant_messages_for_kb_query(assistant_messages))
 
     query = "\n".join(part for part in parts if part)
     if len(query) > _KB_QUERY_MAX_CHARS:
@@ -908,6 +938,7 @@ def _build_kb_query(user_messages: list[str], assistant_messages: list[str]) -> 
 async def find_knowledge_answer(
     db: AsyncSession,
     messages: list[dict[str, str]],
+    exclude_article_ids: set[int] | None = None,
 ) -> dict | None:
     """Ищет ответ в KB и возвращает payload с замеренной латенси поиска.
 
@@ -934,15 +965,19 @@ async def find_knowledge_answer(
     # keyword-склейку из _build_kb_query.
     from app.services.ai_query_rewrite import rewrite_query_for_kb
 
-    rewritten = await rewrite_query_for_kb(user_messages, assistant_messages)
-    query = rewritten or _build_kb_query(user_messages, assistant_messages)
+    safe_assistant_messages = _assistant_messages_for_kb_query(assistant_messages)
+    rewritten = await rewrite_query_for_kb(user_messages, safe_assistant_messages)
+    query = rewritten or _build_kb_query(user_messages, safe_assistant_messages)
     if not query:
         return None
 
     started = time.perf_counter()
-    matches = await search_knowledge_articles(db, query, limit=1)
+    search_limit = max(1, min(5, 1 + len(exclude_article_ids or set())))
+    matches = await search_knowledge_articles(db, query, limit=search_limit)
     latency_ms = int((time.perf_counter() - started) * 1000)
 
+    if exclude_article_ids:
+        matches = [match for match in matches if match.article.id not in exclude_article_ids]
     if not matches:
         return None
 

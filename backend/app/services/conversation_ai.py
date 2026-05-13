@@ -99,6 +99,11 @@ PHYSICAL_INCIDENT_TERMS = (
     "провод", "кабел", "розетк", "удлинител", "электр", "питани", "сломал",
     "сломался", "порвал", "порвался", "оторвал", "поврежд",
 )
+KB_UNSUCCESSFUL_FOLLOWUP_TERMS = (
+    "не помог", "не помогло", "не сработ", "не получилось", "не подходит",
+    "это не то", "не то", "всё еще", "все еще", "по-прежнему",
+    "ничего не изменилось", "та же ошибка", "осталось",
+)
 
 
 # Поля, которые мы соглашаемся хранить в Message.sources. Всё, что приходит
@@ -216,6 +221,37 @@ async def load_history_for_ai(
         role = "user" if message.role == "user" else "assistant"
         history.append({"role": role, "content": message.content})
     return history
+
+
+def should_avoid_repeating_kb_answer(messages: list[dict[str, str]]) -> bool:
+    latest_user = ""
+    has_prior_assistant = False
+    for message in messages:
+        content = message.get("content", "").strip()
+        if message.get("role") == "assistant" and content:
+            has_prior_assistant = True
+        elif message.get("role") == "user" and content:
+            latest_user = content
+
+    if not latest_user or not has_prior_assistant:
+        return False
+
+    latest = latest_user.casefold()
+    return any(term in latest for term in KB_UNSUCCESSFUL_FOLLOWUP_TERMS)
+
+
+async def recent_kb_article_ids_for_conversation(
+    db: AsyncSession,
+    conversation_id: int,
+    limit: int = 3,
+) -> set[int]:
+    result = await db.execute(
+        select(KnowledgeArticleFeedback.article_id)
+        .where(KnowledgeArticleFeedback.conversation_id == conversation_id)
+        .order_by(KnowledgeArticleFeedback.id.desc())
+        .limit(limit)
+    )
+    return {int(article_id) for article_id in result.scalars().all()}
 
 
 async def get_ai_answer(
@@ -381,7 +417,17 @@ async def generate_ai_message(db: AsyncSession, conversation_id: int) -> Message
     else:
         # ПСЕВДО-СТРИМИНГ: ищем ответ в базе знаний.
         await _set_ai_stage(conversation_id, "searching")
-        ai_payload = await find_knowledge_answer(db, history)
+        exclude_article_ids: set[int] | None = None
+        if should_avoid_repeating_kb_answer(history):
+            exclude_article_ids = await recent_kb_article_ids_for_conversation(db, conversation_id)
+        if exclude_article_ids:
+            ai_payload = await find_knowledge_answer(
+                db,
+                history,
+                exclude_article_ids=exclude_article_ids,
+            )
+        else:
+            ai_payload = await find_knowledge_answer(db, history)
         if ai_payload is None:
             # ПСЕВДО-СТРИМИНГ: KB не нашла подходящий ответ — идём в LLM.
             await _set_ai_stage(conversation_id, "generating")

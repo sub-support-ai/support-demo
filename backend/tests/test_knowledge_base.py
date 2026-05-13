@@ -25,6 +25,7 @@ from app.services.knowledge_base import (
     split_knowledge_text,
     sync_knowledge_article_index,
     tokenize,
+    _build_kb_query,
     _build_matches,
     _merge_matches,
 )
@@ -170,6 +171,25 @@ def test_knowledge_search_prefers_matching_system_password_article():
     assert matches[0].decision == "answer"
 
 
+def test_kb_query_does_not_reuse_previous_full_answer():
+    query = _build_kb_query(
+        user_messages=[
+            "я хочу поменять пароль в 1С",
+            "не помогло",
+        ],
+        assistant_messages=[
+            (
+                "Нашёл решение в базе знаний: Просит пароль BitLocker / FileVault при загрузке\n\n"
+                "1. Найдите Recovery Key ID на экране."
+            )
+        ],
+    )
+
+    assert "не помогло" in query
+    assert "BitLocker" not in query
+    assert "Recovery Key ID" not in query
+
+
 def test_split_knowledge_text_uses_overlap_for_long_content():
     text = " ".join(f"token-{index}" for index in range(12))
 
@@ -280,6 +300,36 @@ async def test_find_knowledge_answer_asks_for_context_on_medium_match(db_session
     assert answer["escalate"] is False
     assert answer["sources"][0]["decision"] == "clarify"
     assert "уточните: система, офис, код ошибки" in answer["answer"]
+
+
+@pytest.mark.asyncio
+async def test_find_knowledge_answer_can_exclude_previous_article(db_session: AsyncSession):
+    article = KnowledgeArticle(
+        department="IT",
+        request_type="Шифрование",
+        title="Просит пароль BitLocker / FileVault при загрузке",
+        body="При включении ноутбука просит ключ восстановления BitLocker.",
+        keywords="bitlocker filevault пароль recovery key ключ восстановления",
+        applies_to={"systems": ["BitLocker", "FileVault"]},
+        is_active=True,
+    )
+    db_session.add(article)
+    await db_session.flush()
+
+    answer = await find_knowledge_answer(
+        db_session,
+        [
+            {"role": "user", "content": "после загрузки просит пароль bitlocker"},
+            {
+                "role": "assistant",
+                "content": "Нашёл решение в базе знаний: Просит пароль BitLocker / FileVault при загрузке",
+            },
+            {"role": "user", "content": "не помогло"},
+        ],
+        exclude_article_ids={article.id},
+    )
+
+    assert answer is None
 
 
 @pytest.mark.asyncio
