@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional, TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, false, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -33,7 +33,7 @@ class Notification(Base):
         Boolean,
         nullable=False,
         default=False,
-        server_default="false",
+        server_default=false(),
         index=True,
     )
     created_at: Mapped[datetime] = mapped_column(
