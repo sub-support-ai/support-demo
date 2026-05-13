@@ -93,6 +93,13 @@ export interface Message {
   requires_escalation?: boolean | null;
 }
 
+export interface AddMessageResponse {
+  user_message: Message;
+  conversation_status: ConversationStatus | string;
+  ai_job_id?: number | null;
+  poll_hint: string;
+}
+
 export interface Ticket {
   id: number;
   user_id: number;

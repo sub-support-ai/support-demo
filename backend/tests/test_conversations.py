@@ -360,6 +360,78 @@ async def test_failed_knowledge_answer_followup_creates_escalation_card(
     assert "Teams" not in ai_msg["content"]
 
 
+@pytest.mark.asyncio
+async def test_message_after_escalation_prompt_is_saved_without_new_ai_job(
+    client: AsyncClient,
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from app.models.knowledge_article import KnowledgeArticle
+    from app.services import conversation_ai
+    from app.services.ai_jobs import claim_next_ai_job
+
+    async def fail_if_called(conversation_id: int, messages: list[dict[str, str]]):
+        raise AssertionError("External AI must not be called during intake mode")
+
+    monkeypatch.setattr(conversation_ai, "get_ai_answer", fail_if_called)
+    db_session.add(
+        KnowledgeArticle(
+            department="IT",
+            request_type="Монитор",
+            title="Не работает или мерцает второй монитор",
+            body="Проверьте кабель и док-станцию.",
+            steps=[
+                "Проверьте кабель HDMI/DisplayPort.",
+                "Попробуйте подключить монитор напрямую.",
+            ],
+            when_to_escalate="создавать запрос, если монитор физически повреждён",
+            keywords="монитор экран кабель hdmi displayport сгорел мерцает",
+            is_active=True,
+        )
+    )
+    await db_session.flush()
+
+    _, token = await register_user(client, "intakemode")
+    headers = {"Authorization": f"Bearer {token}"}
+    conv_id = (await client.post("/api/v1/conversations/", headers=headers)).json()["id"]
+
+    first_response = await client.post(
+        f"/api/v1/conversations/{conv_id}/messages",
+        json={"content": "У меня не работает второй монитор"},
+        headers=headers,
+    )
+    assert first_response.status_code == 201
+    await process_next_ai_job(db_session)
+
+    handoff_response = await client.post(
+        f"/api/v1/conversations/{conv_id}/messages",
+        json={"content": "Не поможет, надо менять"},
+        headers=headers,
+    )
+    assert handoff_response.status_code == 201
+    assert handoff_response.json()["ai_job_id"] is not None
+    await process_next_ai_job(db_session)
+
+    context_response = await client.post(
+        f"/api/v1/conversations/{conv_id}/messages",
+        json={"content": "Офис Южный, кабинет 210, монитор Dell"},
+        headers=headers,
+    )
+    assert context_response.status_code == 201
+    assert context_response.json()["ai_job_id"] is None
+    assert context_response.json()["conversation_status"] == "active"
+    assert await claim_next_ai_job(db_session) is None
+
+    history = await client.get(
+        f"/api/v1/conversations/{conv_id}/messages",
+        headers=headers,
+    )
+    assert history.status_code == 200
+    messages = history.json()
+    assert [message["role"] for message in messages] == ["user", "ai", "user", "ai", "user"]
+    assert messages[-1]["content"] == "Офис Южный, кабинет 210, монитор Dell"
+
+
 # ── POST /messages: AI fallback должен дать requires_escalation=True ─────────
 
 @pytest.mark.asyncio

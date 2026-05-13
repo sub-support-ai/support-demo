@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "./client";
 import type {
+  AddMessageResponse,
   Conversation,
   EscalateResponse,
   EscalationContext,
@@ -65,7 +66,7 @@ export function useSendMessage() {
       conversationId: number;
       content: string;
     }) => {
-      const { data } = await api.post<Message[]>(
+      const { data } = await api.post<AddMessageResponse>(
         `/conversations/${conversationId}/messages`,
         { content },
       );

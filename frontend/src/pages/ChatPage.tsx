@@ -201,8 +201,12 @@ export function ChatPage() {
   async function handleSend(content: string) {
     try {
       const conversationId = await ensureConversation();
-      await sendMessage.mutateAsync({ conversationId, content });
-      setAwaitingAiConversationId(conversationId);
+      const response = await sendMessage.mutateAsync({ conversationId, content });
+      if (response.ai_job_id !== null && response.ai_job_id !== undefined) {
+        setAwaitingAiConversationId(conversationId);
+      } else {
+        setAwaitingAiConversationId(undefined);
+      }
     } catch {
       // Ошибка уже хранится в mutation/query state и показывается в Alert.
     }

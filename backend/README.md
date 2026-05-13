@@ -44,36 +44,53 @@ restart-policy: см. [`docs/deployment.md`](./docs/deployment.md) и
 
 ## Быстрый старт (локально на Windows)
 
-Важно: у вас Python запускается через `py` (а `python` может быть не в PATH).
+Локальный `.venv` нужен для разработки: тесты, `ruff`, `mypy`, одноразовые сервисные
+скрипты. Backend-приложение для демо и ручной проверки запускается в Docker через
+`docker-compose.dev.yml`.
 
-1) Установите зависимости:
+Важно: используйте официальный CPython 3.12 x64 для Windows. MSYS/MinGW Python не подходит:
+для него нет готовых wheel'ов части dev-инструментов.
 
-```bash
-py -m pip install -r requirements-dev.txt
+1) Создайте локальное окружение:
+
+```powershell
+.\setup-dev.ps1
+```
+
+Если Python 3.12 не находится в PATH, передайте путь явно:
+
+```powershell
+.\setup-dev.ps1 -Python "C:\Users\you\AppData\Local\Programs\Python\Python312\python.exe"
+```
+
+Если pip не доверяет корпоративному TLS-сертификату при скачивании пакетов:
+
+```powershell
+.\setup-dev.ps1 -UseTrustedHosts
 ```
 
 2) Создайте `.env`:
 
-```bash
+```powershell
 copy .env.example .env
 ```
 
 3) Запустите Postgres (рекомендуется через Docker):
 
-```bash
-docker compose up -d db
+```powershell
+docker compose -f docker-compose.dev.yml up -d db
 ```
 
 4) Накатите миграции БД:
 
-```bash
-py -m alembic upgrade head
+```powershell
+.\.venv\Scripts\python.exe -m alembic upgrade head
 ```
 
 5) Для демо наполните таблицу агентов, чтобы роутинг назначал тикеты:
 
-```bash
-py -m scripts.seed_demo_agents
+```powershell
+.\.venv\Scripts\python.exe -m scripts.seed_demo_agents
 ```
 
 Скрипт идемпотентный: повторный запуск обновит демо-агентов, а не создаст
@@ -82,15 +99,15 @@ py -m scripts.seed_demo_agents
 
 Для демонстрации шаблонов ответов и поиска по базе знаний также запустите:
 
-```bash
-py -m scripts.seed_response_templates
-py -m scripts.seed_knowledge_articles
+```powershell
+.\.venv\Scripts\python.exe -m scripts.seed_response_templates
+.\.venv\Scripts\python.exe -m scripts.seed_knowledge_articles
 ```
 
 Для подготовки semantic/RAG индекса после запуска AI-service можно посчитать embeddings для чанков:
 
-```bash
-py -m scripts.backfill_knowledge_embeddings --batch-size 16
+```powershell
+.\.venv\Scripts\python.exe -m scripts.backfill_knowledge_embeddings --batch-size 16
 ```
 
 Скрипт обновляет `knowledge_chunks.embedding_model`, `embedding_updated_at`, `token_count`.
@@ -109,14 +126,14 @@ py -m scripts.backfill_knowledge_embeddings --batch-size 16
 
 6) Запустите API:
 
-```bash
-py -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 7) В отдельном терминале запустите worker ответов:
 
-```bash
-py -m app.workers.ai_worker
+```powershell
+.\.venv\Scripts\python.exe -m app.workers.ai_worker
 ```
 
 Без worker чат сохранит сообщение и покажет обработку, но ответ не появится,
@@ -124,16 +141,16 @@ py -m app.workers.ai_worker
 
 8) В отдельном терминале запустите SLA worker:
 
-```bash
-py -m app.workers.sla_worker
+```powershell
+.\.venv\Scripts\python.exe -m app.workers.sla_worker
 ```
 
 Он периодически проверяет просроченные подтверждённые запросы и эскалирует их старшему специалисту отдела.
 
 9) Для фонового заполнения RAG embeddings запустите worker базы знаний:
 
-```bash
-py -m app.workers.knowledge_embedding_worker
+```powershell
+.\.venv\Scripts\python.exe -m app.workers.knowledge_embedding_worker
 ```
 
 Админский endpoint `POST /api/v1/knowledge/{article_id}/reindex` пересобирает `search_text` и чанки статьи, затем ставит задачу в `knowledge_embedding_jobs`. Worker забирает задачу, вызывает AI-service `/ai/embed` и заполняет metadata чанков. Если в Postgres доступен pgvector, также заполняется vector-колонка `knowledge_chunks.embedding`.
@@ -152,24 +169,24 @@ AI_SERVICE_API_KEY=
 
 ```bash
 # Применить все миграции до актуальной версии (всегда безопасно, идемпотентно)
-py -m alembic upgrade head
+.\.venv\Scripts\python.exe -m alembic upgrade head
 
 # Посмотреть текущую версию БД
-py -m alembic current
+.\.venv\Scripts\python.exe -m alembic current
 
 # История миграций
-py -m alembic history
+.\.venv\Scripts\python.exe -m alembic history
 
 # Создать новую миграцию после изменения моделей
 # (Alembic сравнит модели с текущей БД и сгенерит diff)
-py -m alembic revision --autogenerate -m "добавил поле X в таблицу Y"
+.\.venv\Scripts\python.exe -m alembic revision --autogenerate -m "добавил поле X в таблицу Y"
 
 # ВАЖНО: прочитать сгенерированную миграцию перед коммитом.
 # autogenerate не распознаёт переименования (воспринимает как drop+add,
 # что потеряет данные) и может упустить изменения типов.
 
 # Откатить одну миграцию назад
-py -m alembic downgrade -1
+.\.venv\Scripts\python.exe -m alembic downgrade -1
 ```
 
 Файлы миграций живут в `alembic/versions/` и коммитятся в git.
@@ -181,7 +198,7 @@ py -m alembic downgrade -1
 Нужно единожды "приклеить" текущее состояние к baseline-миграции:
 
 ```bash
-py -m alembic stamp head
+.\.venv\Scripts\python.exe -m alembic stamp head
 ```
 
 Эта команда записывает в `alembic_version` что база "уже на актуальной
@@ -192,15 +209,21 @@ py -m alembic stamp head
 
 По умолчанию тесты используют SQLite (async) и не требуют Postgres:
 
-```bash
-py -m pytest -q
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
 ```
 
 Если хотите прогонять тесты на Postgres, задайте переменную окружения `TEST_DATABASE_URL`:
 
-```bash
+```powershell
 set TEST_DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/test_db
-py -m pytest -q
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+Полный локальный набор backend-проверок:
+
+```powershell
+.\check.ps1
 ```
 
 ## Переменные окружения

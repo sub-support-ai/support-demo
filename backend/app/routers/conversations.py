@@ -249,6 +249,23 @@ async def _get_conversation_for_user(
     return conversation
 
 
+async def _has_open_escalation_prompt(
+    conversation_id: int,
+    db: AsyncSession,
+) -> bool:
+    result = await db.execute(
+        select(Message.id)
+        .where(
+            Message.conversation_id == conversation_id,
+            Message.role == "ai",
+            Message.requires_escalation.is_(True),
+        )
+        .order_by(Message.created_at.desc(), Message.id.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none() is not None
+
+
 # ── POST /conversations/{id}/messages — добавить сообщение ────────────────────
 
 @router.post(
@@ -305,6 +322,14 @@ async def add_message(
     db.add(user_message)
     await db.flush()
     await db.refresh(user_message)
+
+    if await _has_open_escalation_prompt(conversation_id, db):
+        return AddMessageResponse(
+            user_message=MessageRead.model_validate(user_message),
+            conversation_status=conversation.status,
+            ai_job_id=None,
+            poll_hint=f"/api/v1/conversations/{conversation_id}/messages",
+        )
 
     conversation.status = "ai_processing"
     job = await enqueue_ai_response_job(db, conversation_id)
