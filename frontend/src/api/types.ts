@@ -26,6 +26,16 @@ export type TicketMutableStatus =
   | "ai_processing"
   | "declined";
 
+export type TicketQueue =
+  | "active"
+  | "new"
+  | "in_progress"
+  | "overdue"
+  | "unassigned"
+  | "pending_user"
+  | "resolved"
+  | "all";
+
 export interface TokenResponse {
   access_token: string;
   token_type: string;
@@ -133,6 +143,11 @@ export interface TicketDraftUpdate {
 
 export interface TicketStatusUpdate {
   status: TicketMutableStatus;
+}
+
+export interface TicketReroutePayload {
+  department: "IT" | "HR" | "finance" | "procurement" | "security" | "facilities" | "documents";
+  reason: string;
 }
 
 export interface ResolveTicketPayload {

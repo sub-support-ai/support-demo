@@ -3,6 +3,7 @@ import {
   Badge,
   Button,
   Checkbox,
+  Collapse,
   Group,
   Paper,
   Select,
@@ -12,6 +13,7 @@ import {
   Title,
 } from "@mantine/core";
 import {
+  IconArrowsExchange,
   IconCheck,
   IconMessageCircle,
   IconPlayerPlay,
@@ -24,6 +26,7 @@ import type { ResponseTemplate, Ticket, UserRole } from "../../api/types";
 import {
   useCreateTicketComment,
   usePromoteTicketToKb,
+  useRerouteTicket,
   useResolveTicket,
   useSubmitTicketFeedback,
   useTicketComments,
@@ -34,6 +37,16 @@ import {
   getStatusLabel,
   getTicketPriorityLabel,
 } from "../../lib/ticketLabels";
+
+const DEPARTMENT_OPTIONS = [
+  { value: "IT", label: "ИТ" },
+  { value: "HR", label: "Кадры" },
+  { value: "finance", label: "Финансы" },
+  { value: "procurement", label: "Закупки" },
+  { value: "security", label: "Безопасность" },
+  { value: "facilities", label: "АХО" },
+  { value: "documents", label: "Документооборот" },
+];
 
 function getCorrectionLagSeconds(createdAt: string): number {
   const createdTime = new Date(createdAt).getTime();
@@ -92,10 +105,14 @@ export function TicketCard({
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
   const [acceptedAiResponse, setAcceptedAiResponse] = useState(true);
   const [routingWasCorrect, setRoutingWasCorrect] = useState(true);
+  const [rerouteOpen, setRerouteOpen] = useState(false);
+  const [rerouteDepartment, setRerouteDepartment] = useState<string | null>(null);
+  const [rerouteReason, setRerouteReason] = useState("");
 
   const comments = useTicketComments(ticket.id, commentsOpen);
   const createComment = useCreateTicketComment();
   const updateStatus = useUpdateTicketStatus();
+  const rerouteTicket = useRerouteTicket();
   const resolveTicket = useResolveTicket();
   const feedback = useSubmitTicketFeedback();
 
@@ -111,7 +128,11 @@ export function TicketCard({
     !isClosed;
   const canComment = isOperator && ticket.confirmed_by_user;
   const mutationError =
-    updateStatus.error ?? resolveTicket.error ?? createComment.error ?? comments.error;
+    updateStatus.error ??
+    rerouteTicket.error ??
+    resolveTicket.error ??
+    createComment.error ??
+    comments.error;
   const slaDeadline = formatDateTime(ticket.sla_deadline_at);
   const createdAt = formatDateTime(ticket.created_at);
 
@@ -153,6 +174,24 @@ export function TicketCard({
     }
     setCommentText(renderTemplate(template, ticket));
     setInternalComment(false);
+  }
+
+  async function handleReroute() {
+    const department = rerouteDepartment;
+    const reason = rerouteReason.trim();
+    if (!department || !reason || department === ticket.department) {
+      return;
+    }
+    await rerouteTicket.mutateAsync({
+      ticketId: ticket.id,
+      payload: {
+        department: department as "IT" | "HR" | "finance" | "procurement" | "security" | "facilities" | "documents",
+        reason,
+      },
+    });
+    setRerouteOpen(false);
+    setRerouteDepartment(null);
+    setRerouteReason("");
   }
 
   return (
@@ -244,43 +283,101 @@ export function TicketCard({
               />
             </Group>
             <Group gap="xs" justify="flex-end">
-            {ticket.status !== "in_progress" && (
+              {ticket.status !== "in_progress" && (
+                <Button
+                  size="xs"
+                  variant="light"
+                  leftSection={<IconPlayerPlay size={14} />}
+                  loading={updateStatus.isPending}
+                  onClick={() =>
+                    updateStatus.mutate({
+                      ticketId: ticket.id,
+                      payload: { status: "in_progress" },
+                    })
+                  }
+                >
+                  В работу
+                </Button>
+              )}
               <Button
                 size="xs"
                 variant="light"
-                leftSection={<IconPlayerPlay size={14} />}
-                loading={updateStatus.isPending}
+                color="blue"
+                leftSection={<IconArrowsExchange size={14} />}
+                disabled={updateStatus.isPending || resolveTicket.isPending}
+                onClick={() => setRerouteOpen((value) => !value)}
+              >
+                Передать
+              </Button>
+              <Button
+                size="xs"
+                color="green"
+                leftSection={<IconCheck size={14} />}
+                loading={resolveTicket.isPending}
                 onClick={() =>
-                  updateStatus.mutate({
+                  resolveTicket.mutate({
                     ticketId: ticket.id,
-                    payload: { status: "in_progress" },
+                    payload: {
+                      agent_accepted_ai_response: acceptedAiResponse,
+                      routing_was_correct: routingWasCorrect,
+                      correction_lag_seconds: getCorrectionLagSeconds(
+                        ticket.created_at,
+                      ),
+                    },
                   })
                 }
               >
-                В работу
+                Закрыть
               </Button>
-            )}
-            <Button
-              size="xs"
-              color="green"
-              leftSection={<IconCheck size={14} />}
-              loading={resolveTicket.isPending}
-              onClick={() =>
-                resolveTicket.mutate({
-                  ticketId: ticket.id,
-                  payload: {
-                    agent_accepted_ai_response: acceptedAiResponse,
-                    routing_was_correct: routingWasCorrect,
-                    correction_lag_seconds: getCorrectionLagSeconds(
-                      ticket.created_at,
-                    ),
-                  },
-                })
-              }
-            >
-              Закрыть
-            </Button>
             </Group>
+            <Collapse in={rerouteOpen}>
+              <Stack className="ticket-reroute-panel" gap="xs">
+                <Group grow align="start">
+                  <Select
+                    label="Новый отдел"
+                    data={DEPARTMENT_OPTIONS.filter(
+                      (option) => option.value !== ticket.department,
+                    )}
+                    value={rerouteDepartment}
+                    placeholder="Выберите отдел"
+                    onChange={setRerouteDepartment}
+                  />
+                  <Textarea
+                    label="Причина передачи"
+                    value={rerouteReason}
+                    minRows={2}
+                    maxRows={4}
+                    autosize
+                    maxLength={500}
+                    placeholder="Например: вопрос относится к доступам ИБ, а не к ИТ"
+                    onChange={(event) => setRerouteReason(event.currentTarget.value)}
+                  />
+                </Group>
+                <Group justify="flex-end" gap="xs">
+                  <Button
+                    size="xs"
+                    variant="subtle"
+                    color="gray"
+                    disabled={rerouteTicket.isPending}
+                    onClick={() => setRerouteOpen(false)}
+                  >
+                    Отмена
+                  </Button>
+                  <Button
+                    size="xs"
+                    loading={rerouteTicket.isPending}
+                    disabled={
+                      !rerouteDepartment ||
+                      rerouteDepartment === ticket.department ||
+                      !rerouteReason.trim()
+                    }
+                    onClick={handleReroute}
+                  >
+                    Передать запрос
+                  </Button>
+                </Group>
+              </Stack>
+            </Collapse>
           </Stack>
         )}
 

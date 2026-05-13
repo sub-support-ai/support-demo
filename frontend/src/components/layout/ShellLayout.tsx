@@ -18,15 +18,39 @@ import {
 import { NavLink as RouterNavLink, Outlet, useLocation } from "react-router-dom";
 
 import { useMe } from "../../api/auth";
+import { useTickets } from "../../api/tickets";
 import { useAuth } from "../../stores/auth";
 
 export function ShellLayout() {
   const { token, logout } = useAuth();
   const { data: me } = useMe(Boolean(token));
+  const tickets = useTickets({
+    enabled: Boolean(token),
+    refetchInterval: 30000,
+  });
   const location = useLocation();
   const isChatPage = location.pathname.startsWith("/chat");
+  const isOperator = me?.role === "admin" || me?.role === "agent";
   const requestsLabel =
-    me?.role === "admin" || me?.role === "agent" ? "Запросы" : "Мои запросы";
+    isOperator ? "Запросы" : "Мои запросы";
+  const activeTickets =
+    tickets.data?.filter(
+      (ticket) =>
+        ticket.confirmed_by_user &&
+        ["confirmed", "in_progress"].includes(ticket.status),
+    ) ?? [];
+  const overdueCount = activeTickets.filter((ticket) => ticket.is_sla_breached).length;
+  const unassignedCount = activeTickets.filter((ticket) => ticket.agent_id == null).length;
+  const newCount = activeTickets.filter((ticket) => ticket.status === "confirmed").length;
+  const userDraftCount =
+    tickets.data?.filter(
+      (ticket) => ticket.status === "pending_user" && !ticket.confirmed_by_user,
+    ).length ?? 0;
+  const requestAlertCount = isOperator
+    ? overdueCount || unassignedCount || newCount
+    : userDraftCount;
+  const requestAlertColor =
+    overdueCount > 0 ? "red" : unassignedCount > 0 ? "orange" : "blue";
 
   return (
     <AppShell
@@ -78,6 +102,13 @@ export function ShellLayout() {
           to="/tickets"
           label={requestsLabel}
           leftSection={<IconFileText size={18} />}
+          rightSection={
+            requestAlertCount > 0 ? (
+              <Badge size="xs" color={requestAlertColor} variant="filled">
+                {requestAlertCount}
+              </Badge>
+            ) : undefined
+          }
           active={location.pathname.startsWith("/tickets")}
         />
         {me?.role === "admin" && (

@@ -478,6 +478,99 @@ async def test_list_tickets(client: AsyncClient):
     assert len(data) >= 2
 
 
+@pytest.mark.asyncio
+async def test_list_tickets_supports_server_side_operator_queues(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    user_id, _ = await register_user(client, suffix="queues")
+    _, admin_token = await register_admin(client, suffix="queues")
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+    now = datetime.now(timezone.utc)
+
+    overdue = Ticket(
+        user_id=user_id,
+        title="Просроченный запрос",
+        body="SLA уже нарушен",
+        user_priority=3,
+        department="IT",
+        status="confirmed",
+        confirmed_by_user=True,
+        ai_priority="высокий",
+        sla_started_at=now - timedelta(hours=10),
+        sla_deadline_at=now - timedelta(hours=1),
+    )
+    active = Ticket(
+        user_id=user_id,
+        title="Обычный активный запрос markerqueue",
+        body="SLA ещё в норме",
+        user_priority=3,
+        department="IT",
+        status="in_progress",
+        confirmed_by_user=True,
+        ai_priority="средний",
+        sla_started_at=now,
+        sla_deadline_at=now + timedelta(hours=4),
+    )
+    draft = Ticket(
+        user_id=user_id,
+        title="Черновик пользователя",
+        body="Пока не отправлен",
+        user_priority=3,
+        department="IT",
+        status="pending_user",
+        confirmed_by_user=False,
+    )
+    closed = Ticket(
+        user_id=user_id,
+        title="Закрытый запрос",
+        body="Работа завершена",
+        user_priority=3,
+        department="IT",
+        status="closed",
+        confirmed_by_user=True,
+    )
+    db_session.add_all([overdue, active, draft, closed])
+    await db_session.flush()
+
+    overdue_resp = await client.get(
+        "/api/v1/tickets/?queue=overdue",
+        headers=admin_headers,
+    )
+    assert overdue_resp.status_code == 200
+    assert "Просроченный запрос" in {
+        item["title"] for item in overdue_resp.json()
+    }
+
+    unassigned_resp = await client.get(
+        "/api/v1/tickets/?queue=unassigned",
+        headers=admin_headers,
+    )
+    assert unassigned_resp.status_code == 200
+    assert {item["title"] for item in unassigned_resp.json()} >= {
+        "Просроченный запрос",
+        "Обычный активный запрос markerqueue",
+    }
+
+    draft_resp = await client.get(
+        "/api/v1/tickets/?queue=pending_user",
+        headers=admin_headers,
+    )
+    assert draft_resp.status_code == 200
+    assert "Черновик пользователя" in {
+        item["title"] for item in draft_resp.json()
+    }
+
+    search_resp = await client.get(
+        "/api/v1/tickets/?queue=all&search=markerqueue",
+        headers=admin_headers,
+    )
+    assert search_resp.status_code == 200
+    assert [item["title"] for item in search_resp.json()] == [
+        "Обычный активный запрос markerqueue"
+    ]
+
+
 # ── Ownership: пользователь не должен видеть чужие тикеты ─────────────────────
 
 @pytest.mark.asyncio

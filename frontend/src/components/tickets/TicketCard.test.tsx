@@ -22,6 +22,7 @@ vi.mock("../../api/tickets", () => ({
   useTicketComments: () => ({ data: [], isLoading: false, error: null }),
   useCreateTicketComment: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useUpdateTicketStatus: () => ({ mutate: vi.fn(), isPending: false }),
+  useRerouteTicket: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useResolveTicket: () => ({ mutate: vi.fn(), isPending: false }),
   useSubmitTicketFeedback: () => ({ mutate: vi.fn(), isPending: false }),
   usePromoteTicketToKb: () => ({ mutateAsync: vi.fn(), isPending: false }),

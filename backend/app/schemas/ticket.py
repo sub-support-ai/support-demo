@@ -14,6 +14,17 @@ TicketStatusLiteral = Literal[
     "declined",
 ]
 
+TicketQueueLiteral = Literal[
+    "active",
+    "new",
+    "in_progress",
+    "overdue",
+    "unassigned",
+    "pending_user",
+    "resolved",
+    "all",
+]
+
 # Статусы, которые оператор может выставить вручную.
 # "new" / "pending_user" / "ai_processing" / "declined" никогда не проходят
 # через state-machine агента — оставлять их в публичной схеме значит

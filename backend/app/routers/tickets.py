@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import case, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -30,10 +30,12 @@ from app.schemas.ticket import (
     TicketCreate,
     TicketDraftUpdate,
     TicketFeedbackPayload,
+    TicketQueueLiteral,
     TicketRatingCreate,
     TicketRatingRead,
     TicketRead,
     TicketReroutePayload,
+    TicketStatusLiteral,
     TicketStatusUpdate,
 )
 from app.models.ticket_rating import TicketRating
@@ -334,9 +336,26 @@ async def create_ticket(
 async def list_tickets(
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=200),
+    queue: TicketQueueLiteral = Query(
+        default="all",
+        description=(
+            "Операторская очередь: active, new, in_progress, overdue, "
+            "unassigned, pending_user, resolved, all."
+        ),
+    ),
+    ticket_status: TicketStatusLiteral | None = Query(
+        default=None,
+        alias="status",
+        description="Точный фильтр по статусу тикета.",
+    ),
     department: str | None = Query(
         default=None,
         description="Фильтр по отделу. См. app/constants/departments.py.",
+    ),
+    search: str | None = Query(
+        default=None,
+        max_length=200,
+        description="Поиск по теме, описанию, заявителю, офису и объекту.",
     ),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -358,7 +377,105 @@ async def list_tickets(
 
     if department:
         query = query.where(Ticket.department == department)
-    query = query.order_by(Ticket.created_at.desc(), Ticket.id.desc()).offset(skip).limit(limit)
+    if ticket_status:
+        query = query.where(Ticket.status == ticket_status)
+
+    active_statuses = ("confirmed", "in_progress")
+    if queue == "active":
+        query = query.where(
+            Ticket.confirmed_by_user == True,
+            Ticket.status.in_(active_statuses),
+        )
+    elif queue == "new":
+        query = query.where(
+            Ticket.confirmed_by_user == True,
+            Ticket.status == "confirmed",
+        )
+    elif queue == "in_progress":
+        query = query.where(
+            Ticket.confirmed_by_user == True,
+            Ticket.status == "in_progress",
+        )
+    elif queue == "overdue":
+        now = datetime.now(timezone.utc)
+        query = query.where(
+            Ticket.confirmed_by_user == True,
+            Ticket.status.in_(active_statuses),
+            Ticket.sla_deadline_at.is_not(None),
+            Ticket.sla_deadline_at < now,
+        )
+    elif queue == "unassigned":
+        query = query.where(
+            Ticket.confirmed_by_user == True,
+            Ticket.status.in_(active_statuses),
+            Ticket.agent_id.is_(None),
+        )
+    elif queue == "pending_user":
+        query = query.where(
+            Ticket.status == "pending_user",
+            Ticket.confirmed_by_user == False,
+        )
+    elif queue == "resolved":
+        query = query.where(Ticket.status.in_(("resolved", "closed", "declined")))
+
+    if search:
+        pattern = f"%{search.strip()}%"
+        if pattern != "%%":
+            query = query.where(
+                or_(
+                    Ticket.title.ilike(pattern),
+                    Ticket.body.ilike(pattern),
+                    Ticket.requester_name.ilike(pattern),
+                    Ticket.requester_email.ilike(pattern),
+                    Ticket.office.ilike(pattern),
+                    Ticket.affected_item.ilike(pattern),
+                    Ticket.request_type.ilike(pattern),
+                    Ticket.request_details.ilike(pattern),
+                )
+            )
+
+    now_for_sort = datetime.now(timezone.utc)
+    overdue_rank = case(
+        (
+            Ticket.status.in_(active_statuses)
+            & Ticket.sla_deadline_at.is_not(None)
+            & (Ticket.sla_deadline_at < now_for_sort),
+            0,
+        ),
+        else_=1,
+    )
+    unassigned_rank = case(
+        (
+            Ticket.status.in_(active_statuses) & Ticket.agent_id.is_(None),
+            0,
+        ),
+        else_=1,
+    )
+    status_rank = case(
+        (Ticket.status == "confirmed", 0),
+        (Ticket.status == "in_progress", 1),
+        (Ticket.status == "pending_user", 2),
+        else_=3,
+    )
+    priority_rank = case(
+        (Ticket.ai_priority == "критический", 0),
+        (Ticket.ai_priority == "высокий", 1),
+        (Ticket.ai_priority == "средний", 2),
+        (Ticket.ai_priority == "низкий", 3),
+        else_=4,
+    )
+    query = (
+        query.order_by(
+            overdue_rank,
+            unassigned_rank,
+            status_rank,
+            priority_rank,
+            Ticket.created_at.desc(),
+            Ticket.id.desc(),
+        )
+        .offset(skip)
+        .limit(limit)
+    )
 
     result = await db.execute(query)
     return result.scalars().all()

@@ -8,6 +8,9 @@ import type {
   TicketCommentCreate,
   TicketDraftUpdate,
   TicketFeedbackPayload,
+  TicketQueue,
+  TicketReroutePayload,
+  TicketStatus,
   TicketStatusUpdate,
 } from "./types";
 
@@ -21,11 +24,26 @@ function updateTicketInCache(
   queryClient.setQueryData(["tickets", ticket.id], ticket);
 }
 
-export function useTickets() {
+export function useTickets(options?: {
+  enabled?: boolean;
+  refetchInterval?: number;
+  queue?: TicketQueue;
+  status?: TicketStatus;
+  department?: string | null;
+  search?: string;
+}) {
+  const params = {
+    queue: options?.queue,
+    status: options?.status,
+    department: options?.department || undefined,
+    search: options?.search?.trim() || undefined,
+  };
   return useQuery({
-    queryKey: ["tickets"],
+    queryKey: ["tickets", params],
+    enabled: options?.enabled,
+    refetchInterval: options?.refetchInterval,
     queryFn: async () => {
-      const { data } = await api.get<Ticket[]>("/tickets/");
+      const { data } = await api.get<Ticket[]>("/tickets/", { params });
       return data;
     },
   });
@@ -96,6 +114,30 @@ export function useUpdateTicketStatus() {
       payload: TicketStatusUpdate;
     }) => {
       const { data } = await api.patch<Ticket>(`/tickets/${ticketId}`, payload);
+      return data;
+    },
+    onSuccess: (ticket) => {
+      updateTicketInCache(queryClient, ticket);
+      queryClient.invalidateQueries({ queryKey: ["tickets"] });
+      queryClient.invalidateQueries({ queryKey: ["stats"] });
+    },
+  });
+}
+
+export function useRerouteTicket() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      ticketId,
+      payload,
+    }: {
+      ticketId: number;
+      payload: TicketReroutePayload;
+    }) => {
+      const { data } = await api.patch<Ticket>(
+        `/tickets/${ticketId}/reroute`,
+        payload,
+      );
       return data;
     },
     onSuccess: (ticket) => {

@@ -405,6 +405,36 @@ body {
   gap: 12px;
 }
 
+.ticket-queue-summary {
+  align-items: stretch;
+}
+
+.queue-summary-item {
+  display: grid;
+  gap: 6px;
+  min-height: 86px;
+  padding: 12px;
+  border: 1px solid #dce5e2;
+  border-radius: 8px;
+  background: #f8fbfa;
+}
+
+.queue-summary-item.warning {
+  border-color: #ffd8a8;
+  background: #fff8ef;
+}
+
+.queue-summary-item.danger {
+  border-color: #ffc9c9;
+  background: #fff5f5;
+}
+
+.queue-summary-value {
+  font-size: 28px;
+  line-height: 1;
+  font-weight: 700;
+}
+
 .ticket-form-summary {
   display: grid;
   gap: 2px;
@@ -415,6 +445,13 @@ body {
 }
 
 .ticket-comments {
+  padding: 10px;
+  border: 1px solid #dce5e2;
+  border-radius: 8px;
+  background: #f8fbfa;
+}
+
+.ticket-reroute-panel {
   padding: 10px;
   border: 1px solid #dce5e2;
   border-radius: 8px;
