@@ -157,3 +157,22 @@ class TicketRead(TicketBase):
     updated_at: datetime | None = None
     resolved_at: datetime | None = None
     first_response_at: datetime | None = None
+
+
+class TicketSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    title: str
+    status: str
+    department: str
+    ai_priority: str | None
+    ai_category: str | None
+    requester_name: str | None
+    requester_email: str | None
+    created_at: datetime
+    resolved_at: datetime | None
+    sla_deadline_at: datetime | None
+    is_sla_breached: bool
+    reopen_count: int
+    agent_id: int | None
