@@ -37,6 +37,7 @@ from app.schemas.ticket import (
     TicketReroutePayload,
     TicketStatusLiteral,
     TicketStatusUpdate,
+    TicketSummary,
 )
 from app.models.ticket_rating import TicketRating
 from app.services.agents import get_active_agent_for_user
@@ -545,6 +546,26 @@ async def get_ticket(
     current_user: User = Depends(get_current_user),
 ):
     return await get_ticket_for_reader(ticket_id, db, current_user)
+
+
+# ── GET /tickets/{id}/summary — карточка-резюме тикета ────────────────────────
+
+@router.get(
+    "/{ticket_id}/summary",
+    response_model=TicketSummary,
+    summary="Карточка-резюме тикета",
+    description=(
+        "Возвращает сжатую карточку тикета: статус, приоритет, SLA, агент. "
+        "Удобно для быстрого просмотра без загрузки полного тела тикета."
+    ),
+)
+async def get_ticket_summary(
+    ticket_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    ticket = await get_ticket_for_reader(ticket_id, db, current_user)
+    return ticket
 
 
 # ── PATCH /tickets/{id} — обновить статус ─────────────────────────────────────
