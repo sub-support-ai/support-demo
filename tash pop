@@ -1,0 +1,150 @@
+[1mdiff --git a/backend/app/services/intake_requirements.py b/backend/app/services/intake_requirements.py[m
+[1mindex 79a14ff..e829bf2 100644[m
+[1m--- a/backend/app/services/intake_requirements.py[m
+[1m+++ b/backend/app/services/intake_requirements.py[m
+[36m@@ -3,6 +3,13 @@[m [mfrom __future__ import annotations[m
+ import re[m
+ from typing import Any[m
+ [m
+[32m+[m[32mfrom app.services.service_catalog import ([m
+[32m+[m[32m    DEFAULT_CATALOG_CODE,[m
+[32m+[m[32m    get_catalog_field_labels,[m
+[32m+[m[32m    get_catalog_item,[m
+[32m+[m[32m    infer_catalog_item,[m
+[32m+[m[32m)[m
+[32m+[m
+ INTAKE_MODEL_VERSION = "intake-state-v1"[m
+ INTAKE_CONFIDENCE = 0.55[m
+ [m
+[36m@@ -53,7 +60,19 @@[m [mFIELD_LABELS = {[m
+     "what_happened": "что произошло",[m
+     "what_user_did": "что пользователь уже сделал",[m
+     "time_detected": "когда обнаружили проблему",[m
+[32m+[m[32m    "room": "кабинет или рабочее место",[m
+[32m+[m[32m    "inventory_number": "инвентарный номер",[m
+[32m+[m[32m    "sender_email": "адрес отправителя",[m
+[32m+[m[32m    "received_at": "когда получили письмо",[m
+[32m+[m[32m    "clicked_link": "переходили ли по ссылке",[m
+[32m+[m[32m    "entered_password": "вводили ли пароль или код",[m
+[32m+[m[32m    "screenshot_or_text": "скриншот или текст письма",[m
+[32m+[m[32m    "document_type": "тип документа",[m
+[32m+[m[32m    "purpose": "цель",[m
+[32m+[m[32m    "deadline": "срок",[m
+[32m+[m[32m    "approval": "согласование",[m
+ }[m
+[32m+[m[32mFIELD_LABELS.update(get_catalog_field_labels())[m
+ [m
+ QUESTION_PRIORITY = [[m
+     "office",[m
+[36m@@ -80,6 +99,18 @@[m [m_OFFICE_RE = re.compile([m
+     re.IGNORECASE,[m
+ )[m
+ _COUNT_RE = re.compile(r"(\d+)\s*(?:человек|пользовател|сотрудник|коллег)", re.IGNORECASE)[m
+[32m+[m[32m_ROOM_RE = re.compile([m
+[32m+[m[32m    r"(?:кабинет|каб\.?|рабочее место|место)\s*[:\-]?\s*([^,;\n.]+)",[m
+[32m+[m[32m    re.IGNORECASE,[m
+[32m+[m[32m)[m
+[32m+[m[32m_INVENTORY_RE = re.compile([m
+[32m+[m[32m    r"(?:инв(?:ентарный)?\.?\s*(?:номер)?|инв\.?\s*№|номер)\s*[:#№\-]?\s*([a-zA-Zа-яА-Я0-9\-_/]+)",[m
+[32m+[m[32m    re.IGNORECASE,[m
+[32m+[m[32m)[m
+[32m+[m[32m_SENDER_RE = re.compile([m
+[32m+[m[32m    r"(?:отправитель|адрес отправителя|письмо от)\s*[:\-]?\s*([\w.+-]+@[\w.-]+\.[a-zA-Zа-яА-Я]{2,})",[m
+[32m+[m[32m    re.IGNORECASE,[m
+[32m+[m[32m)[m
+ [m
+ _AFFECTED_ITEMS = ([m
+     ("VPN", ("vpn", "впн")),[m
+[36m@@ -130,14 +161,10 @@[m [mdef get_required_fields([m
+     department: str | None,[m
+     request_type: str | None,[m
+     priority: str | None,[m
+[32m+[m[32m    catalog_code: str | None = None,[m
+ ) -> list[str]:[m
+[31m-    department_normalized = (department or "").casefold()[m
+     priority_normalized = (priority or "").casefold()[m
+[31m-    fields = ([m
+[31m-        SECURITY_REQUIRED_FIELDS.copy()[m
+[31m-        if department_normalized == "security"[m
+[31m-        else COMMON_REQUIRED_FIELDS.copy()[m
+[31m-    )[m
+[32m+[m[32m    fields = get_catalog_item(catalog_code).required_fields.copy()[m
+     if priority_normalized == "критический":[m
+         fields.extend(CRITICAL_REQUIRED_FIELDS)[m
+     return list(dict.fromkeys(fields))[m
+[36m@@ -161,14 +188,25 @@[m [mdef build_intake_state([m
+     combined_user_text = "\n".join(user_messages)[m
+ [m
+     state = existing_state.copy() if isinstance(existing_state, dict) else {}[m
+[31m-    state["mode"] = "collecting_context"[m
+[31m-    state["department"] = ([m
+[31m-        department or state.get("department") or infer_department(combined_user_text)[m
+[32m+[m[32m    inferred_catalog = infer_catalog_item([m
+[32m+[m[32m        combined_user_text,[m
+[32m+[m[32m        department=department or state.get("department"),[m
+[32m+[m[32m        request_type=request_type or state.get("request_type"),[m
+     )[m
+[31m-    state["request_type"] = ([m
+[31m-        request_type or state.get("request_type") or infer_request_type(combined_user_text)[m
+[32m+[m[32m    catalog = get_catalog_item(state.get("catalog_code"))[m
+[32m+[m[32m    if not state.get("catalog_code") or ([m
+[32m+[m[32m        catalog.code == DEFAULT_CATALOG_CODE and inferred_catalog.code != DEFAULT_CATALOG_CODE[m
+[32m+[m[32m    ):[m
+[32m+[m[32m        catalog = inferred_catalog[m
+[32m+[m
+[32m+[m[32m    state["mode"] = "collecting_context"[m
+[32m+[m[32m    state["catalog_code"] = catalog.code[m
+[32m+[m[32m    state["catalog_title"] = catalog.title[m
+[32m+[m[32m    state["department"] = department or state.get("department") or catalog.department[m
+[32m+[m[32m    state["request_type"] = request_type or state.get("request_type") or catalog.request_type[m
+[32m+[m[32m    state["priority"] = ([m
+[32m+[m[32m        priority or state.get("priority") or infer_priority(combined_user_text) or catalog.default_priority[m
+     )[m
+[31m-    state["priority"] = priority or state.get("priority") or infer_priority(combined_user_text)[m
+ [m
+     fields = dict(state.get("fields") or {})[m
+     if requester_name and not fields.get("requester_name"):[m
+[36m@@ -188,6 +226,7 @@[m [mdef build_intake_state([m
+         state.get("department"),[m
+         state.get("request_type"),[m
+         state.get("priority"),[m
+[32m+[m[32m        state.get("catalog_code"),[m
+     )[m
+     missing_fields = [field for field in required_fields if not _has_value(fields.get(field))][m
+     asked_fields = [[m
+[36m@@ -196,7 +235,7 @@[m [mdef build_intake_state([m
+         if field in required_fields and field in missing_fields[m
+     ][m
+ [m
+[31m-    question_fields = choose_next_question_fields(missing_fields, asked_fields)[m
+[32m+[m[32m    question_fields = choose_next_question_fields(missing_fields, asked_fields, required_fields)[m
+     asked_fields = list(dict.fromkeys([*asked_fields, *question_fields]))[m
+     last_question = build_next_question(question_fields)[m
+ [m
+[36m@@ -225,16 +264,20 @@[m [mdef build_intake_ai_payload(state: dict[str, Any], *, reason: str | None = None)[m
+ def build_intake_answer(state: dict[str, Any], *, reason: str | None = None) -> str:[m
+     fields = state.get("fields") or {}[m
+     missing_fields = state.get("missing_fields") or [][m
+[32m+[m[32m    catalog_title = state.get("catalog_title")[m
+ [m
+     if not missing_fields:[m
+[32m+[m[32m        title_part = f" по услуге «{catalog_title}»" if catalog_title else ""[m
+         return ([m
+[31m-            "Черновик заявки почти готов. Проверьте карточку создания запроса: там уже собраны "[m
+[32m+[m[32m            f"Черновик заявки{title_part} почти готов. Проверьте карточку создания запроса: там уже собраны "[m
+             "основные данные из диалога. Если всё верно, создайте запрос; если нет — поправьте поля."[m
+         )[m
+ [m
+     collected = _format_collected_fields(fields)[m
+     question = state.get("last_question") or build_next_question(missing_fields[:4])[m
+     intro = _intro_for_reason(reason)[m
+[32m+[m[32m    if catalog_title:[m
+[32m+[m[32m        intro += f"\nТип обращения: {catalog_title}."[m
+     parts = [intro][m
+     if collected:[m
+         parts.append("Уже понял:\n" + collected)[m
+[36m@@ -282,6 +325,30 @@[m [mdef extract_fields_from_message(text: str) -> dict[str, str]:[m
+     if affected_count:[m
+         fields["affected_users_count"] = affected_count.group(0)[m
+ [m
+[32m+[m[32m    room = _extract_room(text)[
