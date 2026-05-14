@@ -69,10 +69,7 @@ async def seed_knowledge_articles() -> None:
         created, updated = await bulk_upsert_knowledge_articles(db, articles)
         await db.commit()
 
-    print(
-        f"Knowledge articles ready: total={len(articles)}, "
-        f"created={created}, updated={updated}."
-    )
+    print(f"Knowledge articles ready: total={len(articles)}, created={created}, updated={updated}.")
 
 
 if __name__ == "__main__":

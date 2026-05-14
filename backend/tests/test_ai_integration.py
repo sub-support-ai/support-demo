@@ -22,8 +22,8 @@ import pytest
 from app.services.ai_classifier import classify_ticket
 from app.services.conversation_ai import get_ai_answer
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 class _MockResponse:
     """Заглушка httpx-ответа: raise_for_status + json()."""
@@ -70,6 +70,7 @@ def _connect_error_client() -> AsyncMock:
 
 
 # ── classify_ticket ───────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_classify_new_contract_full_response():
@@ -130,6 +131,7 @@ async def test_classify_missing_model_version_uses_env_fallback():
         result = await classify_ticket(3, "вылетает", "1С вылетает")
 
     from app.config import get_settings
+
     assert result["model_version"] == get_settings().AI_MODEL_VERSION_FALLBACK
 
 
@@ -183,6 +185,7 @@ async def test_classify_invalid_json_returns_safe_fallback():
 
 # ── get_ai_answer ─────────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_get_ai_answer_happy_path():
     """Полный ответ нового контракта: sources, model_version — всё доходит."""
@@ -216,10 +219,11 @@ async def test_get_ai_answer_partial_response_uses_setdefaults():
         result = await get_ai_answer(2, [{"role": "user", "content": "что-то сломалось"}])
 
     assert result["answer"] == "Попробуйте перезагрузить."
-    assert result["confidence"] == 0.5    # setdefault
-    assert result["escalate"] is False    # setdefault
-    assert result["sources"] == []        # setdefault
+    assert result["confidence"] == 0.5  # setdefault
+    assert result["escalate"] is False  # setdefault
+    assert result["sources"] == []  # setdefault
     from app.config import get_settings
+
     assert result["model_version"] == get_settings().AI_MODEL_VERSION_FALLBACK
 
 
@@ -260,6 +264,7 @@ async def test_get_ai_answer_connect_error_returns_fallback():
 
 # ── Регрессионный тест на формат контракта ───────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_get_ai_answer_sends_messages_list_not_message_str():
     """Backend шлёт messages: list[{role, content}], не старый message: str.
@@ -271,13 +276,15 @@ async def test_get_ai_answer_sends_messages_list_not_message_str():
 
     async def capture_and_reply(url: str, **kwargs: Any) -> _MockResponse:
         captured.update(kwargs.get("json", {}))
-        return _MockResponse({
-            "answer": "ok",
-            "confidence": 0.9,
-            "escalate": False,
-            "sources": [],
-            "model_version": "test",
-        })
+        return _MockResponse(
+            {
+                "answer": "ok",
+                "confidence": 0.9,
+                "escalate": False,
+                "sources": [],
+                "model_version": "test",
+            }
+        )
 
     mc = AsyncMock()
     mc.post = capture_and_reply

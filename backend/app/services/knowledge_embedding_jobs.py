@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,7 +48,7 @@ async def enqueue_knowledge_embedding_job(
         status=KNOWLEDGE_EMBEDDING_JOB_QUEUED,
         attempts=0,
         max_attempts=3,
-        run_after=datetime.now(timezone.utc),
+        run_after=datetime.now(UTC),
     )
     db.add(job)
     await db.flush()
@@ -63,11 +63,12 @@ async def notify_knowledge_embedding_jobs_channel(database_url: str) -> None:
     чтобы он немедленно взял джобу без ожидания таймаута.
     """
     from app.pg_notify import notify
+
     await notify(database_url, "knowledge_embedding_jobs")
 
 
 async def claim_next_knowledge_embedding_job(db: AsyncSession) -> KnowledgeEmbeddingJob | None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     result = await db.execute(
         select(KnowledgeEmbeddingJob)
         .where(
@@ -97,7 +98,7 @@ async def requeue_stale_knowledge_embedding_jobs(
     stale_after_seconds: int,
     limit: int = 50,
 ) -> int:
-    cutoff = datetime.now(timezone.utc) - timedelta(seconds=stale_after_seconds)
+    cutoff = datetime.now(UTC) - timedelta(seconds=stale_after_seconds)
     result = await db.execute(
         select(KnowledgeEmbeddingJob)
         .where(
@@ -113,13 +114,13 @@ async def requeue_stale_knowledge_embedding_jobs(
     for job in jobs:
         if job.attempts < job.max_attempts:
             job.status = KNOWLEDGE_EMBEDDING_JOB_QUEUED
-            job.run_after = datetime.now(timezone.utc)
+            job.run_after = datetime.now(UTC)
             job.locked_at = None
             job.started_at = None
             job.error = "Job was requeued after stale running lock"
         else:
             job.status = KNOWLEDGE_EMBEDDING_JOB_FAILED
-            job.finished_at = datetime.now(timezone.utc)
+            job.finished_at = datetime.now(UTC)
             job.error = "Job failed after stale running lock"
     await db.flush()
     return len(jobs)
@@ -157,11 +158,7 @@ async def _chunk_ids_missing_embeddings(
         params["article_id"] = article_id
 
     if has_pgvector:
-        model_filter = (
-            "OR embedding_model != :embedding_model"
-            if embedding_model
-            else ""
-        )
+        model_filter = "OR embedding_model != :embedding_model" if embedding_model else ""
         if embedding_model:
             params["embedding_model"] = embedding_model
         result = await db.execute(
@@ -288,7 +285,7 @@ async def process_knowledge_embedding_job(
         await fail_knowledge_embedding_job(db, job, exc)
         return
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     job.status = KNOWLEDGE_EMBEDDING_JOB_DONE
     job.finished_at = now
     job.updated_chunks = updated
@@ -302,7 +299,7 @@ async def fail_knowledge_embedding_job(
     job: KnowledgeEmbeddingJob,
     exc: Exception,
 ) -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     job.error = str(exc)[:2000]
     if job.attempts < job.max_attempts:
         job.status = KNOWLEDGE_EMBEDDING_JOB_QUEUED

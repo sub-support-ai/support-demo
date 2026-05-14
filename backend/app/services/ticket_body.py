@@ -27,10 +27,12 @@ def build_context_block(
     ]
     if creator_name and creator_email:
         lines.append(f"Создал: {creator_name} <{creator_email}>")
-    lines.extend([
-        f"Офис: {office or 'не указан'}",
-        f"Объект: {affected_item or 'не указан'}",
-    ])
+    lines.extend(
+        [
+            f"Офис: {office or 'не указан'}",
+            f"Объект: {affected_item or 'не указан'}",
+        ]
+    )
     return "\n".join(lines)
 
 
@@ -58,4 +60,4 @@ def replace_context_block_if_present(
     separator_index = body.find("\n\n")
     if separator_index == -1:
         return context_block
-    return f"{context_block}\n\n{body[separator_index + 2:].lstrip()}"
+    return f"{context_block}\n\n{body[separator_index + 2 :].lstrip()}"

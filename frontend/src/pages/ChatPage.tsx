@@ -32,13 +32,14 @@ import {
 import type {
   Conversation,
   EscalationContext,
+  IntakeState,
   Ticket,
   TicketDraftUpdate,
 } from "../api/types";
 import { Composer } from "../components/chat/Composer";
 import { MessageBubble } from "../components/chat/MessageBubble";
 import { PrefilledTicketPanel } from "../components/tickets/PrefilledTicketPanel";
-import { getStatusLabel } from "../lib/ticketLabels";
+import { getDepartmentLabel, getStatusLabel } from "../lib/ticketLabels";
 import { useAuth } from "../stores/auth";
 
 function formatConversationDate(value?: string | null) {
@@ -80,6 +81,83 @@ function getConversationTitle(conversation: Conversation, tickets?: Ticket[]) {
   }
 
   return getStatusLabel(conversation.status);
+}
+
+const INTAKE_FIELD_LABELS: Record<string, string> = {
+  requester_name: "Заявитель",
+  requester_email: "Email",
+  office: "Офис",
+  affected_item: "Что затронуто",
+  problem: "Проблема",
+  symptoms: "Симптомы",
+  business_impact: "Влияние на работу",
+  what_tried: "Что пробовали",
+  urgency_reason: "Почему срочно",
+  affected_users_count: "Сколько пользователей",
+  is_business_stopped: "Работа остановлена",
+  is_security_or_safety_risk: "Риск безопасности",
+  incident_type: "Тип инцидента",
+  system_or_account: "Система или учётная запись",
+  what_happened: "Что произошло",
+  what_user_did: "Что уже сделали",
+  time_detected: "Когда обнаружили",
+};
+
+function IntakeStatePanel({ state }: { state: IntakeState }) {
+  const fields = state.fields ?? {};
+  const requiredFields = state.required_fields ?? [];
+  const missingFields = state.missing_fields ?? [];
+  const visibleFields = requiredFields.length
+    ? requiredFields
+    : Object.keys(fields);
+
+  return (
+    <Paper withBorder p="md" className="quiet-panel">
+      <Stack gap="sm">
+        <Group justify="space-between" align="start">
+          <div>
+            <Title order={4}>Данные для запроса</Title>
+            <Text size="sm" c="dimmed">
+              Система собирает контекст перед созданием черновика.
+            </Text>
+          </div>
+          <Badge color={missingFields.length ? "yellow" : "teal"} variant="light">
+            Не хватает: {missingFields.length}
+          </Badge>
+        </Group>
+
+        <Group gap="xs">
+          {state.department && (
+            <Badge variant="light">Отдел: {getDepartmentLabel(state.department)}</Badge>
+          )}
+          {state.request_type && <Badge variant="light">Тип: {state.request_type}</Badge>}
+        </Group>
+
+        <Stack gap={6}>
+          {visibleFields.map((field) => {
+            const value = fields[field];
+            const filled = typeof value === "string" && value.trim().length > 0;
+            return (
+              <Group key={field} justify="space-between" gap="xs" wrap="nowrap">
+                <Text size="sm" c={filled ? undefined : "dimmed"}>
+                  {filled ? "✓" : "!"} {INTAKE_FIELD_LABELS[field] ?? field}
+                </Text>
+                <Text size="sm" ta="right" lineClamp={2} c={filled ? undefined : "dimmed"}>
+                  {filled ? value : "не заполнено"}
+                </Text>
+              </Group>
+            );
+          })}
+        </Stack>
+
+        {state.last_question && missingFields.length > 0 && (
+          <Alert color="yellow" variant="light">
+            {state.last_question}
+          </Alert>
+        )}
+      </Stack>
+    </Paper>
+  );
 }
 
 export function ChatPage() {
@@ -157,6 +235,13 @@ export function ChatPage() {
   }, [activeConversationId, conversations.data]);
 
   const messages = useMessages(activeConversationId, shouldPollMessages);
+  const latestEscalationMessageId = useMemo(() => {
+    const escalationMessages =
+      messages.data?.filter(
+        (message) => message.role === "ai" && message.requires_escalation,
+      ) ?? [];
+    return escalationMessages[escalationMessages.length - 1]?.id;
+  }, [messages.data]);
 
   useEffect(() => {
     if (!isAwaitingAiResponse) {
@@ -335,7 +420,9 @@ export function ChatPage() {
                   escalationDisabled={composerDisabled}
                   escalationLoading={escalate.isPending}
                   contextDefaults={requestContext}
+                  intakeState={activeConversation?.intake_state}
                   showAiConfidence={showAiConfidence}
+                  showEscalationCard={message.id === latestEscalationMessageId}
                   onEscalate={handleEscalate}
                 />
               ))}
@@ -409,6 +496,8 @@ export function ChatPage() {
             onDecline={handleDecline}
             onSave={handleSaveDraft}
           />
+        ) : activeConversation?.intake_state?.mode ? (
+          <IntakeStatePanel state={activeConversation.intake_state} />
         ) : (
           <Paper withBorder p="md" className="quiet-panel">
             <Title order={4}>Черновик запроса</Title>

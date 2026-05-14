@@ -19,8 +19,9 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import Any, Iterable
+from collections.abc import Iterable
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -96,7 +97,7 @@ def _ensure_freshness(item: dict[str, Any]) -> dict[str, Any]:
     глазах _freshness_score (там старые статьи штрафуются). Реальные
     статьи приходят с этими полями из источника.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     item = dict(item)  # не мутируем входящий dict
     item.setdefault("reviewed_at", now)
     item.setdefault("expires_at", now + timedelta(days=DEFAULT_FRESHNESS_DAYS))

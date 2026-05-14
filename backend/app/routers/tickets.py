@@ -8,7 +8,7 @@
   - Фильтром по department для Frontend 2
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel
@@ -18,12 +18,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.database import get_db
 from app.dependencies import get_current_user, require_role
-from app.rate_limit import rate_limit
+from app.models.agent import Agent
 from app.models.ai_log import AILog
 from app.models.conversation import Conversation
 from app.models.ticket import Ticket
 from app.models.ticket_comment import TicketComment
+from app.models.ticket_rating import TicketRating
 from app.models.user import User
+from app.rate_limit import rate_limit
 from app.schemas.ticket import (
     TicketCommentCreate,
     TicketCommentRead,
@@ -39,14 +41,12 @@ from app.schemas.ticket import (
     TicketStatusUpdate,
     TicketSummary,
 )
-from app.models.ticket_rating import TicketRating
 from app.services.agents import get_active_agent_for_user
 from app.services.ai_fallback import (
     FALLBACK_REASON_PAYLOAD_KEY,
     record_ai_fallback,
 )
 from app.services.audit import log_event
-from app.models.agent import Agent
 from app.services.email import notify_agent_assigned, notify_ticket_status
 from app.services.notifications import (
     create_notification,
@@ -183,6 +183,7 @@ def _ticket_status_title(status_value: str) -> str:
 #   существует, просто не ему. Это позволяет перебором вычислить количество
 #   тикетов в системе и их диапазон ID. 404 "Not Found" не палит существование.
 
+
 async def get_ticket_for_user(
     ticket_id: int,
     db: AsyncSession,
@@ -251,6 +252,7 @@ async def get_ticket_for_operator(
 
 # ── Схема для resolve ─────────────────────────────────────────────────────────
 
+
 class ResolvePayload(BaseModel):
     """
     Тело запроса при закрытии тикета агентом.
@@ -262,6 +264,7 @@ class ResolvePayload(BaseModel):
         Сколько секунд прошло между созданием тикета и закрытием.
         Нужно для метрик скорости работы.
     """
+
     agent_accepted_ai_response: bool
     routing_was_correct: bool = True
     correction_lag_seconds: int | None = None
@@ -269,13 +272,14 @@ class ResolvePayload(BaseModel):
 
 # ── POST /tickets/ ─────────────────────────────────────────────────────────────
 
+
 @router.post(
     "/",
     response_model=TicketRead,
     status_code=status.HTTP_201_CREATED,
     summary="Создать тикет",
     description="Создаёт тикет, вызывает AI классификацию и назначает агента. "
-                "Если AI уверен < 0.8 — назначается старший агент для проверки.",
+    "Если AI уверен < 0.8 — назначается старший агент для проверки.",
     # Лимит только на СОЗДАНИЕ тикета (вызывает AI-классификатор).
     # Чат-сообщения идут через /conversations/{id}/messages — без лимита,
     # чтобы бот мог задавать уточняющие вопросы без ограничений.
@@ -315,7 +319,7 @@ async def create_ticket(
         ai_category=ai_result.get("category"),
         ai_priority=ai_result.get("priority"),
         ai_confidence=ai_result.get("confidence"),
-        ai_processed_at=datetime.now(timezone.utc),
+        ai_processed_at=datetime.now(UTC),
     )
     db.add(ticket)
     await db.flush()
@@ -334,19 +338,18 @@ async def create_ticket(
     # отравлял датасет: разные версии модели сваливались в одну корзину
     # "unknown", метрики качества по версиям не считались.
     settings = get_settings()
-    db.add(AILog(
-        ticket_id=ticket.id,
-        model_version=(
-            ai_result.get("model_version")
-            or settings.AI_MODEL_VERSION_FALLBACK
-        ),
-        predicted_category=ai_result.get("category") or "неизвестно",
-        predicted_priority=ai_result.get("priority") or "средний",
-        confidence_score=float(ai_result.get("confidence") or 0.0),
-        routed_to_agent_id=ticket.agent_id,
-        ai_response_draft=ai_result.get("draft_response"),
-        ai_response_time_ms=ai_result.get("response_time_ms"),
-    ))
+    db.add(
+        AILog(
+            ticket_id=ticket.id,
+            model_version=(ai_result.get("model_version") or settings.AI_MODEL_VERSION_FALLBACK),
+            predicted_category=ai_result.get("category") or "неизвестно",
+            predicted_priority=ai_result.get("priority") or "средний",
+            confidence_score=float(ai_result.get("confidence") or 0.0),
+            routed_to_agent_id=ticket.agent_id,
+            ai_response_draft=ai_result.get("draft_response"),
+            ai_response_time_ms=ai_result.get("response_time_ms"),
+        )
+    )
 
     await db.refresh(ticket)
 
@@ -377,13 +380,14 @@ async def create_ticket(
 
 # ── GET /tickets/ ──────────────────────────────────────────────────────────────
 
+
 @router.get(
     "/",
     response_model=list[TicketRead],
     summary="Список тикетов",
     description="Возвращает тикеты с пагинацией. "
-                "Фильтр department: IT, HR, finance, procurement, security, "
-                "facilities, documents.",
+    "Фильтр department: IT, HR, finance, procurement, security, "
+    "facilities, documents.",
 )
 async def list_tickets(
     skip: int = Query(default=0, ge=0),
@@ -435,37 +439,37 @@ async def list_tickets(
     active_statuses = ("confirmed", "in_progress")
     if queue == "active":
         query = query.where(
-            Ticket.confirmed_by_user == True,
+            Ticket.confirmed_by_user.is_(True),
             Ticket.status.in_(active_statuses),
         )
     elif queue == "new":
         query = query.where(
-            Ticket.confirmed_by_user == True,
+            Ticket.confirmed_by_user.is_(True),
             Ticket.status == "confirmed",
         )
     elif queue == "in_progress":
         query = query.where(
-            Ticket.confirmed_by_user == True,
+            Ticket.confirmed_by_user.is_(True),
             Ticket.status == "in_progress",
         )
     elif queue == "overdue":
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         query = query.where(
-            Ticket.confirmed_by_user == True,
+            Ticket.confirmed_by_user.is_(True),
             Ticket.status.in_(active_statuses),
             Ticket.sla_deadline_at.is_not(None),
             Ticket.sla_deadline_at < now,
         )
     elif queue == "unassigned":
         query = query.where(
-            Ticket.confirmed_by_user == True,
+            Ticket.confirmed_by_user.is_(True),
             Ticket.status.in_(active_statuses),
             Ticket.agent_id.is_(None),
         )
     elif queue == "pending_user":
         query = query.where(
             Ticket.status == "pending_user",
-            Ticket.confirmed_by_user == False,
+            Ticket.confirmed_by_user.is_(False),
         )
     elif queue == "resolved":
         query = query.where(Ticket.status.in_(("resolved", "closed", "declined")))
@@ -486,7 +490,7 @@ async def list_tickets(
                 )
             )
 
-    now_for_sort = datetime.now(timezone.utc)
+    now_for_sort = datetime.now(UTC)
     overdue_rank = case(
         (
             Ticket.status.in_(active_statuses)
@@ -535,6 +539,7 @@ async def list_tickets(
 
 # ── GET /tickets/{id} ──────────────────────────────────────────────────────────
 
+
 @router.get(
     "/{ticket_id}",
     response_model=TicketRead,
@@ -549,6 +554,7 @@ async def get_ticket(
 
 
 # ── GET /tickets/{id}/summary — карточка-резюме тикета ────────────────────────
+
 
 @router.get(
     "/{ticket_id}/summary",
@@ -569,6 +575,7 @@ async def get_ticket_summary(
 
 
 # ── PATCH /tickets/{id} — обновить статус ─────────────────────────────────────
+
 
 @router.patch(
     "/{ticket_id}",
@@ -592,7 +599,7 @@ async def update_ticket_status(
     closing_statuses = {"resolved", "closed"}
     if payload.status in closing_statuses and old_status not in closing_statuses:
         await unassign_agent(db, ticket)
-        ticket.resolved_at = datetime.now(timezone.utc)
+        ticket.resolved_at = datetime.now(UTC)
 
     # Аудит критичных операционных действий: переходы статуса тикета
     # часто связаны с SLA, биллингом и compliance-отчётностью. Запись в
@@ -623,6 +630,7 @@ async def update_ticket_status(
 
 
 # ── PATCH /tickets/{id}/draft — пользователь правит AI-черновик до отправки ──
+
 
 @router.patch(
     "/{ticket_id}/draft",
@@ -718,10 +726,7 @@ async def update_ticket_draft(
         creator_email=current_user.email,
     )
 
-    routing_changed = (
-        ticket.department != old_department
-        or ticket.ai_priority != old_ai_priority
-    )
+    routing_changed = ticket.department != old_department or ticket.ai_priority != old_ai_priority
     if routing_changed:
         await unassign_agent(db, ticket)
         ticket.agent_id = None
@@ -733,6 +738,7 @@ async def update_ticket_draft(
 
 
 # ── PATCH /tickets/{id}/confirm — пользователь подтверждает AI-черновик ───────
+
 
 @router.patch(
     "/{ticket_id}/confirm",
@@ -772,8 +778,7 @@ async def confirm_ticket(
     await db.refresh(ticket)
 
     sla_deadline_str = (
-        ticket.sla_deadline_at.strftime("%d.%m.%Y %H:%M UTC")
-        if ticket.sla_deadline_at else None
+        ticket.sla_deadline_at.strftime("%d.%m.%Y %H:%M UTC") if ticket.sla_deadline_at else None
     )
     await notify_ticket_status(
         ticket_id=ticket.id,
@@ -787,9 +792,7 @@ async def confirm_ticket(
 
     # Уведомить назначенного агента
     if ticket.agent_id is not None:
-        agent_result = await db.execute(
-            select(Agent).where(Agent.id == ticket.agent_id)
-        )
+        agent_result = await db.execute(select(Agent).where(Agent.id == ticket.agent_id))
         assigned_agent = agent_result.scalar_one_or_none()
         if assigned_agent:
             await notify_agent_assigned(
@@ -807,6 +810,7 @@ async def confirm_ticket(
 
 
 # ── PATCH /tickets/{id}/decline — пользователь отменяет черновик ──────────────
+
 
 @router.patch(
     "/{ticket_id}/decline",
@@ -858,6 +862,7 @@ async def decline_ticket(
 
 # ── PATCH /tickets/{id}/resolve — агент закрывает тикет ───────────────────────
 
+
 @router.patch(
     "/{ticket_id}/resolve",
     response_model=TicketRead,
@@ -877,7 +882,7 @@ async def resolve_ticket(
     _require_confirmed_ticket_for_operator(ticket)
 
     old_status = transition(ticket, "closed")
-    ticket.resolved_at = datetime.now(timezone.utc)
+    ticket.resolved_at = datetime.now(UTC)
 
     if old_status not in {"resolved", "closed"}:
         await unassign_agent(db, ticket)
@@ -888,7 +893,7 @@ async def resolve_ticket(
     if ai_log:
         ai_log.agent_accepted_ai_response = payload.agent_accepted_ai_response
         ai_log.routing_was_correct = payload.routing_was_correct
-        ai_log.reviewed_at = datetime.now(timezone.utc)
+        ai_log.reviewed_at = datetime.now(UTC)
         if payload.correction_lag_seconds is not None:
             ai_log.correction_lag_seconds = payload.correction_lag_seconds
     else:
@@ -900,7 +905,7 @@ async def resolve_ticket(
             confidence_score=ticket.ai_confidence or 0.0,
             agent_accepted_ai_response=payload.agent_accepted_ai_response,
             routing_was_correct=payload.routing_was_correct,
-            reviewed_at=datetime.now(timezone.utc),
+            reviewed_at=datetime.now(UTC),
             correction_lag_seconds=payload.correction_lag_seconds,
         )
         db.add(ai_log)
@@ -930,6 +935,7 @@ async def resolve_ticket(
 
 
 # ── GET/POST /tickets/{id}/comments — рабочие комментарии ────────────────────
+
 
 @router.get(
     "/{ticket_id}/comments",
@@ -998,7 +1004,7 @@ async def create_ticket_comment(
         and current_user.role in {"agent", "admin"}
         and not payload.internal
     ):
-        ticket.first_response_at = datetime.now(timezone.utc)
+        ticket.first_response_at = datetime.now(UTC)
 
     if not payload.internal and current_user.id != ticket.user_id:
         await notify_ticket_user(
@@ -1092,6 +1098,7 @@ async def submit_ticket_feedback(
 
 # ── PATCH /tickets/{id}/reroute — агент перенаправляет в другой отдел ─────────
 
+
 @router.patch(
     "/{ticket_id}/reroute",
     response_model=TicketRead,
@@ -1152,9 +1159,7 @@ async def reroute_ticket(
 
     # Уведомить нового агента о назначении
     if ticket.agent_id is not None:
-        agent_res = await db.execute(
-            select(Agent).where(Agent.id == ticket.agent_id)
-        )
+        agent_res = await db.execute(select(Agent).where(Agent.id == ticket.agent_id))
         new_agent = agent_res.scalar_one_or_none()
         if new_agent:
             await notify_agent_assigned(
@@ -1194,6 +1199,7 @@ async def reroute_ticket(
 
 
 # ── POST /tickets/{id}/rate — CSAT оценка пользователя ───────────────────────
+
 
 @router.post(
     "/{ticket_id}/rate",
@@ -1269,6 +1275,7 @@ async def rate_ticket(
 
 # ── POST /tickets/{id}/promote-to-kb — превратить решённый тикет в KB-черновик ─
 
+
 class KBPromotionResponse(BaseModel):
     """Результат промоута тикета в KB-черновик.
 
@@ -1277,6 +1284,7 @@ class KBPromotionResponse(BaseModel):
     created     — True если новая статья, False если обновили существующую
                   (matched по title).
     """
+
     article_id: int
     title: str
     is_active: bool
@@ -1351,6 +1359,7 @@ async def promote_ticket_to_kb(
 
 
 # ── DELETE /tickets/{id} — только admin ───────────────────────────────────────
+
 
 @router.delete(
     "/{ticket_id}",

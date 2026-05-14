@@ -10,7 +10,11 @@ import {
 import { IconAlertTriangle, IconArrowRight } from "@tabler/icons-react";
 import { useEffect, useMemo, useState } from "react";
 
-import type { EscalationContext, RequestContextDefaults } from "../../api/types";
+import type {
+  EscalationContext,
+  IntakeState,
+  RequestContextDefaults,
+} from "../../api/types";
 
 const OTHER_VALUE = "__other__";
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
@@ -80,11 +84,13 @@ function toSelectOptions(values: string[], otherLabel: string) {
 
 export function EscalationCard({
   contextDefaults,
+  intakeState,
   disabled,
   loading,
   onEscalate,
 }: {
   contextDefaults?: RequestContextDefaults | null;
+  intakeState?: IntakeState | null;
   disabled?: boolean;
   loading?: boolean;
   onEscalate: (context: EscalationContext) => void;
@@ -101,6 +107,7 @@ export function EscalationCard({
   const selectedRequestType = useMemo(() => {
     return REQUEST_TYPES.find((item) => item.value === requestType) ?? null;
   }, [requestType]);
+  const intakeFields = useMemo(() => intakeState?.fields ?? {}, [intakeState?.fields]);
 
   useEffect(() => {
     if (!contextDefaults) {
@@ -117,23 +124,49 @@ export function EscalationCard({
     }
   }, [selectedRequestType]);
 
+  useEffect(() => {
+    setOffice((current) => current || intakeFields.office || null);
+    setAffectedItem((current) => current || intakeFields.affected_item || null);
+    const inferredType = REQUEST_TYPES.find((item) => {
+      const requestTypeText = intakeState?.request_type?.toLowerCase() ?? "";
+      return (
+        requestTypeText &&
+        (item.label.toLowerCase().includes(requestTypeText) ||
+          item.affectedItem.toLowerCase().includes(requestTypeText))
+      );
+    });
+    setRequestType((current) => current || inferredType?.value || null);
+
+    const details = [
+      intakeFields.problem,
+      intakeFields.symptoms,
+      intakeFields.what_tried,
+      intakeFields.business_impact,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    setRequestDetails((current) => current || details);
+  }, [intakeFields, intakeState?.request_type]);
+
   const officeOptions = useMemo(() => {
     const values = [
       ...(contextDefaults?.office_options ?? DEFAULT_OFFICE_OPTIONS),
       contextDefaults?.office ?? "",
+      intakeFields.office ?? "",
     ];
     return toSelectOptions(values, "Другой офис");
-  }, [contextDefaults]);
+  }, [contextDefaults, intakeFields.office]);
 
   const affectedItemOptions = useMemo(() => {
     return toSelectOptions(
       [
         ...(contextDefaults?.affected_item_options ?? DEFAULT_AFFECTED_ITEM_OPTIONS),
         ...REQUEST_TYPES.map((item) => item.affectedItem),
+        intakeFields.affected_item ?? "",
       ],
       "Другое",
     );
-  }, [contextDefaults]);
+  }, [contextDefaults, intakeFields.affected_item]);
 
   const context = useMemo<EscalationContext>(() => {
     const resolvedOffice =

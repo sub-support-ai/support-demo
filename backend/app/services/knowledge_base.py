@@ -1,9 +1,9 @@
 import logging
 import re
 import time
-from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Iterable
+from collections.abc import Iterable
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 
 from sqlalchemy import bindparam, func, literal_column, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -567,7 +567,7 @@ async def _search_knowledge_articles_postgres(
         query,
         query_tokens,
         filters,
-        datetime.now(timezone.utc),
+        datetime.now(UTC),
     )[:limit]
 
 
@@ -643,7 +643,7 @@ async def _search_knowledge_articles_semantic_postgres(
         .where(KnowledgeArticle.id.in_(scored_chunks.keys()))
         .order_by(KnowledgeArticle.id.asc())
     )
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     medium_threshold = get_settings().RAG_SCORE_MEDIUM_THRESHOLD
     matches: list[KnowledgeMatch] = []
     for article in articles_result.scalars().all():
@@ -722,7 +722,7 @@ async def _search_knowledge_articles_fallback(
         query,
         query_tokens,
         filters,
-        datetime.now(timezone.utc),
+        datetime.now(UTC),
     )[:limit]
 
 
@@ -747,6 +747,7 @@ async def search_knowledge_articles(
     cache = get_knowledge_cache()
     cached = cache.get(query, limit, filters)
     if cached is not None:
+        cached = [replace(match, article=await db.merge(match.article)) for match in cached]
         logger.debug(
             "Knowledge search cache hit",
             extra={"query_len": len(query), "limit": limit, "results": len(cached)},
@@ -919,7 +920,7 @@ def _build_kb_query(user_messages: list[str], assistant_messages: list[str]) -> 
     # Промежуточные user-сообщения (без первого/последнего) — берём
     # последние из середины, ограничиваем количество.
     middle = user_messages[1:-1] if len(user_messages) >= 3 else []
-    parts.extend(middle[-(_KB_QUERY_MAX_USER_MESSAGES - 3):])
+    parts.extend(middle[-(_KB_QUERY_MAX_USER_MESSAGES - 3) :])
 
     # Последние короткие уточнения бота — там часто перефразирована проблема.
     parts.extend(_assistant_messages_for_kb_query(assistant_messages))

@@ -17,7 +17,6 @@ ai_service_client.py).
 """
 
 from functools import lru_cache
-from typing import Optional
 
 from pydantic import (
     Field,
@@ -26,7 +25,6 @@ from pydantic import (
     model_validator,
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
 
 # Маркер дефолтного небезопасного JWT_SECRET_KEY. В production запрещён —
 # разворачиваем self-hosted у клиента, и дефолтный ключ = полная потеря
@@ -60,14 +58,14 @@ class Settings(BaseSettings):
     POSTGRES_DB: str = "app_db"
     POSTGRES_HOST: str = "localhost"
     POSTGRES_PORT: str = "5432"
-    DATABASE_URL_OVERRIDE: Optional[str] = Field(default=None, alias="DATABASE_URL")
+    DATABASE_URL_OVERRIDE: str | None = Field(default=None, alias="DATABASE_URL")
 
     # ── AI Service ────────────────────────────────────────────────────────
     AI_SERVICE_URL: str = "http://localhost:8001"
     # SecretStr — чтобы значение не уехало в repr/log/Sentry. Не уверен, что
     # вы доверяете каждому breakpoint'у в IDE и каждому log.exception в проде:
     # SecretStr делает это за вас.
-    AI_SERVICE_API_KEY: Optional[SecretStr] = None
+    AI_SERVICE_API_KEY: SecretStr | None = None
     AI_SERVICE_TIMEOUT_SECONDS: float = 180.0
     # Версия модели по умолчанию — fallback для AILog.model_version, когда
     # AI Service по какой-то причине не вернул это поле. Раньше использовался
@@ -113,7 +111,7 @@ class Settings(BaseSettings):
     # ── Bootstrap-admin ───────────────────────────────────────────────────
     # Первый пользователь с этим email при регистрации получает role=admin.
     # Решает проблему «кто создаст первого админа» в self-hosted.
-    BOOTSTRAP_ADMIN_EMAIL: Optional[str] = None
+    BOOTSTRAP_ADMIN_EMAIL: str | None = None
 
     # ── CORS ──────────────────────────────────────────────────────────────
     # Список origin'ов через запятую, откуда браузер может стучать на API.
@@ -135,10 +133,10 @@ class Settings(BaseSettings):
     # Если SMTP_HOST не задан — уведомления по email отключены (no-op).
     # Поддерживается STARTTLS (587) и SMTPS/SSL (465). Для внутреннего relay
     # без TLS установите SMTP_USE_TLS=false.
-    SMTP_HOST: Optional[str] = None
+    SMTP_HOST: str | None = None
     SMTP_PORT: int = 587
-    SMTP_USER: Optional[str] = None
-    SMTP_PASSWORD: Optional[SecretStr] = None
+    SMTP_USER: str | None = None
+    SMTP_PASSWORD: SecretStr | None = None
     SMTP_FROM: str = "noreply@support.local"
     SMTP_USE_TLS: bool = True
 
@@ -204,8 +202,7 @@ class Settings(BaseSettings):
         normalized = value.strip().lower()
         if normalized not in {"memory", "redis"}:
             raise ValueError(
-                f"RATE_LIMIT_BACKEND={value!r} не поддерживается. "
-                "Допустимы 'memory' и 'redis'."
+                f"RATE_LIMIT_BACKEND={value!r} не поддерживается. Допустимы 'memory' и 'redis'."
             )
         return normalized
 

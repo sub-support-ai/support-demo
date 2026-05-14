@@ -123,16 +123,9 @@ async def update_user_role(
     # deadlock между двумя админами, демоутящими друг друга. Затем
     # блокируем target — если он admin, лок уже взят (re-entrant в той
     # же транзакции). Только после этого считываем актуальное состояние.
-    await db.execute(
-        select(User)
-        .where(User.role == "admin")
-        .order_by(User.id)
-        .with_for_update()
-    )
+    await db.execute(select(User).where(User.role == "admin").order_by(User.id).with_for_update())
     target = (
-        await db.execute(
-            select(User).where(User.id == user_id).with_for_update()
-        )
+        await db.execute(select(User).where(User.id == user_id).with_for_update())
     ).scalar_one_or_none()
     if target is None:
         raise HTTPException(
@@ -204,9 +197,7 @@ async def update_user_active(
     # Блокируем target сразу — FOR UPDATE гарантирует, что параллельный
     # запрос увидит наш is_active после commit, а не читает stale-значение.
     target = (
-        await db.execute(
-            select(User).where(User.id == user_id).with_for_update()
-        )
+        await db.execute(select(User).where(User.id == user_id).with_for_update())
     ).scalar_one_or_none()
     if target is None:
         raise HTTPException(

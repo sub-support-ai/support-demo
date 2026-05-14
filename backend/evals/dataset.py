@@ -69,8 +69,7 @@ def load_dataset(path: Path | str) -> list[EvalCase]:
     cases_raw = raw.get("cases")
     if not isinstance(cases_raw, list):
         raise ValueError(
-            f"{path}: ожидался ключ 'cases' со списком кейсов, "
-            f"получено: {type(cases_raw).__name__}"
+            f"{path}: ожидался ключ 'cases' со списком кейсов, получено: {type(cases_raw).__name__}"
         )
 
     cases: list[EvalCase] = []
@@ -80,9 +79,7 @@ def load_dataset(path: Path | str) -> list[EvalCase]:
 
         query = item.get("query")
         if not isinstance(query, str) or not query.strip():
-            raise ValueError(
-                f"{path}: case #{index} — `query` обязателен, непустая строка"
-            )
+            raise ValueError(f"{path}: case #{index} — `query` обязателен, непустая строка")
 
         titles_raw = item.get("expected_titles") or item.get("expected_title")
         if isinstance(titles_raw, str):
@@ -94,9 +91,7 @@ def load_dataset(path: Path | str) -> list[EvalCase]:
                 f"{path}: case #{index} — `expected_titles` обязательный список / строка"
             )
         if not titles:
-            raise ValueError(
-                f"{path}: case #{index} — `expected_titles` не может быть пустым"
-            )
+            raise ValueError(f"{path}: case #{index} — `expected_titles` не может быть пустым")
         for t in titles:
             if not isinstance(t, str) or not t.strip():
                 raise ValueError(

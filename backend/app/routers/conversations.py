@@ -24,13 +24,15 @@
 """
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
+from app.constants.departments import DEPARTMENTS_SET
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.ai_log import AILog
@@ -40,6 +42,8 @@ from app.models.message import Message
 from app.models.ticket import Ticket
 from app.models.user import User
 from app.schemas.ticket import TicketRead
+from app.services.ai_classifier import classify_ticket
+from app.services.ai_extract import extract_steps_tried
 from app.services.ai_jobs import enqueue_ai_response_job, notify_ai_jobs_channel
 from app.services.audit import log_event
 from app.services.routing import assign_agent
@@ -55,8 +59,10 @@ router = APIRouter(prefix="/conversations", tags=["conversations"])
 
 # ── Схемы запросов/ответов (определены здесь чтобы не плодить файлы) ──────────
 
+
 class ConversationRead(BaseModel):
     """Данные диалога в ответе."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -65,17 +71,20 @@ class ConversationRead(BaseModel):
     # ПСЕВДО-СТРИМИНГ: текущая стадия обработки. null — нет активной генерации.
     # Значения: thinking / searching / found_kb / generating
     ai_stage: str | None = None
+    intake_state: dict | None = None
     created_at: datetime
     updated_at: datetime | None = None
 
 
 class MessageCreate(BaseModel):
     """Тело запроса при отправке сообщения."""
+
     content: str
 
 
 class SourceRead(BaseModel):
     """Источник из RAG, на который опирался AI при ответе."""
+
     title: str
     url: str | None = None
     article_id: int | None = None
@@ -100,11 +109,12 @@ class MessageRead(BaseModel):
                                окончательный, а предложить 1-click
                                эскалацию через POST /escalate.
     """
+
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     conversation_id: int
-    role: str       # "user" или "ai"
+    role: str  # "user" или "ai"
     content: str
     sources: list[SourceRead] | None = None
     ai_confidence: float | None = None
@@ -182,13 +192,14 @@ class EscalatePayload(BaseModel):
 
 # ── POST /conversations/ — создать диалог ─────────────────────────────────────
 
+
 @router.post(
     "/",
     response_model=ConversationRead,
     status_code=status.HTTP_201_CREATED,
     summary="Начать новый диалог",
     description="Создаёт новый диалог для авторизованного пользователя. "
-                "user_id берётся из JWT токена автоматически.",
+    "user_id берётся из JWT токена автоматически.",
 )
 async def create_conversation(
     db: AsyncSession = Depends(get_db),
@@ -205,6 +216,7 @@ async def create_conversation(
 
 
 # ── GET /conversations/ — список диалогов текущего пользователя ───────────────
+
 
 @router.get(
     "/",
@@ -226,6 +238,7 @@ async def list_conversations(
 
 # ── Хелпер: загрузка диалога с проверкой доступа ──────────────────────────────
 
+
 async def _get_conversation_for_user(
     conversation_id: int,
     db: AsyncSession,
@@ -236,9 +249,7 @@ async def _get_conversation_for_user(
     404 (а не 403) при отсутствии доступа: не палим существование ID
     перебором — та же логика, что в get_ticket_for_user в tickets.py.
     """
-    result = await db.execute(
-        select(Conversation).where(Conversation.id == conversation_id)
-    )
+    result = await db.execute(select(Conversation).where(Conversation.id == conversation_id))
     conversation = result.scalar_one_or_none()
 
     if conversation is None or conversation.user_id != current_user.id:
@@ -249,24 +260,8 @@ async def _get_conversation_for_user(
     return conversation
 
 
-async def _has_open_escalation_prompt(
-    conversation_id: int,
-    db: AsyncSession,
-) -> bool:
-    result = await db.execute(
-        select(Message.id)
-        .where(
-            Message.conversation_id == conversation_id,
-            Message.role == "ai",
-            Message.requires_escalation.is_(True),
-        )
-        .order_by(Message.created_at.desc(), Message.id.desc())
-        .limit(1)
-    )
-    return result.scalar_one_or_none() is not None
-
-
 # ── POST /conversations/{id}/messages — добавить сообщение ────────────────────
+
 
 @router.post(
     "/{conversation_id}/messages",
@@ -290,16 +285,13 @@ async def add_message(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> AddMessageResponse:
-    conversation = await _get_conversation_for_user(
-        conversation_id, db, current_user
-    )
+    conversation = await _get_conversation_for_user(conversation_id, db, current_user)
 
     if conversation.status == "escalated":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                "Диалог уже эскалирован в тикет. Подтвердите черновик "
-                "или начните новый диалог."
+                "Диалог уже эскалирован в тикет. Подтвердите черновик или начните новый диалог."
             ),
         )
     if conversation.status == "ai_processing":
@@ -323,14 +315,6 @@ async def add_message(
     await db.flush()
     await db.refresh(user_message)
 
-    if await _has_open_escalation_prompt(conversation_id, db):
-        return AddMessageResponse(
-            user_message=MessageRead.model_validate(user_message),
-            conversation_status=conversation.status,
-            ai_job_id=None,
-            poll_hint=f"/api/v1/conversations/{conversation_id}/messages",
-        )
-
     conversation.status = "ai_processing"
     job = await enqueue_ai_response_job(db, conversation_id)
     await db.flush()
@@ -339,6 +323,7 @@ async def add_message(
     # BackgroundTask гарантированно запускается после завершения yield-зависимостей
     # (get_db коммитит сессию), поэтому джоба уже в БД к моменту NOTIFY.
     from app.config import get_settings
+
     background_tasks.add_task(notify_ai_jobs_channel, get_settings().DATABASE_URL)
 
     return AddMessageResponse(
@@ -350,6 +335,7 @@ async def add_message(
 
 
 # ── GET /conversations/{id}/messages — история сообщений ──────────────────────
+
 
 @router.get(
     "/{conversation_id}/messages",
@@ -374,6 +360,7 @@ async def get_messages(
 
 # ── POST /conversations/{id}/escalate — 1-click autofill ─────────────────────
 
+
 class EscalateResponse(BaseModel):
     """Ответ при эскалации диалога в тикет.
 
@@ -381,6 +368,7 @@ class EscalateResponse(BaseModel):
              confirmed_by_user=False). Пользователь видит черновик и
              одним кликом подтверждает отправку.
     """
+
     ticket: TicketRead
     conversation_id: int
 
@@ -406,19 +394,12 @@ async def escalate_conversation(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    from app.services.ai_classifier import classify_ticket
-    from datetime import datetime, timezone
-    from app.config import get_settings
-
-    conversation = await _get_conversation_for_user(
-        conversation_id, db, current_user
-    )
+    conversation = await _get_conversation_for_user(conversation_id, db, current_user)
     if conversation.status == "escalated":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                "Диалог уже эскалирован в тикет. Подтвердите черновик "
-                "или начните новый диалог."
+                "Диалог уже эскалирован в тикет. Подтвердите черновик или начните новый диалог."
             ),
         )
 
@@ -461,8 +442,6 @@ async def escalate_conversation(
         body=classify_body,
     )
 
-    from app.constants.departments import DEPARTMENTS_SET
-
     department = ai_result.get("department") or "IT"
     # AI-классификатор обучен на 7-отдельной таксономии (см.
     # app/constants/departments.py), но иногда возвращает "other" или новый,
@@ -475,7 +454,6 @@ async def escalate_conversation(
     # При недоступности AI-сервиса автоматически fallback'нется на
     # keyword-эвристику (то же поведение, что было раньше, но как
     # последний рубеж — а не основной способ).
-    from app.services.ai_extract import extract_steps_tried
     steps_tried = await extract_steps_tried(messages)
     requester_name = clean_text_with_fallback(
         payload.context.requester_name,
@@ -531,7 +509,7 @@ async def escalate_conversation(
         ai_category=ai_result.get("category"),
         ai_priority=ai_result.get("priority"),
         ai_confidence=ai_result.get("confidence"),
-        ai_processed_at=datetime.now(timezone.utc),
+        ai_processed_at=datetime.now(UTC),
     )
     db.add(ticket)
     await db.flush()
@@ -554,21 +532,20 @@ async def escalate_conversation(
 
     # Логируем решение AI — outcome="escalated_ai_ticket": AI сам предложил
     # тикет, пользователь ещё не подтвердил, но факт эскалации зафиксирован.
-    db.add(AILog(
-        ticket_id=ticket.id,
-        conversation_id=conversation_id,
-        model_version=(
-            ai_result.get("model_version")
-            or settings.AI_MODEL_VERSION_FALLBACK
-        ),
-        predicted_category=ai_result.get("category") or "неизвестно",
-        predicted_priority=ai_result.get("priority") or "средний",
-        confidence_score=float(ai_result.get("confidence") or 0.0),
-        routed_to_agent_id=ticket.agent_id,
-        ai_response_draft=ai_result.get("draft_response"),
-        ai_response_time_ms=ai_result.get("response_time_ms"),
-        outcome="escalated_ai_ticket",
-    ))
+    db.add(
+        AILog(
+            ticket_id=ticket.id,
+            conversation_id=conversation_id,
+            model_version=(ai_result.get("model_version") or settings.AI_MODEL_VERSION_FALLBACK),
+            predicted_category=ai_result.get("category") or "неизвестно",
+            predicted_priority=ai_result.get("priority") or "средний",
+            confidence_score=float(ai_result.get("confidence") or 0.0),
+            routed_to_agent_id=ticket.agent_id,
+            ai_response_draft=ai_result.get("draft_response"),
+            ai_response_time_ms=ai_result.get("response_time_ms"),
+            outcome="escalated_ai_ticket",
+        )
+    )
 
     # Переводим диалог в "escalated" — UI скрывает поле ввода и
     # показывает ссылку на созданный тикет.

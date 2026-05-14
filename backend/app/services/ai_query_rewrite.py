@@ -51,7 +51,7 @@ def _build_rewrite_prompt(user_messages: list[str], assistant_messages: list[str
         dialog_lines.append(f"Пользователь: {user}")
         dialog_lines.append(f"Бот: {assistant}")
     # Хвост user-сообщений, если их больше чем assistant.
-    for user in user_messages[len(pairs):]:
+    for user in user_messages[len(pairs) :]:
         dialog_lines.append(f"Пользователь: {user}")
     dialog = "\n".join(dialog_lines)
 

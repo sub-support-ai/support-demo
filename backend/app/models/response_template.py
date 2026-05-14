@@ -1,5 +1,4 @@
 from datetime import datetime
-from typing import Optional
 
 from sqlalchemy import Boolean, DateTime, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
@@ -11,8 +10,8 @@ class ResponseTemplate(Base):
     __tablename__ = "response_templates"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    department: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, index=True)
-    request_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
+    department: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
+    request_type: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
     title: Mapped[str] = mapped_column(String(120), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)

@@ -48,7 +48,7 @@ async def assign_agent(
     base_query = (
         select(Agent)
         .where(Agent.department == department)
-        .where(Agent.is_active == True)
+        .where(Agent.is_active.is_(True))
         .with_for_update(skip_locked=True)
         .limit(1)
     )

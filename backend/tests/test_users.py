@@ -1,4 +1,4 @@
-﻿import pytest
+import pytest
 from httpx import AsyncClient
 
 
@@ -45,33 +45,42 @@ async def test_register_user(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_register_accepts_simple_username(client: AsyncClient):
     """Логин не ограничен набором символов; уникальность проверяется отдельно."""
-    response = await client.post("/api/v1/auth/register", json={
-        "email": "simplelogin@example.com",
-        "username": "юзер",
-        "password": "Secret123!",
-    })
+    response = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "simplelogin@example.com",
+            "username": "юзер",
+            "password": "Secret123!",
+        },
+    )
     assert response.status_code == 201
 
 
 @pytest.mark.asyncio
 async def test_register_rejects_weak_password(client: AsyncClient):
     """Пароль должен проходить базовую complexity policy."""
-    response = await client.post("/api/v1/auth/register", json={
-        "email": "weakpw@example.com",
-        "username": "weakpwuser",
-        "password": "secret123",
-    })
+    response = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "weakpw@example.com",
+            "username": "weakpwuser",
+            "password": "secret123",
+        },
+    )
     assert response.status_code == 422
 
 
 @pytest.mark.asyncio
 async def test_register_rejects_invalid_email(client: AsyncClient):
     """Email проверяется через EmailStr/Pydantic."""
-    response = await client.post("/api/v1/auth/register", json={
-        "email": "not-an-email",
-        "username": "emailuser",
-        "password": "Secret123!",
-    })
+    response = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "not-an-email",
+            "username": "emailuser",
+            "password": "Secret123!",
+        },
+    )
     assert response.status_code == 422
 
 
@@ -84,16 +93,20 @@ async def test_register_rejects_invalid_email(client: AsyncClient):
 #      (в bcrypt-напрямую они коллизировали бы).
 # Эти тесты — регрессия: если кто-то уберёт SHA-256-нормализацию, они упадут.
 
+
 @pytest.mark.asyncio
 async def test_long_password_round_trips(client: AsyncClient):
     """Пароль близко к верхней границе регистрируется и логинится — то есть хэш
     корректно покрывает всю длину, а не только первые 72 байта."""
     long_pw = "A" + ("a" * 124) + "1!"
-    reg = await client.post("/api/v1/auth/register", json={
-        "email": "longpw@example.com",
-        "username": "longpwuser",
-        "password": long_pw,
-    })
+    reg = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "longpw@example.com",
+            "username": "longpwuser",
+            "password": long_pw,
+        },
+    )
     assert reg.status_code == 201
 
     # /auth/login — OAuth2PasswordRequestForm, принимает form-data (username+password)
@@ -109,12 +122,15 @@ async def test_long_password_round_trips(client: AsyncClient):
 async def test_cyrillic_password_round_trips(client: AsyncClient):
     """80 байт UTF-8 (40 × 'ё') работает end-to-end.
     До SHA-256-нормализации такой пароль упирался в 72-байтный потолок."""
-    cyrillic_pw = "Ё" + ("ё" * 37) + "1!"   # 80+ байт UTF-8
-    reg = await client.post("/api/v1/auth/register", json={
-        "email": "cyrpw@example.com",
-        "username": "cyrpwuser",
-        "password": cyrillic_pw,
-    })
+    cyrillic_pw = "Ё" + ("ё" * 37) + "1!"  # 80+ байт UTF-8
+    reg = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "cyrpw@example.com",
+            "username": "cyrpwuser",
+            "password": cyrillic_pw,
+        },
+    )
     assert reg.status_code == 201
 
     login = await client.post(
@@ -139,7 +155,7 @@ def test_different_long_passwords_produce_different_hashes():
 
     stored_a = hash_password(pw_a)
     assert verify_password(pw_a, stored_a) is True
-    assert verify_password(pw_b, stored_a) is False   # ← без SHA-256 было бы True
+    assert verify_password(pw_b, stored_a) is False  # ← без SHA-256 было бы True
 
 
 @pytest.mark.asyncio
@@ -176,17 +192,23 @@ async def test_register_duplicate_username(client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_register_duplicate_username_after_trim(client: AsyncClient):
-    await client.post("/api/v1/auth/register", json={
-        "email": "trimuser1@example.com",
-        "username": "trimmed",
-        "password": "Secret123!",
-    })
+    await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "trimuser1@example.com",
+            "username": "trimmed",
+            "password": "Secret123!",
+        },
+    )
 
-    response = await client.post("/api/v1/auth/register", json={
-        "email": "trimuser2@example.com",
-        "username": "  trimmed  ",
-        "password": "Secret123!",
-    })
+    response = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "trimuser2@example.com",
+            "username": "  trimmed  ",
+            "password": "Secret123!",
+        },
+    )
 
     assert response.status_code == 409
     assert "Username" in response.json()["detail"]
@@ -195,11 +217,14 @@ async def test_register_duplicate_username_after_trim(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_get_self(client: AsyncClient):
     """GET /users/{id} доступен владельцу — /users/<свой_id> возвращает 200."""
-    reg = await client.post("/api/v1/auth/register", json={
-        "email": "getme@example.com",
-        "username": "getmeuser",
-        "password": "Secret123!",
-    })
+    reg = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "getme@example.com",
+            "username": "getmeuser",
+            "password": "Secret123!",
+        },
+    )
     token = reg.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
@@ -219,11 +244,14 @@ async def test_get_self(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_get_other_user_forbidden(client: AsyncClient):
     """Обычный пользователь не может смотреть чужой профиль → 403."""
-    reg = await client.post("/api/v1/auth/register", json={
-        "email": "spy@example.com",
-        "username": "spy",
-        "password": "Secret123!",
-    })
+    reg = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "spy@example.com",
+            "username": "spy",
+            "password": "Secret123!",
+        },
+    )
     token = reg.json()["access_token"]
     response = await client.get(
         "/api/v1/users/99999",
@@ -235,11 +263,14 @@ async def test_get_other_user_forbidden(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_users_list_requires_admin(client: AsyncClient):
     """GET /users/ без админ-токена → 403."""
-    reg = await client.post("/api/v1/auth/register", json={
-        "email": "nonadmin@example.com",
-        "username": "nonadmin",
-        "password": "Secret123!",
-    })
+    reg = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "nonadmin@example.com",
+            "username": "nonadmin",
+            "password": "Secret123!",
+        },
+    )
     token = reg.json()["access_token"]
     response = await client.get(
         "/api/v1/users/",
@@ -257,11 +288,14 @@ async def test_stats_requires_auth(client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_stats_includes_job_queue_counters(client: AsyncClient):
-    reg = await client.post("/api/v1/auth/register", json={
-        "email": "statsjobs@example.com",
-        "username": "statsjobs",
-        "password": "Secret123!",
-    })
+    reg = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "statsjobs@example.com",
+            "username": "statsjobs",
+            "password": "Secret123!",
+        },
+    )
     token = reg.json()["access_token"]
 
     response = await client.get(
@@ -289,6 +323,7 @@ async def test_stats_includes_job_queue_counters(client: AsyncClient):
 
 # ── Bootstrap-admin ───────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_bootstrap_admin_registration(client: AsyncClient, monkeypatch):
     """
@@ -296,14 +331,18 @@ async def test_bootstrap_admin_registration(client: AsyncClient, monkeypatch):
     пользователь автоматически получает role=admin.
     """
     from app.config import get_settings
+
     settings = get_settings()
     monkeypatch.setattr(settings, "BOOTSTRAP_ADMIN_EMAIL", "ceo@acme.com")
 
-    reg = await client.post("/api/v1/auth/register", json={
-        "email": "ceo@acme.com",
-        "username": "ceo",
-        "password": "Secret123!",
-    })
+    reg = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "ceo@acme.com",
+            "username": "ceo",
+            "password": "Secret123!",
+        },
+    )
     assert reg.status_code == 201
 
     me = await client.get(
@@ -317,14 +356,18 @@ async def test_bootstrap_admin_registration(client: AsyncClient, monkeypatch):
 async def test_bootstrap_admin_case_insensitive(client: AsyncClient, monkeypatch):
     """Email сравнивается без учёта регистра."""
     from app.config import get_settings
+
     settings = get_settings()
     monkeypatch.setattr(settings, "BOOTSTRAP_ADMIN_EMAIL", "Admin@Corp.com")
 
-    reg = await client.post("/api/v1/auth/register", json={
-        "email": "admin@corp.com",   # lower-case, а в env — Mixed-case
-        "username": "mixcaseadmin",
-        "password": "Secret123!",
-    })
+    reg = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "admin@corp.com",  # lower-case, а в env — Mixed-case
+            "username": "mixcaseadmin",
+            "password": "Secret123!",
+        },
+    )
     me = await client.get(
         "/api/v1/auth/me",
         headers={"Authorization": f"Bearer {reg.json()['access_token']}"},
@@ -343,7 +386,9 @@ async def test_cors_allows_configured_origin(client: AsyncClient, monkeypatch):
     # Если CORS не подключён (CORS_ORIGINS был пуст при старте) — тест skip.
     # Реальную валидацию покрывает test_cors_no_middleware_when_empty ниже.
     from starlette.middleware.cors import CORSMiddleware as _CORSMiddleware
+
     from app.main import app
+
     cors_middleware = next((m for m in app.user_middleware if m.cls is _CORSMiddleware), None)
     if cors_middleware is None:
         pytest.skip("CORS middleware не подключён в этом процессе — CORS_ORIGINS пуст")
@@ -367,6 +412,7 @@ async def test_cors_no_middleware_when_empty():
     Проверяем property напрямую — он возвращает пустой список для пустой строки.
     """
     from app.config import Settings
+
     s = Settings()
     s.CORS_ORIGINS_RAW = ""
     assert s.CORS_ORIGINS == []
@@ -516,14 +562,18 @@ async def test_non_bootstrap_users_stay_regular(client: AsyncClient, monkeypatch
     Регрессия: случайный пользователь не должен стать админом.
     """
     from app.config import get_settings
+
     settings = get_settings()
     monkeypatch.setattr(settings, "BOOTSTRAP_ADMIN_EMAIL", "ceo@acme.com")
 
-    reg = await client.post("/api/v1/auth/register", json={
-        "email": "random@acme.com",
-        "username": "randomuser",
-        "password": "Secret123!",
-    })
+    reg = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "random@acme.com",
+            "username": "randomuser",
+            "password": "Secret123!",
+        },
+    )
     me = await client.get(
         "/api/v1/auth/me",
         headers={"Authorization": f"Bearer {reg.json()['access_token']}"},
@@ -532,6 +582,7 @@ async def test_non_bootstrap_users_stay_regular(client: AsyncClient, monkeypatch
 
 
 # ── Rate limit на /auth ───────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_login_rate_limit_blocks_brute_force(client: AsyncClient):
@@ -542,15 +593,19 @@ async def test_login_rate_limit_blocks_brute_force(client: AsyncClient):
     """
     # Сначала создаём юзера, чтобы /login не валился на "нет такого".
     # Регистрация не лимитируется в рамках 3/мин — одна регистрация OK.
-    await client.post("/api/v1/auth/register", json={
-        "email": "brute@example.com",
-        "username": "brute",
-        "password": "Correct123!",
-    })
+    await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "brute@example.com",
+            "username": "brute",
+            "password": "Correct123!",
+        },
+    )
 
     # Сбрасываем счётчики ПЕРЕД тестом, чтобы регистрация выше не съела
     # квоту login'а (они считаются раздельно, но на всякий случай).
     from app.rate_limit import _reset
+
     _reset()
 
     # Пять заведомо неверных попыток — все возвращают 401, но лимитер
@@ -577,23 +632,30 @@ async def test_login_rate_limit_blocks_brute_force(client: AsyncClient):
 async def test_register_rate_limit_blocks_spam(client: AsyncClient):
     """4-я подряд регистрация с одного IP в минуту → 429."""
     from app.rate_limit import _reset
+
     _reset()
 
     # Три легитимные регистрации проходят.
     for i in range(3):
-        resp = await client.post("/api/v1/auth/register", json={
-            "email": f"spam{i}@example.com",
-            "username": f"spammer{i}",
-            "password": "Secret123!",
-        })
+        resp = await client.post(
+            "/api/v1/auth/register",
+            json={
+                "email": f"spam{i}@example.com",
+                "username": f"spammer{i}",
+                "password": "Secret123!",
+            },
+        )
         assert resp.status_code == 201
 
     # Четвёртая — блок.
-    resp = await client.post("/api/v1/auth/register", json={
-        "email": "spam3@example.com",
-        "username": "spammer3",
-        "password": "Secret123!",
-    })
+    resp = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "spam3@example.com",
+            "username": "spammer3",
+            "password": "Secret123!",
+        },
+    )
     assert resp.status_code == 429
 
 
@@ -660,8 +722,9 @@ async def test_admin_can_promote_user_to_agent(client: AsyncClient, db_session):
 
 @pytest.mark.asyncio
 async def test_role_change_is_audited(client: AsyncClient, db_session):
-    from app.models.audit_log import AuditLog
     from sqlalchemy import select
+
+    from app.models.audit_log import AuditLog
 
     admin_id, admin_token = await _register_and_promote(client, db_session, "audit-admin")
     target_id, _ = await _register_regular(client, "audit-target")
@@ -674,10 +737,10 @@ async def test_role_change_is_audited(client: AsyncClient, db_session):
     assert response.status_code == 200
 
     rows = (
-        await db_session.execute(
-            select(AuditLog).where(AuditLog.action == "user.role_change")
-        )
-    ).scalars().all()
+        (await db_session.execute(select(AuditLog).where(AuditLog.action == "user.role_change")))
+        .scalars()
+        .all()
+    )
     assert len(rows) == 1
     entry = rows[0]
     assert entry.user_id == admin_id
@@ -687,11 +750,10 @@ async def test_role_change_is_audited(client: AsyncClient, db_session):
 
 
 @pytest.mark.asyncio
-async def test_role_change_no_op_is_idempotent_and_not_audited(
-    client: AsyncClient, db_session
-):
-    from app.models.audit_log import AuditLog
+async def test_role_change_no_op_is_idempotent_and_not_audited(client: AsyncClient, db_session):
     from sqlalchemy import select
+
+    from app.models.audit_log import AuditLog
 
     _, admin_token = await _register_and_promote(client, db_session, "idem-admin")
     target_id, _ = await _register_regular(client, "idem-target")
@@ -705,10 +767,10 @@ async def test_role_change_no_op_is_idempotent_and_not_audited(
     assert response.json()["role"] == "user"
 
     rows = (
-        await db_session.execute(
-            select(AuditLog).where(AuditLog.action == "user.role_change")
-        )
-    ).scalars().all()
+        (await db_session.execute(select(AuditLog).where(AuditLog.action == "user.role_change")))
+        .scalars()
+        .all()
+    )
     assert rows == []
 
 
@@ -726,9 +788,7 @@ async def test_role_change_rejects_self_demotion(client: AsyncClient, db_session
 
 
 @pytest.mark.asyncio
-async def test_role_change_blocks_demoting_last_admin(
-    client: AsyncClient, db_session
-):
+async def test_role_change_blocks_demoting_last_admin(client: AsyncClient, db_session):
     """Сценарий "последний админ".
 
     В обычном HTTP-флоу триггер недостижим: чтобы admin_count<=1 в момент
@@ -779,9 +839,7 @@ async def test_role_change_blocks_demoting_last_admin(
 
 
 @pytest.mark.asyncio
-async def test_role_change_unknown_user_returns_404(
-    client: AsyncClient, db_session
-):
+async def test_role_change_unknown_user_returns_404(client: AsyncClient, db_session):
     _, admin_token = await _register_and_promote(client, db_session, "404admin")
     response = await client.patch(
         "/api/v1/users/999999/role",
@@ -833,17 +891,20 @@ async def test_deactivate_user_revokes_api_access(client: AsyncClient, db_sessio
     get_current_user делает SELECT при каждом запросе — is_active=False
     возвращает credentials_error немедленно, без ожидания истечения токена.
     """
-    from app.models.audit_log import AuditLog
     from sqlalchemy import select
+
+    from app.models.audit_log import AuditLog
 
     user_id, user_token = await _register_regular(client, "deact-access")
     admin_id, admin_token = await _register_and_promote(client, db_session, "deact-admin")
 
     # Пользователь работает нормально
-    assert (await client.get(
-        "/api/v1/auth/me",
-        headers={"Authorization": f"Bearer {user_token}"},
-    )).status_code == 200
+    assert (
+        await client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {user_token}"},
+        )
+    ).status_code == 200
 
     # Администратор деактивирует
     resp = await client.patch(
@@ -855,17 +916,19 @@ async def test_deactivate_user_revokes_api_access(client: AsyncClient, db_sessio
     assert resp.json()["is_active"] is False
 
     # Токен пользователя больше не работает
-    assert (await client.get(
-        "/api/v1/auth/me",
-        headers={"Authorization": f"Bearer {user_token}"},
-    )).status_code == 401
+    assert (
+        await client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {user_token}"},
+        )
+    ).status_code == 401
 
     # Действие попало в audit_log
     rows = (
-        await db_session.execute(
-            select(AuditLog).where(AuditLog.action == "user.deactivate")
-        )
-    ).scalars().all()
+        (await db_session.execute(select(AuditLog).where(AuditLog.action == "user.deactivate")))
+        .scalars()
+        .all()
+    )
     assert len(rows) == 1
     assert rows[0].user_id == admin_id
     assert rows[0].target_id == user_id
@@ -874,18 +937,21 @@ async def test_deactivate_user_revokes_api_access(client: AsyncClient, db_sessio
 @pytest.mark.asyncio
 async def test_reactivate_user_restores_access(client: AsyncClient, db_session):
     """Реактивация восстанавливает доступ и пишет user.activate в audit."""
-    from app.models.audit_log import AuditLog
     from sqlalchemy import select
+
+    from app.models.audit_log import AuditLog
 
     user_id, user_token = await _register_regular(client, "react-user")
     _, admin_token = await _register_and_promote(client, db_session, "react-admin")
 
     # Деактивируем
-    assert (await client.patch(
-        f"/api/v1/users/{user_id}/active",
-        headers={"Authorization": f"Bearer {admin_token}"},
-        json={"is_active": False},
-    )).status_code == 200
+    assert (
+        await client.patch(
+            f"/api/v1/users/{user_id}/active",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            json={"is_active": False},
+        )
+    ).status_code == 200
 
     # Реактивируем
     resp = await client.patch(
@@ -897,16 +963,18 @@ async def test_reactivate_user_restores_access(client: AsyncClient, db_session):
     assert resp.json()["is_active"] is True
 
     # Токен снова работает
-    assert (await client.get(
-        "/api/v1/auth/me",
-        headers={"Authorization": f"Bearer {user_token}"},
-    )).status_code == 200
+    assert (
+        await client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {user_token}"},
+        )
+    ).status_code == 200
 
     rows = (
-        await db_session.execute(
-            select(AuditLog).where(AuditLog.action == "user.activate")
-        )
-    ).scalars().all()
+        (await db_session.execute(select(AuditLog).where(AuditLog.action == "user.activate")))
+        .scalars()
+        .all()
+    )
     assert len(rows) == 1
 
 
@@ -914,24 +982,27 @@ async def test_reactivate_user_restores_access(client: AsyncClient, db_session):
 async def test_deactivate_is_idempotent(client: AsyncClient, db_session):
     """Повторная деактивация уже неактивного пользователя возвращает 200
     без дублирования записи в audit_log."""
-    from app.models.audit_log import AuditLog
     from sqlalchemy import select
+
+    from app.models.audit_log import AuditLog
 
     user_id, _ = await _register_regular(client, "idem-deact")
     _, admin_token = await _register_and_promote(client, db_session, "idem-deact-admin")
 
     for _ in range(2):
-        assert (await client.patch(
-            f"/api/v1/users/{user_id}/active",
-            headers={"Authorization": f"Bearer {admin_token}"},
-            json={"is_active": False},
-        )).status_code == 200
+        assert (
+            await client.patch(
+                f"/api/v1/users/{user_id}/active",
+                headers={"Authorization": f"Bearer {admin_token}"},
+                json={"is_active": False},
+            )
+        ).status_code == 200
 
     rows = (
-        await db_session.execute(
-            select(AuditLog).where(AuditLog.action == "user.deactivate")
-        )
-    ).scalars().all()
+        (await db_session.execute(select(AuditLog).where(AuditLog.action == "user.deactivate")))
+        .scalars()
+        .all()
+    )
     # Второй вызов — no-op, запись в лог не дублируется
     assert len(rows) == 1
 

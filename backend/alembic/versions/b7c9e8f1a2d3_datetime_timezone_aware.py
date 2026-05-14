@@ -27,15 +27,15 @@ Postgres сам нормализует к UTC. Код с timezone.utc остаё
 для 16 одинаковых ALTER COLUMN на 8 таблицах = много шума в diff'е,
 и логика USING 'UTC' всё равно требует ручной правки.
 """
-from typing import Sequence, Union
+
+from collections.abc import Sequence
 
 from alembic import op
 
-
-revision: str = 'b7c9e8f1a2d3'
-down_revision: Union[str, Sequence[str], None] = 'a1f2c3d4e5b6'
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+revision: str = "b7c9e8f1a2d3"
+down_revision: str | Sequence[str] | None = "a1f2c3d4e5b6"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 # Все (таблица, колонка) с datetime-полями в текущих моделях.
@@ -71,9 +71,9 @@ def upgrade() -> None:
         return
     for table, column in _DATETIME_COLUMNS:
         op.execute(
-            f'ALTER TABLE {table} '
+            f"ALTER TABLE {table} "
             f'ALTER COLUMN "{column}" TYPE TIMESTAMP WITH TIME ZONE '
-            f'USING "{column}" AT TIME ZONE \'UTC\''
+            f"USING \"{column}\" AT TIME ZONE 'UTC'"
         )
 
 
@@ -84,7 +84,7 @@ def downgrade() -> None:
         return
     for table, column in _DATETIME_COLUMNS:
         op.execute(
-            f'ALTER TABLE {table} '
+            f"ALTER TABLE {table} "
             f'ALTER COLUMN "{column}" TYPE TIMESTAMP WITHOUT TIME ZONE '
-            f'USING "{column}" AT TIME ZONE \'UTC\''
+            f"USING \"{column}\" AT TIME ZONE 'UTC'"
         )

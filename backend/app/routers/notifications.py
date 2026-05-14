@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select, update
@@ -67,7 +67,7 @@ async def mark_notification_read(
 
     if not notification.is_read:
         notification.is_read = True
-        notification.read_at = datetime.now(timezone.utc)
+        notification.read_at = datetime.now(UTC)
         await db.flush()
         await db.refresh(notification)
     return notification
@@ -81,7 +81,7 @@ async def mark_all_notifications_read(
     await db.execute(
         update(Notification)
         .where(Notification.user_id == current_user.id, Notification.is_read.is_(False))
-        .values(is_read=True, read_at=datetime.now(timezone.utc))
+        .values(is_read=True, read_at=datetime.now(UTC))
     )
     await db.flush()
     return NotificationUnreadCount(unread_count=0)

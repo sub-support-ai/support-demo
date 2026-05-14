@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 OPEN_STATUSES = {"confirmed", "in_progress"}
@@ -12,7 +12,7 @@ DEFAULT_SLA_HOURS = 24
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _normalize_priority(ticket: Any) -> str:
@@ -50,7 +50,7 @@ def is_sla_breached(ticket: Any, now: datetime | None = None) -> bool:
 
     current_time = now or _utc_now()
     if deadline.tzinfo is None:
-        deadline = deadline.replace(tzinfo=timezone.utc)
+        deadline = deadline.replace(tzinfo=UTC)
     if current_time.tzinfo is None:
-        current_time = current_time.replace(tzinfo=timezone.utc)
+        current_time = current_time.replace(tzinfo=UTC)
     return deadline < current_time

@@ -84,9 +84,7 @@ async def notify_active_admins(
     target_type: str | None = None,
     target_id: int | None = None,
 ) -> list[Notification]:
-    result = await db.execute(
-        select(User.id).where(User.role == "admin", User.is_active.is_(True))
-    )
+    result = await db.execute(select(User.id).where(User.role == "admin", User.is_active.is_(True)))
     return await notify_users(
         db,
         user_ids=result.scalars().all(),

@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import select
@@ -58,13 +58,13 @@ class _FakeTicket:
 
 
 def test_sla_breach_check_handles_naive_deadline():
-    now_aware = datetime.now(timezone.utc)
+    now_aware = datetime.now(UTC)
     deadline_naive = (now_aware - timedelta(minutes=1)).replace(tzinfo=None)
     assert is_sla_breached(_FakeTicket(deadline=deadline_naive), now=now_aware) is True
 
 
 def test_sla_breach_check_handles_aware_deadline():
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     deadline = now - timedelta(minutes=1)
     assert is_sla_breached(_FakeTicket(deadline=deadline), now=now) is True
 
@@ -73,7 +73,7 @@ def test_sla_breach_check_handles_aware_deadline():
 async def test_sla_escalation_reassigns_overdue_ticket_to_senior_agent(
     db_session: AsyncSession,
 ):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     requester = await _create_user(db_session, "requester")
     regular_agent = await _create_agent(
         db_session,
@@ -122,10 +122,14 @@ async def test_sla_escalation_reassigns_overdue_ticket_to_senior_agent(
     assert senior_agent.active_ticket_count == 1
 
     comments = (
-        await db_session.execute(
-            select(TicketComment).where(TicketComment.ticket_id == ticket.id)
+        (
+            await db_session.execute(
+                select(TicketComment).where(TicketComment.ticket_id == ticket.id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(comments) == 1
     assert comments[0].author_role == "system"
     assert comments[0].internal is True
@@ -133,10 +137,10 @@ async def test_sla_escalation_reassigns_overdue_ticket_to_senior_agent(
     assert senior_agent.username in comments[0].content
 
     notifications = (
-        await db_session.execute(
-            select(Notification).where(Notification.target_id == ticket.id)
-        )
-    ).scalars().all()
+        (await db_session.execute(select(Notification).where(Notification.target_id == ticket.id)))
+        .scalars()
+        .all()
+    )
     assert len(notifications) == 1
     assert notifications[0].user_id == senior_agent.user_id
     assert notifications[0].event_type == "ticket.sla_overdue"
@@ -152,7 +156,7 @@ async def test_sla_escalation_atomic_counters_on_repeated_call(
     первый эскалирует, второй — no-op. Счётчики агентов должны
     измениться ровно один раз, системный комментарий — один.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     requester = await _create_user(db_session, "atomic-requester")
     regular_agent = await _create_agent(
         db_session, "atomic-regular", routing_score=0.3, active_ticket_count=2
@@ -191,22 +195,26 @@ async def test_sla_escalation_atomic_counters_on_repeated_call(
 
     await db_session.refresh(regular_agent)
     await db_session.refresh(senior_agent)
-    assert regular_agent.active_ticket_count == 1   # было 2, уменьшился ровно на 1
-    assert senior_agent.active_ticket_count == 1    # было 0, вырос ровно на 1
+    assert regular_agent.active_ticket_count == 1  # было 2, уменьшился ровно на 1
+    assert senior_agent.active_ticket_count == 1  # было 0, вырос ровно на 1
 
     system_comments = (
-        await db_session.execute(
-            select(TicketComment)
-            .where(TicketComment.ticket_id == ticket.id)
-            .where(TicketComment.author_role == "system")
+        (
+            await db_session.execute(
+                select(TicketComment)
+                .where(TicketComment.ticket_id == ticket.id)
+                .where(TicketComment.author_role == "system")
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(system_comments) == 1
 
 
 @pytest.mark.asyncio
 async def test_sla_escalation_skips_unconfirmed_drafts(db_session: AsyncSession):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     requester = await _create_user(db_session, "draft-requester")
     agent = await _create_agent(
         db_session,

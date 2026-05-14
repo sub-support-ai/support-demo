@@ -52,13 +52,20 @@ function Wait-ForHttp {
 
 $ollamaProcess = Get-Process ollama -ErrorAction SilentlyContinue
 if (-not $ollamaProcess) {
-    $ollamaExe = Join-Path $env:LOCALAPPDATA 'Programs\Ollama\ollama.exe'
-    if (-not (Test-Path -LiteralPath $ollamaExe)) {
-        throw "Ollama is not running and was not found at $ollamaExe"
+    $ollamaCommand = Get-Command ollama -ErrorAction SilentlyContinue
+    $ollamaExe = if ($ollamaCommand) {
+        $ollamaCommand.Source
+    } else {
+        Join-Path $env:LOCALAPPDATA 'Programs\Ollama\ollama.exe'
     }
 
-    Start-Process -FilePath $ollamaExe -ArgumentList 'serve' -WindowStyle Hidden
-    Wait-ForHttp -Uri 'http://localhost:11434/api/tags' -TimeoutSeconds 120
+    if (Test-Path -LiteralPath $ollamaExe) {
+        Start-Process -FilePath $ollamaExe -ArgumentList 'serve' -WindowStyle Hidden
+        Wait-ForHttp -Uri 'http://localhost:11434/api/tags' -TimeoutSeconds 120
+    } else {
+        Write-Host "Ollama не запущена и не найдена. AI-service стартует в degraded/fallback режиме." -ForegroundColor Yellow
+        Write-Host "Для полноценных AI-ответов установите Ollama и модель из README." -ForegroundColor Yellow
+    }
 }
 
 $pythonExe = Join-Path $serviceRoot '.venv\Scripts\python.exe'

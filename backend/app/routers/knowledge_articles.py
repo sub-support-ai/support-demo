@@ -9,12 +9,12 @@ from app.models.knowledge_article import KnowledgeArticle, KnowledgeArticleFeedb
 from app.models.user import User
 from app.schemas.knowledge_article import (
     KnowledgeArticleCreate,
-    KnowledgeEmbeddingJobRead,
-    KnowledgeFeedbackCreate,
-    KnowledgeFeedbackRead,
     KnowledgeArticleMatch,
     KnowledgeArticleRead,
     KnowledgeArticleUpdate,
+    KnowledgeEmbeddingJobRead,
+    KnowledgeFeedbackCreate,
+    KnowledgeFeedbackRead,
 )
 from app.services.agents import get_active_agent_for_user
 from app.services.audit import log_event
@@ -105,10 +105,7 @@ async def search_knowledge(
     effective_department = department
     if current_user.role == "agent":
         agent = await get_active_agent_for_user(db, current_user)
-        if agent is None:
-            effective_department = "__none__"
-        else:
-            effective_department = agent.department
+        effective_department = "__none__" if agent is None else agent.department
 
     filters = KnowledgeSearchFilters(
         department=effective_department,
@@ -200,9 +197,8 @@ async def create_knowledge_article(
         },
     )
     from app.config import get_settings
-    background_tasks.add_task(
-        notify_knowledge_embedding_jobs_channel, get_settings().DATABASE_URL
-    )
+
+    background_tasks.add_task(notify_knowledge_embedding_jobs_channel, get_settings().DATABASE_URL)
     return article
 
 
@@ -231,9 +227,8 @@ async def reindex_all_knowledge_articles(
         details={"job_id": job.id, "status": job.status},
     )
     from app.config import get_settings
-    background_tasks.add_task(
-        notify_knowledge_embedding_jobs_channel, get_settings().DATABASE_URL
-    )
+
+    background_tasks.add_task(notify_knowledge_embedding_jobs_channel, get_settings().DATABASE_URL)
     return job
 
 
@@ -271,9 +266,8 @@ async def reindex_knowledge_article(
         details={"job_id": job.id, "status": job.status},
     )
     from app.config import get_settings
-    background_tasks.add_task(
-        notify_knowledge_embedding_jobs_channel, get_settings().DATABASE_URL
-    )
+
+    background_tasks.add_task(notify_knowledge_embedding_jobs_channel, get_settings().DATABASE_URL)
     return job
 
 
@@ -331,9 +325,8 @@ async def update_knowledge_article(
         details={"fields": sorted(updates.keys())},
     )
     from app.config import get_settings
-    background_tasks.add_task(
-        notify_knowledge_embedding_jobs_channel, get_settings().DATABASE_URL
-    )
+
+    background_tasks.add_task(notify_knowledge_embedding_jobs_channel, get_settings().DATABASE_URL)
     return article
 
 

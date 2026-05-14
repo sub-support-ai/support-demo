@@ -22,6 +22,7 @@ class Response(Base):
                        Нужна для ai_logs: сравниваем предложение модели
                        с финальным ответом → датасет для дообучения.
     """
+
     __tablename__ = "responses"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -29,7 +30,7 @@ class Response(Base):
     ticket_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("tickets.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    agent_id: Mapped[Optional[int]] = mapped_column(
+    agent_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("agents.id", ondelete="SET NULL"), nullable=True
     )
 
@@ -39,7 +40,7 @@ class Response(Base):
     is_sent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     # Какой AI-черновик видел агент перед тем как написать свой ответ
-    ai_draft_id: Mapped[Optional[int]] = mapped_column(
+    ai_draft_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("responses.id", ondelete="SET NULL"), nullable=True
     )
 

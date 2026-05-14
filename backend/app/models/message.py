@@ -1,7 +1,7 @@
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, Text, func
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -34,13 +34,13 @@ class Message(Base):
       - на user-сообщениях их нет в принципе;
       - на старых AI-сообщениях (до миграции) их тоже нет.
     """
+
     __tablename__ = "messages"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
 
     conversation_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("conversations.id", ondelete="CASCADE"),
-        nullable=False, index=True
+        Integer, ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False, index=True
     )
 
     # "user" или "ai"
@@ -50,21 +50,17 @@ class Message(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
 
     # ── AI-метаданные (только для role="ai") ──────────────────────────────────
-    ai_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    ai_escalate: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    ai_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ai_escalate: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     # Список источников из RAG: [{"title": "...", "url": "..."|None}, ...]
     # JSON, а не отдельная таблица — sources неотделимы от сообщения, всегда
     # читаются вместе с ним, никогда не запрашиваются изолированно. Отдельная
     # таблица добавила бы JOIN на каждое чтение чата ради нулевой выгоды.
-    sources: Mapped[Optional[list[dict[str, Any]]]] = mapped_column(JSON, nullable=True)
-    requires_escalation: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    sources: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    requires_escalation: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     # ──────────────────────────────────────────────────────────────────────────
 
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     # Связь с диалогом
-    conversation: Mapped["Conversation"] = relationship(
-        "Conversation", back_populates="messages"
-    )
+    conversation: Mapped["Conversation"] = relationship("Conversation", back_populates="messages")

@@ -1,8 +1,9 @@
+import os
+
 import pytest
 import pytest_asyncio
-from httpx import AsyncClient, ASGITransport
-import os
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 # Отдельная база для тестов — не трогает рабочие данные.
@@ -67,6 +68,7 @@ def _isolate_ai_service(monkeypatch):
     )
     # conversation_ai.py читает URL из get_settings() в момент вызова
     from app.config import get_settings
+
     monkeypatch.setattr(get_settings(), "AI_SERVICE_URL", "http://127.0.0.1:1")
 
 
@@ -82,6 +84,7 @@ def _reset_rate_limiter():
     чтобы гарантированно стартовать с чистого листа.
     """
     from app.rate_limit import _reset
+
     _reset()
     yield
 
@@ -97,12 +100,11 @@ async def db_session() -> AsyncSession:
 @pytest_asyncio.fixture
 async def client(db_session: AsyncSession) -> AsyncClient:
     """HTTP-клиент с подменой get_db на тестовую сессию."""
+
     async def override_get_db():
         yield db_session
 
     app.dependency_overrides[get_db] = override_get_db
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as ac:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
     app.dependency_overrides.clear()

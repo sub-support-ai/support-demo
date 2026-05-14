@@ -15,15 +15,14 @@ NOT VALID: применяем без сканирования таблицы —
 по построению проходят новый, более широкий CHECK (он надмножество старого).
 """
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 from alembic import op
 
-
 revision: str = "d5e8f9a0b1c2"
-down_revision: Union[str, None] = "c5d6e7f8a9b0"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "c5d6e7f8a9b0"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 _NEW_DEPARTMENTS = ("IT", "HR", "finance", "procurement", "security", "facilities", "documents")

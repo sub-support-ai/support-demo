@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -46,7 +46,7 @@ async def has_ai_response_after_latest_user(
 
 
 async def finish_ai_job(db: AsyncSession, job: AIJob) -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     job.status = AI_JOB_DONE
     job.finished_at = now
     job.error = None
@@ -75,7 +75,7 @@ async def enqueue_ai_response_job(
         status=AI_JOB_QUEUED,
         attempts=0,
         max_attempts=3,
-        run_after=datetime.now(timezone.utc),
+        run_after=datetime.now(UTC),
     )
     db.add(job)
     await db.flush()
@@ -84,7 +84,7 @@ async def enqueue_ai_response_job(
 
 
 async def claim_next_ai_job(db: AsyncSession) -> AIJob | None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     result = await db.execute(
         select(AIJob)
         .where(
@@ -114,7 +114,7 @@ async def requeue_stale_ai_jobs(
     stale_after_seconds: int,
     limit: int = 50,
 ) -> int:
-    cutoff = datetime.now(timezone.utc) - timedelta(seconds=stale_after_seconds)
+    cutoff = datetime.now(UTC) - timedelta(seconds=stale_after_seconds)
     result = await db.execute(
         select(AIJob)
         .where(
@@ -130,7 +130,7 @@ async def requeue_stale_ai_jobs(
     for job in jobs:
         if job.attempts < job.max_attempts:
             job.status = AI_JOB_QUEUED
-            job.run_after = datetime.now(timezone.utc)
+            job.run_after = datetime.now(UTC)
             job.locked_at = None
             job.started_at = None
             job.error = "Job was requeued after stale running lock"
@@ -141,7 +141,7 @@ async def requeue_stale_ai_jobs(
                 conversation.ai_stage = None
         else:
             job.status = AI_JOB_FAILED
-            job.finished_at = datetime.now(timezone.utc)
+            job.finished_at = datetime.now(UTC)
             job.error = "Job failed after stale running lock"
             conversation = await db.get(Conversation, job.conversation_id)
             if conversation is not None and conversation.status == "ai_processing":
@@ -179,15 +179,16 @@ async def notify_ai_jobs_channel(database_url: str) -> None:
     No-op для SQLite (тесты) и при недоступном asyncpg.
     """
     from app.pg_notify import notify
+
     await notify(database_url, "ai_jobs")
 
 
 async def fail_ai_job(db: AsyncSession, job: AIJob, exc: Exception) -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     job.error = str(exc)[:2000]
     if job.attempts < job.max_attempts:
         job.status = AI_JOB_QUEUED
-        job.run_after = now + timedelta(seconds=min(60, 2 ** job.attempts * 5))
+        job.run_after = now + timedelta(seconds=min(60, 2**job.attempts * 5))
     else:
         job.status = AI_JOB_FAILED
         job.finished_at = now

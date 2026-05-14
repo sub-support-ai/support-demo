@@ -1,17 +1,21 @@
-from contextlib import asynccontextmanager
 import logging
 import time
 import uuid
+from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_settings
-from app.database import engine, get_db
 import app.models  # noqa: F401 — регистрирует все ORM-модели в Base.metadata
+from app.config import get_settings
+from app.context import request_id_ctx
+from app.database import engine, get_db
+from app.logging_config import setup_logging
+from app.metrics import setup_metrics
 from app.routers.audit import router as audit_router
 from app.routers.auth import router as auth_router
 from app.routers.conversations import router as conversations_router
@@ -19,12 +23,9 @@ from app.routers.jobs import router as jobs_router
 from app.routers.knowledge_articles import router as knowledge_articles_router
 from app.routers.notifications import router as notifications_router
 from app.routers.response_templates import router as response_templates_router
-from app.routers.users import router as users_router
 from app.routers.stats import router as stats_router
 from app.routers.tickets import router as tickets_router
-from app.context import request_id_ctx
-from app.logging_config import setup_logging
-from app.metrics import setup_metrics
+from app.routers.users import router as users_router
 from app.sentry_config import setup_sentry
 
 setup_logging()
@@ -78,16 +79,13 @@ if _settings.CORS_ORIGINS:
         CORSMiddleware,
         allow_origins=_settings.CORS_ORIGINS,
         allow_credentials=True,
-        allow_methods=["*"],   # GET, POST, PATCH, DELETE, OPTIONS — для preflight
-        allow_headers=["*"],   # в т.ч. Authorization, Content-Type
+        allow_methods=["*"],  # GET, POST, PATCH, DELETE, OPTIONS — для preflight
+        allow_headers=["*"],  # в т.ч. Authorization, Content-Type
     )
     logger.info("CORS middleware подключён", extra={"origins": _settings.CORS_ORIGINS})
 else:
     logger.info("CORS_ORIGINS пуст — CORS middleware отключён")
 
-
-# ── Глобальный обработчик необработанных исключений ──────────────────────────
-from fastapi.responses import JSONResponse
 
 @app.exception_handler(Exception)
 async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
@@ -99,6 +97,7 @@ async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSON
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={"detail": "Internal server error"},
     )
+
 
 @app.middleware("http")
 async def request_observability_middleware(request: Request, call_next):
@@ -138,6 +137,7 @@ async def request_observability_middleware(request: Request, call_next):
     )
     return response
 
+
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(users_router, prefix="/api/v1")
 app.include_router(stats_router, prefix="/api/v1")
@@ -148,6 +148,7 @@ app.include_router(notifications_router, prefix="/api/v1")
 app.include_router(response_templates_router, prefix="/api/v1")
 app.include_router(conversations_router, prefix="/api/v1")
 app.include_router(audit_router, prefix="/api/v1")
+
 
 @app.get("/healthcheck", tags=["system"])
 async def healthcheck(db: AsyncSession = Depends(get_db)):

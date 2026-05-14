@@ -11,19 +11,20 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_settings
-from app.models.conversation import Conversation
 from app.services.conversation_ai import _set_ai_stage
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+
 async def _register(client: AsyncClient, suffix: str) -> tuple[int, str]:
-    r = await client.post("/api/v1/auth/register", json={
-        "email": f"stage{suffix}@example.com",
-        "username": f"stage{suffix}",
-        "password": "Secret123!",
-    })
+    r = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": f"stage{suffix}@example.com",
+            "username": f"stage{suffix}",
+            "password": "Secret123!",
+        },
+    )
     assert r.status_code == 201
     token = r.json()["access_token"]
     me = await client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
@@ -52,6 +53,7 @@ async def _get_conversation(client: AsyncClient, token: str, conv_id: int) -> di
 
 
 # ── Тесты ────────────────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_ai_stage_field_present_and_null_at_rest(client: AsyncClient):
@@ -136,8 +138,6 @@ async def test_ai_stage_reset_on_job_failure(
 ):
     """После провала AI-job ai_stage сбрасывается в None (через fail_ai_job)."""
     from app.models.ai_job import AIJob
-    from app.models.user import User
-    from app.security import hash_password
     from app.services.ai_jobs import fail_ai_job
 
     # Создаём пользователя и диалог напрямую в БД

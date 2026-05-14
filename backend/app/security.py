@@ -1,4 +1,3 @@
-
 # Пароли хэшируем как SHA-256(hex) → bcrypt.
 # См. _prepare_password ниже — почему не bcrypt напрямую и не SHA-256 в одиночку.
 #
@@ -8,10 +7,10 @@
 
 
 import hashlib
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import bcrypt
-from jose import JWTError, jwt
+from jose import jwt
 
 from app.config import get_settings
 
@@ -19,6 +18,7 @@ settings = get_settings()
 
 
 # ── Пароли ────────────────────────────────────────────────────────────────────
+
 
 def _prepare_password(password: str) -> bytes:
     """Пре-хешируем пароль через SHA-256 → hex перед передачей в bcrypt.
@@ -43,7 +43,7 @@ def _prepare_password(password: str) -> bytes:
       же приём (django.contrib.auth.hashers.BCryptSHA256PasswordHasher).
     """
     digest = hashlib.sha256(password.encode("utf-8")).hexdigest()
-    return digest.encode("ascii")   # 64 байта ASCII — безопасно для bcrypt
+    return digest.encode("ascii")  # 64 байта ASCII — безопасно для bcrypt
 
 
 def hash_password(password: str) -> str:
@@ -58,17 +58,18 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 # ── JWT токены ────────────────────────────────────────────────────────────────
 
+
 def create_access_token(user_id: int, role: str) -> str:
     """
     Создать JWT токен для пользователя.
     Внутри токена зашиты: id пользователя, его роль, время истечения.
     Токен подписан секретным ключом — подделать нельзя.
     """
-    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.JWT_EXPIRE_MINUTES)
+    expire = datetime.now(UTC) + timedelta(minutes=settings.JWT_EXPIRE_MINUTES)
     payload = {
-        "sub": str(user_id),   # sub = subject, стандартное поле JWT
+        "sub": str(user_id),  # sub = subject, стандартное поле JWT
         "role": role,
-        "exp": expire,         # exp = expiration, когда токен истекает
+        "exp": expire,  # exp = expiration, когда токен истекает
     }
     return jwt.encode(
         payload,

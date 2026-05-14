@@ -1,5 +1,4 @@
 from datetime import datetime
-from typing import Optional
 
 from sqlalchemy import DateTime, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column
@@ -60,33 +59,32 @@ class AuditLog(Base):
        Главный запрос: "дай последние N событий юзера X" —
        без составного индекса это full scan по всей таблице.
     """
+
     __tablename__ = "audit_logs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
 
     # Кто сделал действие. NULL если действие анонимное (например,
     # login.failure с несуществующим username — субъекта ещё нет).
-    user_id: Mapped[Optional[int]] = mapped_column(
-        Integer, nullable=True, index=True
-    )
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
 
     # Что произошло: "login.success", "ticket.delete", ...
     action: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
 
     # На что действие было направлено. Например, action="ticket.delete" →
     # target_type="ticket", target_id=42.
-    target_type: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
-    target_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    target_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    target_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # IP клиента — нужен для login.failure без user_id (ловить брут-форс
     # по IP). Для всех событий полезно видеть "откуда".
-    ip: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+    ip: Mapped[str | None] = mapped_column(String(45), nullable=True)
     # 45 символов = потолок для IPv6 ("ffff:ffff:ffff:ffff:ffff:ffff:255.255.255.255").
 
     # Произвольный контекст как JSON-строка. Примеры:
     #   user.role_change → '{"from": "user", "to": "admin"}'
     #   ticket.create    → '{"department": "IT", "priority": "высокий"}'
-    details: Mapped[Optional[str]] = mapped_column(String(DETAILS_MAX_LEN), nullable=True)
+    details: Mapped[str | None] = mapped_column(String(DETAILS_MAX_LEN), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False, index=True

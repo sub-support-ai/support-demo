@@ -195,7 +195,9 @@ async def import_csv(
         print("(--dry-run, в БД ничего не записываем)")
         if parsed:
             print("Пример первой статьи:")
-            example = {k: v for k, v in parsed[0].items() if k in {"title", "department", "request_type"}}
+            example = {
+                k: v for k, v in parsed[0].items() if k in {"title", "department", "request_type"}
+            }
             print(json.dumps(example, ensure_ascii=False, indent=2))
         return
 

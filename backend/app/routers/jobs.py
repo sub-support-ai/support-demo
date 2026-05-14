@@ -1,6 +1,6 @@
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import Iterable
+from collections.abc import Iterable
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select
@@ -47,8 +47,8 @@ def _is_running_stale(
 ) -> bool:
     if job_status != AI_JOB_RUNNING or locked_at is None:
         return False
-    cutoff = datetime.now(timezone.utc) - timedelta(seconds=stale_after_seconds)
-    locked = locked_at if locked_at.tzinfo else locked_at.replace(tzinfo=timezone.utc)
+    cutoff = datetime.now(UTC) - timedelta(seconds=stale_after_seconds)
+    locked = locked_at if locked_at.tzinfo else locked_at.replace(tzinfo=UTC)
     return locked < cutoff
 
 
@@ -114,9 +114,7 @@ async def list_jobs(
 
     if kind in {"all", "knowledge_embeddings"}:
         knowledge_query = (
-            select(KnowledgeEmbeddingJob)
-            .order_by(KnowledgeEmbeddingJob.id.desc())
-            .limit(limit)
+            select(KnowledgeEmbeddingJob).order_by(KnowledgeEmbeddingJob.id.desc()).limit(limit)
         )
         if status_filter != "all":
             knowledge_query = (
@@ -145,21 +143,29 @@ async def list_failed_jobs(
     del admin
     settings = get_settings()
     ai_jobs = (
-        await db.execute(
-            select(AIJob)
-            .where(AIJob.status == AI_JOB_FAILED)
-            .order_by(AIJob.id.desc())
-            .limit(limit)
+        (
+            await db.execute(
+                select(AIJob)
+                .where(AIJob.status == AI_JOB_FAILED)
+                .order_by(AIJob.id.desc())
+                .limit(limit)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     knowledge_jobs = (
-        await db.execute(
-            select(KnowledgeEmbeddingJob)
-            .where(KnowledgeEmbeddingJob.status == KNOWLEDGE_EMBEDDING_JOB_FAILED)
-            .order_by(KnowledgeEmbeddingJob.id.desc())
-            .limit(limit)
+        (
+            await db.execute(
+                select(KnowledgeEmbeddingJob)
+                .where(KnowledgeEmbeddingJob.status == KNOWLEDGE_EMBEDDING_JOB_FAILED)
+                .order_by(KnowledgeEmbeddingJob.id.desc())
+                .limit(limit)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return FailedJobsResponse(
         ai=_ai_jobs_to_read(ai_jobs, settings.AI_WORKER_STALE_RUNNING_SECONDS),
         knowledge_embeddings=_knowledge_jobs_to_read(
@@ -175,9 +181,7 @@ async def _lock_ai_job(db: AsyncSession, job_id: int) -> AIJob | None:
     # статус между нашим чтением и записью. Без этого возможен
     # lost-update: воркер уже перевёл задачу в failed, а ручной
     # requeue её "воскрешает" обратно в queued.
-    result = await db.execute(
-        select(AIJob).where(AIJob.id == job_id).with_for_update()
-    )
+    result = await db.execute(select(AIJob).where(AIJob.id == job_id).with_for_update())
     return result.scalar_one_or_none()
 
 
@@ -185,9 +189,7 @@ async def _lock_knowledge_embedding_job(
     db: AsyncSession, job_id: int
 ) -> KnowledgeEmbeddingJob | None:
     result = await db.execute(
-        select(KnowledgeEmbeddingJob)
-        .where(KnowledgeEmbeddingJob.id == job_id)
-        .with_for_update()
+        select(KnowledgeEmbeddingJob).where(KnowledgeEmbeddingJob.id == job_id).with_for_update()
     )
     return result.scalar_one_or_none()
 
@@ -441,7 +443,7 @@ async def requeue_knowledge_embedding_job(
 
 
 def _reset_ai_job(job: AIJob) -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     job.status = AI_JOB_QUEUED
     job.attempts = 0
     job.run_after = now
@@ -453,7 +455,7 @@ def _reset_ai_job(job: AIJob) -> None:
 
 def _requeue_running_ai_job(job: AIJob) -> None:
     job.status = AI_JOB_QUEUED
-    job.run_after = datetime.now(timezone.utc)
+    job.run_after = datetime.now(UTC)
     job.locked_at = None
     job.started_at = None
     job.finished_at = None
@@ -461,7 +463,7 @@ def _requeue_running_ai_job(job: AIJob) -> None:
 
 
 def _reset_knowledge_embedding_job(job: KnowledgeEmbeddingJob) -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     job.status = KNOWLEDGE_EMBEDDING_JOB_QUEUED
     job.attempts = 0
     job.run_after = now
@@ -473,7 +475,7 @@ def _reset_knowledge_embedding_job(job: KnowledgeEmbeddingJob) -> None:
 
 def _requeue_running_knowledge_embedding_job(job: KnowledgeEmbeddingJob) -> None:
     job.status = KNOWLEDGE_EMBEDDING_JOB_QUEUED
-    job.run_after = datetime.now(timezone.utc)
+    job.run_after = datetime.now(UTC)
     job.locked_at = None
     job.started_at = None
     job.finished_at = None

@@ -14,7 +14,7 @@
 """
 
 import json
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,13 +22,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.audit_log import DETAILS_MAX_LEN, AuditLog
 from app.rate_limit import get_client_ip as _rate_limit_get_ip
 
-
 # Маркер, который добавляется при обрезании длинного details.
 # Его длина входит в DETAILS_MAX_LEN — см. _serialize_details ниже.
 _TRUNCATED_SUFFIX = "...<truncated>"
 
 
-def _client_ip(request: Optional[Request]) -> Optional[str]:
+def _client_ip(request: Request | None) -> str | None:
     """Реальный IP клиента с учётом X-Forwarded-For за прокси.
 
     Делегирует в rate_limit.get_client_ip, которая уже умеет читать
@@ -43,7 +42,7 @@ def _client_ip(request: Optional[Request]) -> Optional[str]:
     return _rate_limit_get_ip(request)
 
 
-def _serialize_details(details: Optional[dict[str, Any]]) -> Optional[str]:
+def _serialize_details(details: dict[str, Any] | None) -> str | None:
     """Сериализовать details в JSON-строку, гарантированно не длиннее колонки.
 
     Зачем обрезаем: пользовательский ввод (например, form.username при
@@ -70,11 +69,11 @@ async def log_event(
     db: AsyncSession,
     *,
     action: str,
-    user_id: Optional[int] = None,
-    target_type: Optional[str] = None,
-    target_id: Optional[int] = None,
-    request: Optional[Request] = None,
-    details: Optional[dict[str, Any]] = None,
+    user_id: int | None = None,
+    target_type: str | None = None,
+    target_id: int | None = None,
+    request: Request | None = None,
+    details: dict[str, Any] | None = None,
 ) -> None:
     """Добавить событие в audit_log.
 

@@ -8,8 +8,9 @@ Create Date: 2026-05-09
 Уникальное ограничение на ticket_id — один тикет, одна оценка (UPSERT-friendly).
 """
 
-from alembic import op
 import sqlalchemy as sa
+
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "b2c3d4e5f6a7"

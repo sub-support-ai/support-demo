@@ -19,6 +19,8 @@
 
 import logging
 import sys
+from datetime import UTC
+
 from app.config import get_settings
 
 settings = get_settings()
@@ -38,6 +40,7 @@ class RequestIdFilter(logging.Filter):
         # на первом старте. Deferred import безопасен — модуль уже в sys.modules
         # к моменту первого лог-вызова из реального запроса.
         from app.context import request_id_ctx
+
         record.request_id = request_id_ctx.get()
         return True
 
@@ -47,10 +50,10 @@ class JSONFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         import json
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         log_entry = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "message": self.formatMessage(record),
@@ -64,11 +67,30 @@ class JSONFormatter(logging.Formatter):
         # Например: logger.info("msg", extra={"user_id": 1, "ticket_id": 5})
         for key, value in record.__dict__.items():
             if key not in (
-                "args", "asctime", "created", "exc_info", "exc_text",
-                "filename", "funcName", "id", "levelname", "levelno",
-                "lineno", "module", "msecs", "message", "msg", "name",
-                "pathname", "process", "processName", "relativeCreated",
-                "stack_info", "thread", "threadName", "taskName",
+                "args",
+                "asctime",
+                "created",
+                "exc_info",
+                "exc_text",
+                "filename",
+                "funcName",
+                "id",
+                "levelname",
+                "levelno",
+                "lineno",
+                "module",
+                "msecs",
+                "message",
+                "msg",
+                "name",
+                "pathname",
+                "process",
+                "processName",
+                "relativeCreated",
+                "stack_info",
+                "thread",
+                "threadName",
+                "taskName",
             ):
                 log_entry[key] = value
 
@@ -91,10 +113,12 @@ def setup_logging() -> None:
         log_level = logging.INFO
     else:
         # В development — читаемый формат с rid= для удобной фильтрации логов
-        handler.setFormatter(logging.Formatter(
-            "%(asctime)s | %(levelname)-8s | %(name)s | rid=%(request_id)s — %(message)s",
-            datefmt="%H:%M:%S",
-        ))
+        handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s | %(levelname)-8s | %(name)s | rid=%(request_id)s — %(message)s",
+                datefmt="%H:%M:%S",
+            )
+        )
         log_level = logging.DEBUG
 
     # Применяем к корневому логгеру — все дочерние логгеры наследуют настройки

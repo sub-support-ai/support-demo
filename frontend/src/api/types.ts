@@ -67,8 +67,22 @@ export interface Conversation {
   status: ConversationStatus | string;
   /** Текущая стадия обработки AI-ответа (null = не обрабатывается). */
   ai_stage?: "thinking" | "searching" | "found_kb" | "generating" | string | null;
+  intake_state?: IntakeState | null;
   created_at?: string | null;
   updated_at?: string | null;
+}
+
+export interface IntakeState {
+  mode?: "collecting_context" | "draft_ready" | string;
+  department?: string | null;
+  request_type?: string | null;
+  priority?: string | null;
+  fields?: Record<string, string | null | undefined>;
+  required_fields?: string[];
+  missing_fields?: string[];
+  asked_fields?: string[];
+  last_question_fields?: string[];
+  last_question?: string | null;
 }
 
 export interface Source {

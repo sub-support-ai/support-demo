@@ -1,4 +1,4 @@
-﻿"""Тесты для audit_log.
+"""Тесты для audit_log.
 
 Что проверяем:
   1) Важные события пишутся: успешная регистрация, создание/удаление тикета.
@@ -17,11 +17,14 @@ async def register(client: AsyncClient, suffix: str, bootstrap_admin: bool = Fal
     Если bootstrap_admin=True — через monkeypatch эта регистрация станет админом
     (логика в routers/auth.py). Здесь мы просто регистрируем обычного.
     """
-    r = await client.post("/api/v1/auth/register", json={
-        "email": f"audit{suffix}@example.com",
-        "username": f"audit{suffix}",
-        "password": "Secret123!",
-    })
+    r = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": f"audit{suffix}@example.com",
+            "username": f"audit{suffix}",
+            "password": "Secret123!",
+        },
+    )
     assert r.status_code == 201
     token = r.json()["access_token"]
     me = await client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
@@ -34,16 +37,20 @@ async def test_register_is_audited(client: AsyncClient):
     user_id, token = await register(client, "reg")
 
     # Чтобы посмотреть журнал, нужен admin. Промоутим через bootstrap.
+
     from app.config import get_settings
-    import pytest as _pytest  # чтобы не путать с именем параметра в других тестах
+
     settings = get_settings()
     # Временный admin-аккаунт только для чтения журнала.
     settings.BOOTSTRAP_ADMIN_EMAIL = "auditadmin@example.com"
-    admin_r = await client.post("/api/v1/auth/register", json={
-        "email": "auditadmin@example.com",
-        "username": "auditadmin",
-        "password": "Secret123!",
-    })
+    admin_r = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "auditadmin@example.com",
+            "username": "auditadmin",
+            "password": "Secret123!",
+        },
+    )
     admin_token = admin_r.json()["access_token"]
     settings.BOOTSTRAP_ADMIN_EMAIL = None
 
@@ -84,13 +91,17 @@ async def test_failed_login_is_audited_despite_rollback(client: AsyncClient):
 
     # Промоутим временного админа, как в предыдущем тесте
     from app.config import get_settings
+
     settings = get_settings()
     settings.BOOTSTRAP_ADMIN_EMAIL = "auditadmin2@example.com"
-    admin_r = await client.post("/api/v1/auth/register", json={
-        "email": "auditadmin2@example.com",
-        "username": "auditadmin2",
-        "password": "Secret123!",
-    })
+    admin_r = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "auditadmin2@example.com",
+            "username": "auditadmin2",
+            "password": "Secret123!",
+        },
+    )
     admin_token = admin_r.json()["access_token"]
     settings.BOOTSTRAP_ADMIN_EMAIL = None
 
@@ -102,8 +113,7 @@ async def test_failed_login_is_audited_despite_rollback(client: AsyncClient):
     fails = audit.json()
     # Три неудачные попытки с username='auditfail' — должны быть записаны
     our_fails = [
-        e for e in fails
-        if e["details"] and json.loads(e["details"]).get("username") == "auditfail"
+        e for e in fails if e["details"] and json.loads(e["details"]).get("username") == "auditfail"
     ]
     assert len(our_fails) == 3
 
@@ -136,13 +146,17 @@ async def test_failed_login_with_huge_username_does_not_crash(client: AsyncClien
     # 2) В audit должна быть запись с обрезанным details (валидный JSON).
     from app.config import get_settings
     from app.models.audit_log import DETAILS_MAX_LEN
+
     settings = get_settings()
     settings.BOOTSTRAP_ADMIN_EMAIL = "auditadmin_huge@example.com"
-    admin_r = await client.post("/api/v1/auth/register", json={
-        "email": "auditadmin_huge@example.com",
-        "username": "auditadmin_huge",
-        "password": "Secret123!",
-    })
+    admin_r = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "auditadmin_huge@example.com",
+            "username": "auditadmin_huge",
+            "password": "Secret123!",
+        },
+    )
     admin_token = admin_r.json()["access_token"]
     settings.BOOTSTRAP_ADMIN_EMAIL = None
 
@@ -160,7 +174,7 @@ async def test_failed_login_with_huge_username_does_not_crash(client: AsyncClien
     assert len(e["details"]) <= DETAILS_MAX_LEN
     # details всё ещё валидная JSON-строка после отрезания суффикса
     # (суффикс — просто маркер, а не часть JSON; главное что /login не упал).
-    assert e["user_id"] is None   # такого username в базе нет
+    assert e["user_id"] is None  # такого username в базе нет
 
 
 @pytest.mark.asyncio
@@ -178,12 +192,11 @@ async def test_blocked_login_is_audited(client: AsyncClient, db_session):
     # 1) Регистрируем юзера и тут же баним его напрямую в БД
     #    (эмулируем действие админа "Отключить аккаунт").
     from sqlalchemy import update
+
     from app.models.user import User
 
     user_id, _ = await register(client, "blocked")
-    await db_session.execute(
-        update(User).where(User.id == user_id).values(is_active=False)
-    )
+    await db_session.execute(update(User).where(User.id == user_id).values(is_active=False))
     await db_session.flush()
 
     # 2) Пытаемся залогиниться корректным паролем — но аккаунт уже бан:
@@ -195,13 +208,17 @@ async def test_blocked_login_is_audited(client: AsyncClient, db_session):
 
     # 3) Поднимаем временного админа и проверяем журнал.
     from app.config import get_settings
+
     settings = get_settings()
     settings.BOOTSTRAP_ADMIN_EMAIL = "auditadmin_blocked@example.com"
-    admin_r = await client.post("/api/v1/auth/register", json={
-        "email": "auditadmin_blocked@example.com",
-        "username": "auditadmin_blocked",
-        "password": "Secret123!",
-    })
+    admin_r = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "auditadmin_blocked@example.com",
+            "username": "auditadmin_blocked",
+            "password": "Secret123!",
+        },
+    )
     admin_token = admin_r.json()["access_token"]
     settings.BOOTSTRAP_ADMIN_EMAIL = None
 
@@ -236,13 +253,17 @@ async def test_ticket_delete_is_audited(client: AsyncClient):
 
     # Бутстрапим админа и удаляем
     from app.config import get_settings
+
     settings = get_settings()
     settings.BOOTSTRAP_ADMIN_EMAIL = "auditadmin3@example.com"
-    admin_r = await client.post("/api/v1/auth/register", json={
-        "email": "auditadmin3@example.com",
-        "username": "auditadmin3",
-        "password": "Secret123!",
-    })
+    admin_r = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "auditadmin3@example.com",
+            "username": "auditadmin3",
+            "password": "Secret123!",
+        },
+    )
     admin_token = admin_r.json()["access_token"]
     settings.BOOTSTRAP_ADMIN_EMAIL = None
 
@@ -253,7 +274,7 @@ async def test_ticket_delete_is_audited(client: AsyncClient):
     assert del_r.status_code == 204
 
     audit = await client.get(
-        f"/api/v1/audit/?action=ticket.delete",
+        "/api/v1/audit/?action=ticket.delete",
         headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert audit.status_code == 200

@@ -68,7 +68,7 @@ class KnowledgeEmbeddingWorker(BaseWorker):
                         ),
                         timeout=JOB_TIMEOUT_SECONDS,
                     )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 await fail_knowledge_embedding_job(
                     db,
                     job,

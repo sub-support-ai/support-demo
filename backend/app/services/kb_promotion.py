@@ -199,9 +199,7 @@ async def promote_ticket_to_kb_draft(
     # промоут только перезапишет черновик теми же данными, что бесполезно.
     # Возвращаем существующую статью без вызова LLM.
     existing_by_source = await db.execute(
-        select(KnowledgeArticle).where(
-            KnowledgeArticle.source_url == f"ticket://{ticket.id}"
-        )
+        select(KnowledgeArticle).where(KnowledgeArticle.source_url == f"ticket://{ticket.id}")
     )
     existing_article = existing_by_source.scalar_one_or_none()
     if existing_article is not None:
@@ -249,9 +247,7 @@ async def promote_ticket_to_kb_draft(
     # с тем же LLM-заголовком.
     candidate_title = cleaned["title"].lower().strip()
     existing_by_title = await db.execute(
-        select(KnowledgeArticle).where(
-            KnowledgeArticle.title.ilike(cleaned["title"])
-        )
+        select(KnowledgeArticle).where(KnowledgeArticle.title.ilike(cleaned["title"]))
     )
     title_duplicate = existing_by_title.scalar_one_or_none()
     if title_duplicate is not None:

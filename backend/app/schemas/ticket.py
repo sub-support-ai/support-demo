@@ -101,12 +101,14 @@ class TicketFeedbackPayload(BaseModel):
 
 class TicketReroutePayload(BaseModel):
     """Перенаправление тикета в другой отдел агентом."""
+
     department: DepartmentLiteral
     reason: str = Field(min_length=1, max_length=500, description="Причина перенаправления")
 
 
 class TicketRatingCreate(BaseModel):
     """Оценка тикета пользователем (CSAT 1–5 звёзд)."""
+
     rating: int = Field(ge=1, le=5, description="Оценка от 1 до 5")
     comment: str | None = Field(default=None, max_length=1000)
 

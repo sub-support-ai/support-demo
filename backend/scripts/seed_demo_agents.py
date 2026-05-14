@@ -8,7 +8,6 @@ from app.models.agent import Agent
 from app.models.user import User
 from app.security import hash_password
 
-
 DEMO_USERS = [
     {
         "email": "demo.user@example.com",
@@ -72,9 +71,7 @@ DEFAULT_DEMO_PASSWORD = "DemoPass123!"
 
 async def seed_demo_agents() -> None:
     demo_password = (
-        os.getenv("DEMO_PASSWORD")
-        or os.getenv("DEMO_AGENT_PASSWORD")
-        or DEFAULT_DEMO_PASSWORD
+        os.getenv("DEMO_PASSWORD") or os.getenv("DEMO_AGENT_PASSWORD") or DEFAULT_DEMO_PASSWORD
     )
 
     async with AsyncSessionLocal() as db:
@@ -136,9 +133,7 @@ async def seed_demo_agents() -> None:
                 users_updated += 1
             await db.flush()
 
-            result = await db.execute(
-                select(Agent).where(Agent.email == item["email"])
-            )
+            result = await db.execute(select(Agent).where(Agent.email == item["email"]))
             agent = result.scalar_one_or_none()
 
             if agent is None:

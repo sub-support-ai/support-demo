@@ -5,16 +5,16 @@ Revises: d1e2f3a4b5c6
 Create Date: 2026-05-06 00:00:00.000000
 """
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
 
+from alembic import op
 
 revision: str = "d2e3f4a5b6c7"
-down_revision: Union[str, None] = "d1e2f3a4b5c6"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "d1e2f3a4b5c6"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
@@ -33,11 +33,20 @@ def upgrade() -> None:
         "knowledge_articles",
         sa.Column("version", sa.Integer(), nullable=False, server_default="1"),
     )
-    op.add_column("knowledge_articles", sa.Column("reviewed_at", sa.DateTime(timezone=True), nullable=True))
-    op.add_column("knowledge_articles", sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True))
+    op.add_column(
+        "knowledge_articles", sa.Column("reviewed_at", sa.DateTime(timezone=True), nullable=True)
+    )
+    op.add_column(
+        "knowledge_articles", sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True)
+    )
     op.add_column("knowledge_articles", sa.Column("search_text", sa.Text(), nullable=True))
-    op.add_column("knowledge_articles", sa.Column("embedding_model", sa.String(length=80), nullable=True))
-    op.add_column("knowledge_articles", sa.Column("embedding_updated_at", sa.DateTime(timezone=True), nullable=True))
+    op.add_column(
+        "knowledge_articles", sa.Column("embedding_model", sa.String(length=80), nullable=True)
+    )
+    op.add_column(
+        "knowledge_articles",
+        sa.Column("embedding_updated_at", sa.DateTime(timezone=True), nullable=True),
+    )
     op.add_column(
         "knowledge_articles",
         sa.Column("view_count", sa.Integer(), nullable=False, server_default="0"),
@@ -54,8 +63,15 @@ def upgrade() -> None:
         "knowledge_articles",
         sa.Column("not_relevant_count", sa.Integer(), nullable=False, server_default="0"),
     )
-    op.create_index(op.f("ix_knowledge_articles_access_scope"), "knowledge_articles", ["access_scope"], unique=False)
-    op.create_index(op.f("ix_knowledge_articles_expires_at"), "knowledge_articles", ["expires_at"], unique=False)
+    op.create_index(
+        op.f("ix_knowledge_articles_access_scope"),
+        "knowledge_articles",
+        ["access_scope"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("ix_knowledge_articles_expires_at"), "knowledge_articles", ["expires_at"], unique=False
+    )
 
     op.create_table(
         "knowledge_chunks",
@@ -67,14 +83,22 @@ def upgrade() -> None:
         sa.Column("embedding_model", sa.String(length=80), nullable=True),
         sa.Column("embedding_updated_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.text("true")),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
         sa.ForeignKeyConstraint(["article_id"], ["knowledge_articles.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(op.f("ix_knowledge_chunks_id"), "knowledge_chunks", ["id"], unique=False)
-    op.create_index(op.f("ix_knowledge_chunks_article_id"), "knowledge_chunks", ["article_id"], unique=False)
-    op.create_index(op.f("ix_knowledge_chunks_is_active"), "knowledge_chunks", ["is_active"], unique=False)
+    op.create_index(
+        op.f("ix_knowledge_chunks_article_id"), "knowledge_chunks", ["article_id"], unique=False
+    )
+    op.create_index(
+        op.f("ix_knowledge_chunks_is_active"), "knowledge_chunks", ["is_active"], unique=False
+    )
 
     op.create_table(
         "knowledge_article_feedbacks",
@@ -88,8 +112,12 @@ def upgrade() -> None:
         sa.Column("score", sa.Float(), nullable=False),
         sa.Column("decision", sa.String(length=20), nullable=False),
         sa.Column("feedback", sa.String(length=20), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
         sa.ForeignKeyConstraint(["article_id"], ["knowledge_articles.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["conversation_id"], ["conversations.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["escalated_ticket_id"], ["tickets.id"], ondelete="SET NULL"),
@@ -97,7 +125,12 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(op.f("ix_knowledge_article_feedbacks_id"), "knowledge_article_feedbacks", ["id"], unique=False)
+    op.create_index(
+        op.f("ix_knowledge_article_feedbacks_id"),
+        "knowledge_article_feedbacks",
+        ["id"],
+        unique=False,
+    )
     op.create_index(
         op.f("ix_knowledge_article_feedbacks_article_id"),
         "knowledge_article_feedbacks",
@@ -137,13 +170,29 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index(op.f("ix_knowledge_article_feedbacks_feedback"), table_name="knowledge_article_feedbacks")
-    op.drop_index(op.f("ix_knowledge_article_feedbacks_escalated_ticket_id"), table_name="knowledge_article_feedbacks")
-    op.drop_index(op.f("ix_knowledge_article_feedbacks_user_id"), table_name="knowledge_article_feedbacks")
-    op.drop_index(op.f("ix_knowledge_article_feedbacks_message_id"), table_name="knowledge_article_feedbacks")
-    op.drop_index(op.f("ix_knowledge_article_feedbacks_conversation_id"), table_name="knowledge_article_feedbacks")
-    op.drop_index(op.f("ix_knowledge_article_feedbacks_article_id"), table_name="knowledge_article_feedbacks")
-    op.drop_index(op.f("ix_knowledge_article_feedbacks_id"), table_name="knowledge_article_feedbacks")
+    op.drop_index(
+        op.f("ix_knowledge_article_feedbacks_feedback"), table_name="knowledge_article_feedbacks"
+    )
+    op.drop_index(
+        op.f("ix_knowledge_article_feedbacks_escalated_ticket_id"),
+        table_name="knowledge_article_feedbacks",
+    )
+    op.drop_index(
+        op.f("ix_knowledge_article_feedbacks_user_id"), table_name="knowledge_article_feedbacks"
+    )
+    op.drop_index(
+        op.f("ix_knowledge_article_feedbacks_message_id"), table_name="knowledge_article_feedbacks"
+    )
+    op.drop_index(
+        op.f("ix_knowledge_article_feedbacks_conversation_id"),
+        table_name="knowledge_article_feedbacks",
+    )
+    op.drop_index(
+        op.f("ix_knowledge_article_feedbacks_article_id"), table_name="knowledge_article_feedbacks"
+    )
+    op.drop_index(
+        op.f("ix_knowledge_article_feedbacks_id"), table_name="knowledge_article_feedbacks"
+    )
     op.drop_table("knowledge_article_feedbacks")
 
     op.drop_index(op.f("ix_knowledge_chunks_is_active"), table_name="knowledge_chunks")

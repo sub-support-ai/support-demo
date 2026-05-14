@@ -92,9 +92,7 @@ def record_job_duration(worker_name: str) -> Generator[None, None, None]:
     try:
         yield
     finally:
-        worker_job_duration.labels(worker=worker_name).observe(
-            time.perf_counter() - start
-        )
+        worker_job_duration.labels(worker=worker_name).observe(time.perf_counter() - start)
 
 
 async def refresh_queue_depth_metrics(database_url: str) -> None:
@@ -113,9 +111,7 @@ async def refresh_queue_depth_metrics(database_url: str) -> None:
     from app.models.knowledge_embedding_job import KnowledgeEmbeddingJob
 
     async with AsyncSessionLocal() as db:
-        ai_count = await db.scalar(
-            select(func.count()).where(AIJob.status == "queued")
-        )
+        ai_count = await db.scalar(select(func.count()).where(AIJob.status == "queued"))
         emb_count = await db.scalar(
             select(func.count()).where(KnowledgeEmbeddingJob.status == "queued")
         )

@@ -12,20 +12,21 @@
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.models.knowledge_article import KnowledgeArticle
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+
 async def _register(client: AsyncClient, suffix: str) -> tuple[int, str]:
-    r = await client.post("/api/v1/auth/register", json={
-        "email": f"kbuser{suffix}@example.com",
-        "username": f"kbuser{suffix}",
-        "password": "Secret123!",
-    })
+    r = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": f"kbuser{suffix}@example.com",
+            "username": f"kbuser{suffix}",
+            "password": "Secret123!",
+        },
+    )
     assert r.status_code == 201
     token = r.json()["access_token"]
     me = await client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
@@ -38,11 +39,14 @@ async def _register_admin(client: AsyncClient, suffix: str) -> tuple[int, str]:
     prev = settings.BOOTSTRAP_ADMIN_EMAIL
     settings.BOOTSTRAP_ADMIN_EMAIL = email
     try:
-        r = await client.post("/api/v1/auth/register", json={
-            "email": email,
-            "username": f"kbadmin{suffix}",
-            "password": "Secret123!",
-        })
+        r = await client.post(
+            "/api/v1/auth/register",
+            json={
+                "email": email,
+                "username": f"kbadmin{suffix}",
+                "password": "Secret123!",
+            },
+        )
     finally:
         settings.BOOTSTRAP_ADMIN_EMAIL = prev
     assert r.status_code == 201
@@ -70,9 +74,7 @@ _INTERNAL_ARTICLE_PAYLOAD = {
 }
 
 
-async def _create_article(
-    client: AsyncClient, token: str, payload: dict | None = None
-) -> dict:
+async def _create_article(client: AsyncClient, token: str, payload: dict | None = None) -> dict:
     payload = payload or _ARTICLE_PAYLOAD
     r = await client.post(
         "/api/v1/knowledge/",
@@ -84,6 +86,7 @@ async def _create_article(
 
 
 # ── GET /knowledge/ ───────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_list_empty(client: AsyncClient):
@@ -101,7 +104,7 @@ async def test_list_empty(client: AsyncClient):
 async def test_list_user_sees_only_public(client: AsyncClient):
     """Обычный пользователь видит только public-статьи."""
     _, admin_token = await _register_admin(client, "l2a")
-    await _create_article(client, admin_token, _ARTICLE_PAYLOAD)       # public
+    await _create_article(client, admin_token, _ARTICLE_PAYLOAD)  # public
     await _create_article(client, admin_token, _INTERNAL_ARTICLE_PAYLOAD)  # internal
 
     _, user_token = await _register(client, "l2u")
@@ -155,6 +158,7 @@ async def test_list_filter_by_department(client: AsyncClient):
 
 # ── POST /knowledge/ ──────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_create_admin_only(client: AsyncClient):
     """Обычный пользователь получает 403 при попытке создать статью."""
@@ -191,6 +195,7 @@ async def test_create_missing_required_fields(client: AsyncClient):
 
 
 # ── GET /knowledge/search ─────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_search_returns_list(client: AsyncClient):
@@ -235,6 +240,7 @@ async def test_search_finds_created_article(client: AsyncClient):
 
 # ── POST /knowledge/reindex ───────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_reindex_all_admin_only(client: AsyncClient):
     """Обычный пользователь получает 403."""
@@ -262,6 +268,7 @@ async def test_reindex_all_creates_job(client: AsyncClient):
 
 
 # ── POST /knowledge/{id}/reindex ──────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_reindex_article_not_found(client: AsyncClient):
@@ -292,6 +299,7 @@ async def test_reindex_article_creates_job(client: AsyncClient):
 
 
 # ── PATCH /knowledge/{id} ─────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_update_article_admin_only(client: AsyncClient):
@@ -354,6 +362,7 @@ async def test_update_article_empty_patch_returns_unchanged(client: AsyncClient)
 
 
 # ── POST /knowledge/feedback ──────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_feedback_target_not_found(client: AsyncClient):

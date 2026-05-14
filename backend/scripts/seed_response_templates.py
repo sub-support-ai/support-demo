@@ -5,7 +5,6 @@ from sqlalchemy import select
 from app.database import AsyncSessionLocal
 from app.models.response_template import ResponseTemplate
 
-
 DEFAULT_TEMPLATES = [
     {
         "department": "IT",

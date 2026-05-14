@@ -3,7 +3,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr
 
 class TokenResponse(BaseModel):
     access_token: str
-    token_type: str = "bearer"   # стандартное поле — всегда "bearer"
+    token_type: str = "bearer"  # стандартное поле — всегда "bearer"
 
 
 class RequestContextDefaults(BaseModel):

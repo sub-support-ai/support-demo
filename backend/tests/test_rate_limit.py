@@ -13,9 +13,7 @@ import pytest
 from app.rate_limit import (
     _MemoryBackend,
     _RedisBackend,
-    set_backend_for_testing,
 )
-
 
 # ── Memory backend ──────────────────────────────────────────────────────────
 
@@ -76,6 +74,7 @@ async def test_memory_backend_releases_after_window(monkeypatch):
         return fake_now[0]
 
     import app.rate_limit as rate_limit_mod
+
     monkeypatch.setattr(rate_limit_mod, "monotonic", fake_monotonic)
 
     backend = _MemoryBackend()
@@ -107,9 +106,7 @@ async def redis_backend():
 async def test_redis_backend_allows_under_limit(redis_backend):
     """Lua-скрипт корректно прокидывает разрешения для запросов в окне."""
     for _ in range(5):
-        retry = await redis_backend.consume(
-            "login", "1.2.3.4", max_calls=5, window_seconds=60
-        )
+        retry = await redis_backend.consume("login", "1.2.3.4", max_calls=5, window_seconds=60)
         assert retry is None
 
 
@@ -118,9 +115,7 @@ async def test_redis_backend_blocks_over_limit_with_retry_after(redis_backend):
     """N+1 → -1 из Lua → translate в retry_after >= 1 sec."""
     for _ in range(5):
         await redis_backend.consume("login", "1.2.3.4", max_calls=5, window_seconds=60)
-    retry = await redis_backend.consume(
-        "login", "1.2.3.4", max_calls=5, window_seconds=60
-    )
+    retry = await redis_backend.consume("login", "1.2.3.4", max_calls=5, window_seconds=60)
     assert retry is not None
     assert retry >= 1
 
@@ -130,9 +125,7 @@ async def test_redis_backend_isolates_scopes(redis_backend):
     """ZSET-ключ включает scope — разные endpoint'ы не пересекаются."""
     for _ in range(5):
         await redis_backend.consume("login", "1.2.3.4", max_calls=5, window_seconds=60)
-    retry = await redis_backend.consume(
-        "register", "1.2.3.4", max_calls=5, window_seconds=60
-    )
+    retry = await redis_backend.consume("register", "1.2.3.4", max_calls=5, window_seconds=60)
     assert retry is None
 
 
@@ -174,11 +167,14 @@ async def test_rate_limit_dependency_uses_configured_backend(client):
     # Существующий test_login_rate_limit_blocks_brute_force в test_users.py
     # покрывает интеграцию через /auth/login. Здесь проверяем сам контракт
     # ответа FastAPI на сработавший лимит — отдельно от login-логики.
-    await client.post("/api/v1/auth/register", json={
-        "email": "ratelimit@example.com",
-        "username": "ratelimituser",
-        "password": "Secret123!",
-    })
+    await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "ratelimit@example.com",
+            "username": "ratelimituser",
+            "password": "Secret123!",
+        },
+    )
 
     # 5 неверных логинов — 401
     for _ in range(5):
@@ -228,7 +224,9 @@ def _make_request(xff: str | None, client_host: str = "127.0.0.1"):
         req.headers = {"X-Forwarded-For": xff}
     # MagicMock.get() нужен для dict-like доступа headers.get(...)
     req.headers = MagicMock()
-    req.headers.get = lambda key, default="": xff if xff is not None and key == "X-Forwarded-For" else default
+    req.headers.get = lambda key, default="": (
+        xff if xff is not None and key == "X-Forwarded-For" else default
+    )
     return req
 
 

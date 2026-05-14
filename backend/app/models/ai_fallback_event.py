@@ -1,5 +1,4 @@
 from datetime import datetime
-from typing import Optional
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column
@@ -29,13 +28,13 @@ class AIFallbackEvent(Base):
 
     # Один из двух источников: get_ai_answer (chat) или classify_ticket (intake).
     # Подходящий FK заполняется, второй остаётся NULL.
-    conversation_id: Mapped[Optional[int]] = mapped_column(
+    conversation_id: Mapped[int | None] = mapped_column(
         Integer,
         ForeignKey("conversations.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
-    ticket_id: Mapped[Optional[int]] = mapped_column(
+    ticket_id: Mapped[int | None] = mapped_column(
         Integer,
         ForeignKey("tickets.id", ondelete="SET NULL"),
         nullable=True,

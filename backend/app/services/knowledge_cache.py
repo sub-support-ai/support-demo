@@ -63,7 +63,7 @@ DEFAULT_MAX_ENTRIES = 100
 @dataclass
 class _CacheEntry:
     expires_at: float
-    matches: list["KnowledgeMatch"]
+    matches: list[KnowledgeMatch]
 
 
 class KnowledgeSearchCache:
@@ -86,7 +86,7 @@ class KnowledgeSearchCache:
     def _make_key(
         query: str,
         limit: int,
-        filters: "KnowledgeSearchFilters",
+        filters: KnowledgeSearchFilters,
     ) -> tuple:
         """Стабильный ключ. query нормализуется (lowercase + collapse whitespace).
 
@@ -109,8 +109,8 @@ class KnowledgeSearchCache:
         self,
         query: str,
         limit: int,
-        filters: "KnowledgeSearchFilters",
-    ) -> list["KnowledgeMatch"] | None:
+        filters: KnowledgeSearchFilters,
+    ) -> list[KnowledgeMatch] | None:
         key = self._make_key(query, limit, filters)
         entry = self._store.get(key)
         if entry is None:
@@ -127,8 +127,8 @@ class KnowledgeSearchCache:
         self,
         query: str,
         limit: int,
-        filters: "KnowledgeSearchFilters",
-        matches: list["KnowledgeMatch"],
+        filters: KnowledgeSearchFilters,
+        matches: list[KnowledgeMatch],
     ) -> None:
         key = self._make_key(query, limit, filters)
         self._store[key] = _CacheEntry(

@@ -25,7 +25,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import time
 import uuid
 from abc import ABC, abstractmethod
@@ -36,7 +35,6 @@ from typing import Any
 from fastapi import HTTPException, Request, status
 
 from app.config import get_settings
-
 
 # ── Бэкенды ──────────────────────────────────────────────────────────────────
 
@@ -55,11 +53,11 @@ class _Backend(ABC):
         key: str,
         max_calls: int,
         window_seconds: int,
-    ) -> int | None:
-        ...
+    ) -> int | None: ...
 
     def reset(self) -> None:
         """Очистить все счётчики. Используется тестами."""
+        return None
 
 
 class _MemoryBackend(_Backend):
@@ -68,9 +66,7 @@ class _MemoryBackend(_Backend):
     def __init__(self) -> None:
         # scope — изолятор endpoint'ов: 5 регистраций + 2 логина с одного
         # IP не должны сваливаться в общий счётчик.
-        self._buckets: dict[str, dict[str, deque[float]]] = defaultdict(
-            lambda: defaultdict(deque)
-        )
+        self._buckets: dict[str, dict[str, deque[float]]] = defaultdict(lambda: defaultdict(deque))
 
     async def consume(
         self,

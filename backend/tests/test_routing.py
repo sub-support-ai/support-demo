@@ -1,4 +1,4 @@
-﻿"""
+"""
 Тесты роутинга тикетов (задача BE Dev 2).
 
 Что проверяем:
@@ -13,15 +13,14 @@
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 
 from app.models.agent import Agent
 from app.models.user import User
 from app.security import hash_password
 from app.services.agents import get_active_agent_for_user
 
-
 # ── Вспомогательные функции ────────────────────────────────────────────────────
+
 
 async def create_test_user(db: AsyncSession, suffix: str = "") -> User:
     """Создаёт пользователя напрямую в БД (быстрее чем через API)."""
@@ -74,11 +73,14 @@ async def create_test_agent(
 
 async def get_tokens(client: AsyncClient, suffix: str = "") -> str:
     """Регистрирует пользователя через API и возвращает access token."""
-    response = await client.post("/api/v1/auth/register", json={
-        "email": f"tokenuser{suffix}@example.com",
-        "username": f"tokenuser{suffix}",
-        "password": "Secret123!",
-    })
+    response = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": f"tokenuser{suffix}@example.com",
+            "username": f"tokenuser{suffix}",
+            "password": "Secret123!",
+        },
+    )
     assert response.status_code == 201
     return response.json()["access_token"]
 
@@ -121,6 +123,7 @@ async def test_active_agent_lookup_uses_user_id(db_session: AsyncSession):
 
 # ── Тест 1: агент назначается при создании тикета ─────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_agent_assigned_on_ticket_create(client: AsyncClient, db_session: AsyncSession):
     """При создании тикета агент должен быть назначен (agent_id не None)."""
@@ -128,7 +131,7 @@ async def test_agent_assigned_on_ticket_create(client: AsyncClient, db_session: 
     agent = await create_test_agent(db_session, suffix="assign1", department="IT")
 
     # Создаём пользователя и получаем токен
-    user = await create_test_user(db_session, suffix="assign1")
+    await create_test_user(db_session, suffix="assign1")
     token = await get_tokens(client, suffix="assign1")
 
     response = await client.post(
@@ -149,11 +152,12 @@ async def test_agent_assigned_on_ticket_create(client: AsyncClient, db_session: 
 
 # ── Тест 2: active_ticket_count увеличивается ──────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_active_ticket_count_increases(client: AsyncClient, db_session: AsyncSession):
     """После создания тикета active_ticket_count агента должен вырасти на 1."""
     agent = await create_test_agent(db_session, suffix="count1", department="IT", active_count=0)
-    user = await create_test_user(db_session, suffix="count1")
+    await create_test_user(db_session, suffix="count1")
     token = await get_tokens(client, suffix="count1")
 
     await client.post(
@@ -173,13 +177,14 @@ async def test_active_ticket_count_increases(client: AsyncClient, db_session: As
 
 # ── Тест 3: resolve уменьшает счётчик ─────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_active_ticket_count_decreases_on_resolve(
     client: AsyncClient, db_session: AsyncSession
 ):
     """После resolve тикета счётчик агента должен уменьшиться на 1."""
     agent = await create_test_agent(db_session, suffix="resolve1", department="IT", active_count=0)
-    user = await create_test_user(db_session, suffix="resolve1")
+    await create_test_user(db_session, suffix="resolve1")
     token = await get_tokens(client, suffix="resolve1")
 
     # Создаём тикет
@@ -226,6 +231,7 @@ async def test_active_ticket_count_decreases_on_resolve(
 
 # ── Тест 4: тикет без токена → 401 ────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_create_ticket_without_token_returns_401(client: AsyncClient):
     """Создание тикета без токена должно возвращать 401."""
@@ -243,6 +249,7 @@ async def test_create_ticket_without_token_returns_401(client: AsyncClient):
 
 # ── Тест 5: самый свободный агент при высокой уверенности ─────────────────────
 
+
 @pytest.mark.asyncio
 async def test_free_agent_assigned_when_high_confidence(
     client: AsyncClient, db_session: AsyncSession
@@ -252,14 +259,10 @@ async def test_free_agent_assigned_when_high_confidence(
     с МИНИМАЛЬНЫМ active_ticket_count.
     """
     # Создаём двух агентов: один занятый, один свободный
-    busy_agent = await create_test_agent(
-        db_session, suffix="busy1", department="IT", active_count=5
-    )
-    free_agent = await create_test_agent(
-        db_session, suffix="free1", department="IT", active_count=0
-    )
+    await create_test_agent(db_session, suffix="busy1", department="IT", active_count=5)
+    await create_test_agent(db_session, suffix="free1", department="IT", active_count=0)
 
-    user = await create_test_user(db_session, suffix="hconf1")
+    await create_test_user(db_session, suffix="hconf1")
     token = await get_tokens(client, suffix="hconf1")
 
     response = await client.post(

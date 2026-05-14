@@ -16,7 +16,6 @@ import logging
 import smtplib
 import ssl
 from email.mime.text import MIMEText
-from typing import Optional
 
 from app.config import get_settings
 
@@ -42,8 +41,8 @@ def _send_sync(
     body: str,
     smtp_host: str,
     smtp_port: int,
-    smtp_user: Optional[str],
-    smtp_password: Optional[str],
+    smtp_user: str | None,
+    smtp_password: str | None,
     from_addr: str,
     use_tls: bool,
 ) -> None:
@@ -84,10 +83,7 @@ async def send_email(
         logger.debug("SMTP_HOST не задан — email не отправляется (to=%s)", to)
         return
 
-    smtp_password = (
-        settings.SMTP_PASSWORD.get_secret_value()
-        if settings.SMTP_PASSWORD else None
-    )
+    smtp_password = settings.SMTP_PASSWORD.get_secret_value() if settings.SMTP_PASSWORD else None
 
     try:
         await asyncio.get_running_loop().run_in_executor(
@@ -154,9 +150,9 @@ async def notify_agent_assigned(
     ticket_id: int,
     title: str,
     department: str,
-    requester_name: Optional[str],
+    requester_name: str | None,
     agent_email: str,
-    agent_name: Optional[str],
+    agent_name: str | None,
 ) -> None:
     """Уведомляет агента о назначении нового тикета."""
     subject = f"Вам назначен запрос #{ticket_id}"
@@ -176,10 +172,10 @@ async def notify_ticket_status(
     ticket_id: int,
     title: str,
     status: str,
-    requester_email: Optional[str],
-    requester_name: Optional[str],
+    requester_email: str | None,
+    requester_name: str | None,
     department: str,
-    sla_deadline: Optional[str] = None,
+    sla_deadline: str | None = None,
 ) -> None:
     """Отправляет уведомление заявителю о смене статуса тикета.
 

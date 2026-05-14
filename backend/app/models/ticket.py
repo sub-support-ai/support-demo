@@ -45,6 +45,7 @@ class Ticket(Base):
                         если < 0.8 → помечаем для проверки агентом
       ai_processed_at — когда AI обработал (метрика скорости пайплайна)
     """
+
     __tablename__ = "tickets"
     __table_args__ = (
         # Ускоряет запросы агента к «своим» тикетам по статусу и SLA-воркер.
@@ -57,26 +58,26 @@ class Ticket(Base):
         Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     # Агент назначается после подтверждения пользователем
-    agent_id: Mapped[Optional[int]] = mapped_column(
+    agent_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("agents.id", ondelete="SET NULL"), nullable=True, index=True
     )
     # Из какого диалога создан тикет
-    conversation_id: Mapped[Optional[int]] = mapped_column(
+    conversation_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True, index=True
     )
 
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
 
-    requester_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    requester_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    office: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    affected_item: Mapped[Optional[str]] = mapped_column(String(150), nullable=True)
-    request_type: Mapped[Optional[str]] = mapped_column(String(60), nullable=True)
-    request_details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    requester_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    requester_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    office: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    affected_item: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    request_type: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    request_details: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Что пользователь уже пробовал — AI извлекает из диалога
-    steps_tried: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    steps_tried: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Куда направить тикет — AI предлагает, пользователь может изменить
     department: Mapped[str] = mapped_column(String(20), nullable=False, default="IT")
@@ -86,9 +87,7 @@ class Ticket(Base):
     )
 
     # Кто и как создал тикет
-    ticket_source: Mapped[str] = mapped_column(
-        String(20), default="ai_generated", nullable=False
-    )
+    ticket_source: Mapped[str] = mapped_column(String(20), default="ai_generated", nullable=False)
 
     # Подтвердил ли пользователь отправку (1 клик)
     confirmed_by_user: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -100,24 +99,30 @@ class Ticket(Base):
     # Заполняются после классификации обращения. AI Service крутится в
     # контейнере рядом (Ollama / llama.cpp), данные не выходят за периметр
     # заказчика — требование безопасности для self-hosted развёртывания.
-    ai_category: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    ai_category: Mapped[str | None] = mapped_column(String(100), nullable=True)
     # Текстовый приоритет от модели: критический|высокий|средний|низкий
-    ai_priority: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
-    ai_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    ai_processed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    ai_priority: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    ai_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ai_processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # ──────────────────────────────────────────────────────────────────────────
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
-    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Время первого ответа агента — для метрики TTFR (Time To First Response).
     # Проставляется при создании первого комментария агента/системы к тикету.
-    first_response_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    sla_started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    sla_deadline_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
-    sla_escalated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    first_response_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    sla_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    sla_deadline_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    sla_escalated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
     sla_escalation_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     reopen_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 

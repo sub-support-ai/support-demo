@@ -3,10 +3,11 @@ from pydantic import BaseModel
 
 class TicketStats(BaseModel):
     """Статистика по тикетам."""
-    total: int                  # всего тикетов в системе
-    by_status: dict[str, int]   # сколько тикетов в каждом статусе
+
+    total: int  # всего тикетов в системе
+    by_status: dict[str, int]  # сколько тикетов в каждом статусе
     by_department: dict[str, int]  # сколько тикетов по отделам
-    by_source: dict[str, int]   # ai_generated / user_written / ai_assisted
+    by_source: dict[str, int]  # ai_generated / user_written / ai_assisted
     # Топ-темы (ai_category): {"VPN access": 15, "printer": 8, ...}
     # Отсортированы по убыванию — первые N самых частых.
     by_category: dict[str, int] = {}
@@ -23,16 +24,17 @@ class TicketStats(BaseModel):
 
 class AIStats(BaseModel):
     """Статистика работы AI-классификатора."""
-    total_processed: int            # сколько тикетов AI обработал
-    avg_confidence: float           # средняя уверенность модели (0.0–1.0)
-    low_confidence_count: int       # тикетов с уверенностью < 0.8 (нужна проверка)
-    routing_correct_count: int      # агент подтвердил роутинг AI
-    routing_incorrect_count: int    # агент исправил роутинг AI
-    routing_accuracy_pct: float     # % правильного роутинга
-    resolved_by_ai_count: int       # AI решил без тикета
-    escalated_count: int            # AI создал тикет
-    user_feedback_helped: int       # пользователь сказал "помогло"
-    user_feedback_not_helped: int   # пользователь сказал "не помогло"
+
+    total_processed: int  # сколько тикетов AI обработал
+    avg_confidence: float  # средняя уверенность модели (0.0–1.0)
+    low_confidence_count: int  # тикетов с уверенностью < 0.8 (нужна проверка)
+    routing_correct_count: int  # агент подтвердил роутинг AI
+    routing_incorrect_count: int  # агент исправил роутинг AI
+    routing_accuracy_pct: float  # % правильного роутинга
+    resolved_by_ai_count: int  # AI решил без тикета
+    escalated_count: int  # AI создал тикет
+    user_feedback_helped: int  # пользователь сказал "помогло"
+    user_feedback_not_helped: int  # пользователь сказал "не помогло"
 
 
 class JobQueueStats(BaseModel):
@@ -50,6 +52,7 @@ class JobsStats(BaseModel):
 
 class StatsResponse(BaseModel):
     """Полный ответ эндпоинта GET /api/v1/stats/."""
+
     tickets: TicketStats
     ai: AIStats
     jobs: JobsStats
@@ -57,6 +60,7 @@ class StatsResponse(BaseModel):
 
 class KnowledgeArticleSummary(BaseModel):
     """Карточка статьи в KB-дашборде. Минимум для админа: title и счётчики."""
+
     article_id: int
     title: str
     department: str | None = None
@@ -72,6 +76,7 @@ class KnowledgeArticleSummary(BaseModel):
 
 class KnowledgeStats(BaseModel):
     """Метрики KB для админ-дашборда."""
+
     total_articles: int
     active_articles: int
     drafts: int  # is_active=False — обычно черновики из promote-to-kb
@@ -88,6 +93,7 @@ class KnowledgeStats(BaseModel):
 
 class KnowledgeScoreBucket(BaseModel):
     """Один бакет гистограммы score'ов из feedback'ов."""
+
     range_start: float
     range_end: float
     count: int
@@ -104,11 +110,12 @@ class KnowledgeScoreDistribution(BaseModel):
     решение state-machine'а. Если answer = 90% — порог занижен (модель
     самоуверенная). Если escalate = 50% — порог завышен или KB пустая.
     """
+
     period_days: int
     total_feedback_records: int
     buckets: list[KnowledgeScoreBucket]
     decision_distribution: dict[str, int]  # answer / clarify / escalate
-    current_thresholds: dict[str, float]   # high / medium / red_zone
+    current_thresholds: dict[str, float]  # high / medium / red_zone
 
 
 class AIFallbacksStats(BaseModel):

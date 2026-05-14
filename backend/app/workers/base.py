@@ -31,6 +31,7 @@ import asyncio
 import logging
 import signal
 from abc import ABC, abstractmethod
+from contextlib import suppress
 
 logger = logging.getLogger(__name__)
 
@@ -108,13 +109,11 @@ class BaseWorker(ABC):
                 # в очереди могут ещё быть задачи. Ждём только если очередь была
                 # пустой — тогда спим до уведомления или таймаута.
                 if not processed:
-                    try:
+                    with suppress(TimeoutError):
                         await asyncio.wait_for(
                             wake_queue.get(),
                             timeout=self.NOTIFY_TIMEOUT_SECONDS,
                         )
-                    except asyncio.TimeoutError:
-                        pass
 
             logger.info("%s: stopped", self.WORKER_NAME)
 

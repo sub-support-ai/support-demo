@@ -30,7 +30,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.knowledge_article import KnowledgeArticle
 from app.services.knowledge_base import search_knowledge_articles
-
 from evals.dataset import (
     EvalCase,
     fixture_articles_for,
@@ -43,7 +42,6 @@ from evals.metrics import (
     first_match_rank,
     format_report,
 )
-
 
 BASELINE_DATASET = Path(__file__).resolve().parents[1] / "evals" / "data" / "baseline.yaml"
 
@@ -159,9 +157,7 @@ def test_dataset_loader_rejects_empty_titles(tmp_path):
     from evals.dataset import load_dataset
 
     bad = tmp_path / "bad.yaml"
-    bad.write_text(
-        "cases:\n  - query: 'x'\n    expected_titles: []\n", encoding="utf-8"
-    )
+    bad.write_text("cases:\n  - query: 'x'\n    expected_titles: []\n", encoding="utf-8")
     with pytest.raises(ValueError, match="expected_titles"):
         load_dataset(bad)
 
@@ -171,10 +167,7 @@ def test_dataset_loader_normalizes_titles(tmp_path):
 
     src = tmp_path / "ok.yaml"
     src.write_text(
-        "cases:\n"
-        "  - query: 'q'\n"
-        "    expected_titles:\n"
-        "      - '  Сброс  Пароля  '\n",
+        "cases:\n  - query: 'q'\n    expected_titles:\n      - '  Сброс  Пароля  '\n",
         encoding="utf-8",
     )
     cases = load_dataset(src)

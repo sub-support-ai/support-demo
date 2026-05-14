@@ -1,5 +1,4 @@
 from datetime import datetime
-from typing import Optional
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -31,10 +30,10 @@ class AIJob(Base):
         nullable=False,
         index=True,
     )
-    locked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    error: Mapped[Optional[str]] = mapped_column(Text)
+    locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

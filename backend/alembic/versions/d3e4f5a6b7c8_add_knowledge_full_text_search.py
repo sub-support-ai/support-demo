@@ -5,15 +5,14 @@ Revises: d2e3f4a5b6c7
 Create Date: 2026-05-06 00:00:00.000000
 """
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 from alembic import op
 
-
 revision: str = "d3e4f5a6b7c8"
-down_revision: Union[str, None] = "d2e3f4a5b6c7"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "d2e3f4a5b6c7"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 SEARCH_VECTOR_EXPRESSION = """

@@ -34,7 +34,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +61,7 @@ async def notify(database_url: str, channel: str) -> None:
         return
     try:
         import asyncpg  # type: ignore[import-untyped]
+
         conn = await asyncpg.connect(_to_asyncpg_dsn(database_url))
         try:
             await conn.execute(f"NOTIFY {channel}")
@@ -123,10 +124,8 @@ async def listen_for_notifications(
         # Вызывается из внутренней задачи asyncpg.
         # put_nowait с maxsize=1 коалесцирует дублирующиеся уведомления:
         # если воркер ещё не проснулся, второй NOTIFY просто игнорируется.
-        try:
+        with suppress(asyncio.QueueFull):
             wake_queue.put_nowait(None)
-        except asyncio.QueueFull:
-            pass
 
     async def _connect() -> asyncpg.Connection:
         c = await asyncpg.connect(_to_asyncpg_dsn(database_url))
@@ -151,15 +150,11 @@ async def listen_for_notifications(
                     exc_info=True,
                 )
                 if conn is not None and not conn.is_closed():
-                    try:
+                    with suppress(Exception):
                         await conn.close()
-                    except Exception:
-                        pass
                 conn = None
-            try:
+            with suppress(TimeoutError):
                 await asyncio.wait_for(stop_event.wait(), timeout=5.0)
-            except asyncio.TimeoutError:
-                pass
 
     conn = await _connect()
     keepalive_task = asyncio.get_running_loop().create_task(_keepalive())
@@ -169,12 +164,8 @@ async def listen_for_notifications(
     finally:
         stop_event.set()
         keepalive_task.cancel()
-        try:
+        with suppress(asyncio.CancelledError):
             await keepalive_task
-        except asyncio.CancelledError:
-            pass
         if conn is not None and not conn.is_closed():
-            try:
+            with suppress(Exception):
                 await conn.close()
-            except Exception:
-                pass

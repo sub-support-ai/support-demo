@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import AsyncClient
@@ -27,11 +27,14 @@ def test_how_to_priority_heuristic_can_downgrade_ai_priority():
 # Регистрируем пользователя через /auth/register и возвращаем
 # (user_id, access_token) — нужны для тикета и для заголовка Authorization.
 async def register_user(client: AsyncClient, suffix: str = "") -> tuple[int, str]:
-    response = await client.post("/api/v1/auth/register", json={
-        "email": f"ticketuser{suffix}@example.com",
-        "username": f"ticketuser{suffix}",
-        "password": "Secret123!",
-    })
+    response = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": f"ticketuser{suffix}@example.com",
+            "username": f"ticketuser{suffix}",
+            "password": "Secret123!",
+        },
+    )
     assert response.status_code == 201
     token = response.json()["access_token"]
 
@@ -52,11 +55,14 @@ async def register_admin(client: AsyncClient, suffix: str = "") -> tuple[int, st
     previous_bootstrap_email = settings.BOOTSTRAP_ADMIN_EMAIL
     settings.BOOTSTRAP_ADMIN_EMAIL = admin_email
     try:
-        response = await client.post("/api/v1/auth/register", json={
-            "email": admin_email,
-            "username": f"ticketadmin{suffix}",
-            "password": "Secret123!",
-        })
+        response = await client.post(
+            "/api/v1/auth/register",
+            json={
+                "email": admin_email,
+                "username": f"ticketadmin{suffix}",
+                "password": "Secret123!",
+            },
+        )
     finally:
         settings.BOOTSTRAP_ADMIN_EMAIL = previous_bootstrap_email
     assert response.status_code == 201
@@ -486,7 +492,7 @@ async def test_list_tickets_supports_server_side_operator_queues(
     user_id, _ = await register_user(client, suffix="queues")
     _, admin_token = await register_admin(client, suffix="queues")
     admin_headers = {"Authorization": f"Bearer {admin_token}"}
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     overdue = Ticket(
         user_id=user_id,
@@ -538,9 +544,7 @@ async def test_list_tickets_supports_server_side_operator_queues(
         headers=admin_headers,
     )
     assert overdue_resp.status_code == 200
-    assert "Просроченный запрос" in {
-        item["title"] for item in overdue_resp.json()
-    }
+    assert "Просроченный запрос" in {item["title"] for item in overdue_resp.json()}
 
     unassigned_resp = await client.get(
         "/api/v1/tickets/?queue=unassigned",
@@ -557,21 +561,18 @@ async def test_list_tickets_supports_server_side_operator_queues(
         headers=admin_headers,
     )
     assert draft_resp.status_code == 200
-    assert "Черновик пользователя" in {
-        item["title"] for item in draft_resp.json()
-    }
+    assert "Черновик пользователя" in {item["title"] for item in draft_resp.json()}
 
     search_resp = await client.get(
         "/api/v1/tickets/?queue=all&search=markerqueue",
         headers=admin_headers,
     )
     assert search_resp.status_code == 200
-    assert [item["title"] for item in search_resp.json()] == [
-        "Обычный активный запрос markerqueue"
-    ]
+    assert [item["title"] for item in search_resp.json()] == ["Обычный активный запрос markerqueue"]
 
 
 # ── Ownership: пользователь не должен видеть чужие тикеты ─────────────────────
+
 
 @pytest.mark.asyncio
 async def test_list_tickets_returns_only_own(client: AsyncClient):
@@ -771,8 +772,8 @@ async def test_ticket_response_marks_overdue_sla(
         requester_email="user@example.com",
         office="HQ",
         affected_item="VPN",
-        sla_started_at=datetime.now(timezone.utc) - timedelta(hours=30),
-        sla_deadline_at=datetime.now(timezone.utc) - timedelta(hours=6),
+        sla_started_at=datetime.now(UTC) - timedelta(hours=30),
+        sla_deadline_at=datetime.now(UTC) - timedelta(hours=6),
     )
     db_session.add(ticket)
     await db_session.flush()
@@ -1126,22 +1127,28 @@ async def test_user_cannot_see_internal_comments(client: AsyncClient):
     assert create.status_code == 201
     ticket_id = create.json()["id"]
 
-    assert (await client.patch(
-        f"/api/v1/tickets/{ticket_id}/confirm",
-        headers=user_headers,
-    )).status_code == 200
+    assert (
+        await client.patch(
+            f"/api/v1/tickets/{ticket_id}/confirm",
+            headers=user_headers,
+        )
+    ).status_code == 200
 
-    assert (await client.post(
-        f"/api/v1/tickets/{ticket_id}/comments",
-        json={"content": "Внутренняя заметка агента", "internal": True},
-        headers=admin_headers,
-    )).status_code == 201
+    assert (
+        await client.post(
+            f"/api/v1/tickets/{ticket_id}/comments",
+            json={"content": "Внутренняя заметка агента", "internal": True},
+            headers=admin_headers,
+        )
+    ).status_code == 201
 
-    assert (await client.post(
-        f"/api/v1/tickets/{ticket_id}/comments",
-        json={"content": "Взяли в работу", "internal": False},
-        headers=admin_headers,
-    )).status_code == 201
+    assert (
+        await client.post(
+            f"/api/v1/tickets/{ticket_id}/comments",
+            json={"content": "Взяли в работу", "internal": False},
+            headers=admin_headers,
+        )
+    ).status_code == 201
 
     user_resp = await client.get(
         f"/api/v1/tickets/{ticket_id}/comments",
@@ -1184,10 +1191,12 @@ async def test_negative_feedback_can_reopen_closed_ticket(
     )
     assert create.status_code == 201
     ticket_id = create.json()["id"]
-    assert (await client.patch(
-        f"/api/v1/tickets/{ticket_id}/confirm",
-        headers=user_headers,
-    )).status_code == 200
+    assert (
+        await client.patch(
+            f"/api/v1/tickets/{ticket_id}/confirm",
+            headers=user_headers,
+        )
+    ).status_code == 200
 
     resolve = await client.patch(
         f"/api/v1/tickets/{ticket_id}/resolve",
@@ -1209,9 +1218,6 @@ async def test_negative_feedback_can_reopen_closed_ticket(
     assert data["resolved_at"] is None
 
     result = await db_session.execute(
-        select(AILog)
-        .where(AILog.ticket_id == ticket_id)
-        .order_by(AILog.id.desc())
-        .limit(1)
+        select(AILog).where(AILog.ticket_id == ticket_id).order_by(AILog.id.desc()).limit(1)
     )
     assert result.scalar_one().user_feedback == "not_helped"

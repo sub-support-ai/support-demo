@@ -61,7 +61,7 @@ def _raise_invalid(
     old_status: str,
     new_status: str,
     allowed: frozenset[str],
-) -> "HTTPException":
+) -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_409_CONFLICT,
         detail={
@@ -73,7 +73,7 @@ def _raise_invalid(
     )
 
 
-def transition(ticket: "Ticket", new_status: str) -> str:
+def transition(ticket: Ticket, new_status: str) -> str:
     """Универсальный переход. Применяется к confirm / resolve / reopen.
 
     Возвращает старый статус. Идемпотентен: same → same → no-op (как и в
@@ -89,7 +89,7 @@ def transition(ticket: "Ticket", new_status: str) -> str:
     return old_status
 
 
-def transition_via_operator(ticket: "Ticket", new_status: str) -> str:
+def transition_via_operator(ticket: Ticket, new_status: str) -> str:
     """Переход, инициированный оператором через PATCH /tickets/{id}.
 
     Узкое подмножество ALLOWED_TRANSITIONS: оператор не может через одну

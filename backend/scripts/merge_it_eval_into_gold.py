@@ -1,7 +1,6 @@
 import json
 from pathlib import Path
 
-
 GOLD_PATH = Path("scripts/eval_data/kb_gold.json")
 EVAL_DATA_DIR = Path("scripts/eval_data")
 
@@ -20,7 +19,6 @@ EXTRA_CASES = [
         "query": "пароль истек, не могу зайти в корпоративную систему",
         "expected_title": "Сброс пароля или разблокировка учётной записи",
     },
-
     # MFA
     {
         "query": "сменил телефон и теперь не могу пройти MFA",
@@ -34,7 +32,6 @@ EXTRA_CASES = [
         "query": "двухфакторная авторизация не работает после замены смартфона",
         "expected_title": "Не приходит MFA-код или не работает подтверждение входа",
     },
-
     # VPN
     {
         "query": "VPN подключается, но внутренние сайты не открываются",
@@ -48,7 +45,6 @@ EXTRA_CASES = [
         "query": "VPN пишет timeout и не устанавливает соединение",
         "expected_title": "VPN не подключается: первичная диагностика",
     },
-
     # Доступ / 403
     {
         "query": "открываю корпоративный портал, пишет нет прав доступа",
@@ -62,7 +58,6 @@ EXTRA_CASES = [
         "query": "внутренняя система открывается, но нужный раздел недоступен",
         "expected_title": "Нет доступа к корпоративной системе или ошибка 403",
     },
-
     # почтовый клиент
     {
         "query": "письма не уходят из исходящих в почтовый клиент",
@@ -76,7 +71,6 @@ EXTRA_CASES = [
         "query": "почта перестала обновляться, новые письма не появляются",
         "expected_title": "почтовый клиент не отправляет или не получает почту",
     },
-
     # Wi-Fi
     {
         "query": "ноутбук видит Wi-Fi, но пишет без доступа к интернету",
@@ -90,7 +84,6 @@ EXTRA_CASES = [
         "query": "корпоративная сеть Wi-Fi просит пароль, но не подключает",
         "expected_title": "Wi-Fi медленный, нестабильный или не подключается",
     },
-
     # Медленный компьютер
     {
         "query": "после включения компьютера всё зависает и долго грузится",
@@ -104,7 +97,6 @@ EXTRA_CASES = [
         "query": "рабочий компьютер постоянно зависает при открытии браузера",
         "expected_title": "Компьютер или ноутбук работает медленно",
     },
-
     # ПО / лицензии
     {
         "query": "нужно установить программу для работы с PDF",
@@ -118,7 +110,6 @@ EXTRA_CASES = [
         "query": "нужно поставить разрешенное ПО из корпоративного каталога",
         "expected_title": "Установка корпоративного ПО или запрос лицензии",
     },
-
     # Принтер / МФУ
     {
         "query": "сканер на МФУ не отправляет документы на email",
@@ -132,7 +123,6 @@ EXTRA_CASES = [
         "query": "МФУ показывает замятие бумаги, хотя бумаги внутри нет",
         "expected_title": "Принтер или МФУ не печатает и не сканирует",
     },
-
     # корпоративная ВКС / приложение видеосвязи
     {
         "query": "в приложение видеосвязи меня не слышат, микрофон не работает",
@@ -177,9 +167,7 @@ def main() -> None:
         old_normalized_cases.append(normalize_case(case))
 
     additional_files = [
-        path
-        for path in sorted(EVAL_DATA_DIR.glob("kb_*.json"))
-        if path.name != GOLD_PATH.name
+        path for path in sorted(EVAL_DATA_DIR.glob("kb_*.json")) if path.name != GOLD_PATH.name
     ]
 
     merged_cases = []
@@ -216,11 +204,7 @@ def main() -> None:
         append_case(case)
 
     current_version = int(gold.get("version", 1))
-    next_version = (
-        current_version
-        if old_normalized_cases == merged_cases
-        else current_version + 1
-    )
+    next_version = current_version if old_normalized_cases == merged_cases else current_version + 1
 
     result = {
         "description": (

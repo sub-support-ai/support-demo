@@ -47,9 +47,9 @@ async def login(
         await log_event(
             db,
             action="login.failure",
-            user_id=user.id if user else None,   # None если username вообще не существует
+            user_id=user.id if user else None,  # None если username вообще не существует
             request=request,
-            details={"username": form.username},   # запоминаем, какой username пытались подобрать
+            details={"username": form.username},  # запоминаем, какой username пытались подобрать
         )
         await db.commit()
         raise HTTPException(
@@ -126,8 +126,7 @@ async def register(
     settings = get_settings()
     bootstrap_email = settings.BOOTSTRAP_ADMIN_EMAIL
     is_bootstrap_admin = (
-        bootstrap_email is not None
-        and payload.email.lower() == bootstrap_email.lower()
+        bootstrap_email is not None and payload.email.lower() == bootstrap_email.lower()
     )
     role = "admin" if is_bootstrap_admin else "user"
 
@@ -146,7 +145,7 @@ async def register(
         action="user.register",
         user_id=user.id,
         request=request,
-        details={"role": role},   # видно будет и bootstrap-admin'а, и обычных
+        details={"role": role},  # видно будет и bootstrap-admin'а, и обычных
     )
 
     token = create_access_token(user_id=user.id, role=user.role)

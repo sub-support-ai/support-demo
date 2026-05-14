@@ -20,6 +20,7 @@ def _candidate_ai_service_urls() -> list[str]:
         urls.append("http://localhost:8001")
     return urls
 
+
 _CLASSIFICATION_FALLBACK = {
     "category": "other",
     "department": "IT",
@@ -30,6 +31,7 @@ _CLASSIFICATION_FALLBACK = {
 }
 
 from app.constants.departments import DEPARTMENTS_SET as _VALID_DEPARTMENTS  # noqa: E402
+
 _PRIORITY_RANK = {
     "низкий": 0,
     "средний": 1,

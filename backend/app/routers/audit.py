@@ -40,7 +40,9 @@ async def list_audit_events(
         description="Фильтр по типу события (login.success, ticket.delete, ...).",
     ),
     limit: int = Query(
-        default=100, ge=1, le=500,
+        default=100,
+        ge=1,
+        le=500,
         description="Сколько записей вернуть. Потолок 500 — чтобы случайно не выгрести миллион.",
     ),
     db: AsyncSession = Depends(get_db),

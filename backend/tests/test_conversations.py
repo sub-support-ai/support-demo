@@ -115,14 +115,16 @@ def test_dialog_policy_routes_failed_kb_followup_before_rag():
         detect_conversation_policy,
     )
 
-    policy = detect_conversation_policy([
-        {"role": "user", "content": "У меня не работает монитор, скорее всего сгорел"},
-        {
-            "role": "assistant",
-            "content": "Нашёл решение в базе знаний: Не работает или мерцает второй монитор",
-        },
-        {"role": "user", "content": "Не поможет, надо менять"},
-    ])
+    policy = detect_conversation_policy(
+        [
+            {"role": "user", "content": "У меня не работает монитор, скорее всего сгорел"},
+            {
+                "role": "assistant",
+                "content": "Нашёл решение в базе знаний: Не работает или мерцает второй монитор",
+            },
+            {"role": "user", "content": "Не поможет, надо менять"},
+        ]
+    )
 
     assert policy.intent == ConversationIntent.FAILED_KB_HANDOFF
     assert policy.action == ConversationAction.ESCALATE
@@ -138,9 +140,11 @@ def test_dialog_policy_routes_direct_hardware_handoff_before_rag():
         detect_conversation_policy,
     )
 
-    policy = detect_conversation_policy([
-        {"role": "user", "content": "У меня не работает монитор, скорее всего сгорел"},
-    ])
+    policy = detect_conversation_policy(
+        [
+            {"role": "user", "content": "У меня не работает монитор, скорее всего сгорел"},
+        ]
+    )
 
     assert policy.intent == ConversationIntent.DIRECT_HANDOFF
     assert policy.action == ConversationAction.ESCALATE
@@ -155,17 +159,19 @@ def test_dialog_policy_keeps_collecting_context_after_handoff_prompt():
         detect_conversation_policy,
     )
 
-    policy = detect_conversation_policy([
-        {"role": "user", "content": "У меня не работает монитор, скорее всего сгорел"},
-        {
-            "role": "assistant",
-            "content": (
-                "Понял, инструкция из базы знаний не решает ситуацию. "
-                "После этого подготовлю черновик запроса и передам его в нужный отдел."
-            ),
-        },
-        {"role": "user", "content": "Офис Южный, кабинет 210, монитор Dell"},
-    ])
+    policy = detect_conversation_policy(
+        [
+            {"role": "user", "content": "У меня не работает монитор, скорее всего сгорел"},
+            {
+                "role": "assistant",
+                "content": (
+                    "Понял, инструкция из базы знаний не решает ситуацию. "
+                    "После этого подготовлю черновик запроса и передам его в нужный отдел."
+                ),
+            },
+            {"role": "user", "content": "Офис Южный, кабинет 210, монитор Dell"},
+        ]
+    )
 
     assert policy.intent == ConversationIntent.COLLECT_CONTEXT
     assert policy.action == ConversationAction.ESCALATE
@@ -175,11 +181,14 @@ def test_dialog_policy_keeps_collecting_context_after_handoff_prompt():
 
 async def register_user(client: AsyncClient, suffix: str) -> tuple[int, str]:
     """Регистрирует пользователя и возвращает (id, access_token)."""
-    response = await client.post("/api/v1/auth/register", json={
-        "email": f"convuser{suffix}@example.com",
-        "username": f"convuser{suffix}",
-        "password": "Secret123!",
-    })
+    response = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": f"convuser{suffix}@example.com",
+            "username": f"convuser{suffix}",
+            "password": "Secret123!",
+        },
+    )
     assert response.status_code == 201
     token = response.json()["access_token"]
 
@@ -264,9 +273,7 @@ async def test_post_message_uses_knowledge_base_before_external_ai(
     assert ai_msg["sources"][0]["decision"] == "answer"
     assert "Проверьте интернет" in ai_msg["content"]
 
-    result = await db_session.execute(
-        select(AILog).where(AILog.conversation_id == conv_id)
-    )
+    result = await db_session.execute(select(AILog).where(AILog.conversation_id == conv_id))
     log = result.scalar_one()
     assert log.outcome == "resolved_by_ai"
     assert log.model_version == "knowledge-base-v1"
@@ -356,19 +363,19 @@ async def test_failed_knowledge_answer_followup_creates_escalation_card(
     assert ai_msg["requires_escalation"] is True
     assert ai_msg["ai_escalate"] is True
     assert ai_msg["sources"] is None
-    assert "инструкция из базы знаний не решает ситуацию" in ai_msg["content"]
+    assert "инструкция не решила проблему" in ai_msg["content"]
+    assert "соберу данные для заявки" in ai_msg["content"]
     assert "Teams" not in ai_msg["content"]
 
 
 @pytest.mark.asyncio
-async def test_message_after_escalation_prompt_is_saved_without_new_ai_job(
+async def test_message_after_escalation_prompt_updates_intake_state(
     client: AsyncClient,
     db_session,
     monkeypatch: pytest.MonkeyPatch,
 ):
     from app.models.knowledge_article import KnowledgeArticle
     from app.services import conversation_ai
-    from app.services.ai_jobs import claim_next_ai_job
 
     async def fail_if_called(conversation_id: int, messages: list[dict[str, str]]):
         raise AssertionError("External AI must not be called during intake mode")
@@ -418,9 +425,8 @@ async def test_message_after_escalation_prompt_is_saved_without_new_ai_job(
         headers=headers,
     )
     assert context_response.status_code == 201
-    assert context_response.json()["ai_job_id"] is None
-    assert context_response.json()["conversation_status"] == "active"
-    assert await claim_next_ai_job(db_session) is None
+    assert context_response.json()["ai_job_id"] is not None
+    await process_next_ai_job(db_session)
 
     history = await client.get(
         f"/api/v1/conversations/{conv_id}/messages",
@@ -428,11 +434,47 @@ async def test_message_after_escalation_prompt_is_saved_without_new_ai_job(
     )
     assert history.status_code == 200
     messages = history.json()
-    assert [message["role"] for message in messages] == ["user", "ai", "user", "ai", "user"]
-    assert messages[-1]["content"] == "Офис Южный, кабинет 210, монитор Dell"
+    assert [message["role"] for message in messages] == ["user", "ai", "user", "ai", "user", "ai"]
+    assert messages[-2]["content"] == "Офис Южный, кабинет 210, монитор Dell"
+    assert "Teams" not in messages[-1]["content"]
+    assert "Уже понял" in messages[-1]["content"]
+
+    conversations = await client.get("/api/v1/conversations/", headers=headers)
+    assert conversations.status_code == 200
+    conversation = next(item for item in conversations.json() if item["id"] == conv_id)
+    fields = conversation["intake_state"]["fields"]
+    assert fields["office"] == "Южный"
+    assert fields["affected_item"] == "монитор"
+    assert "office" not in conversation["intake_state"]["missing_fields"]
+
+
+def test_intake_extractor_collects_batch_context():
+    from app.services.intake_requirements import build_intake_state
+
+    state = build_intake_state(
+        None,
+        [
+            {"role": "user", "content": "VPN не подключается, ошибка авторизации"},
+            {"role": "assistant", "content": "Понял, соберу данные для заявки."},
+            {
+                "role": "user",
+                "content": "Франкфурт, перезапускал VPN и ноутбук, не могу работать из дома",
+            },
+        ],
+        requester_name="danik",
+        requester_email="danik@example.com",
+    )
+
+    assert state["fields"]["requester_name"] == "danik"
+    assert state["fields"]["requester_email"] == "danik@example.com"
+    assert state["fields"]["office"] == "Франкфурт"
+    assert state["fields"]["affected_item"] == "VPN"
+    assert "what_tried" not in state["missing_fields"]
+    assert "business_impact" not in state["missing_fields"]
 
 
 # ── POST /messages: AI fallback должен дать requires_escalation=True ─────────
+
 
 @pytest.mark.asyncio
 async def test_post_message_ai_unavailable_marks_red_zone(client: AsyncClient, db_session):
@@ -488,8 +530,8 @@ async def test_post_message_ai_unavailable_marks_red_zone(client: AsyncClient, d
 
     # У AI-сообщения есть полный набор метаданных
     assert ai_msg["role"] == "ai"
-    assert ai_msg["ai_confidence"] == 0.0          # fallback
-    assert ai_msg["ai_escalate"] is True           # fallback
+    assert ai_msg["ai_confidence"] == 0.0  # fallback
+    assert ai_msg["ai_escalate"] is True  # fallback
     # Пустой список источников → пишем None в БД (чище, чем [], отличает
     # "источников нет" от "AI не отдавал поле sources вообще"). См.
     # `sources=ai_payload.get("sources") or None` в conversations.py.
@@ -499,6 +541,7 @@ async def test_post_message_ai_unavailable_marks_red_zone(client: AsyncClient, d
 
 
 # ── POST /messages: история сохраняется в правильном порядке ────────────────
+
 
 @pytest.mark.asyncio
 async def test_messages_persisted_in_chronological_order(client: AsyncClient, db_session):
@@ -532,16 +575,19 @@ async def test_messages_persisted_in_chronological_order(client: AsyncClient, db
 
 # ── POST /messages: чужой диалог → 404 ──────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_post_message_to_other_user_conversation_returns_404(client: AsyncClient):
     """Bob не может писать в диалог Alice → 404 (не палим существование)."""
     _, alice_token = await register_user(client, "ownerA")
     _, bob_token = await register_user(client, "ownerB")
 
-    conv_id = (await client.post(
-        "/api/v1/conversations/",
-        headers={"Authorization": f"Bearer {alice_token}"},
-    )).json()["id"]
+    conv_id = (
+        await client.post(
+            "/api/v1/conversations/",
+            headers={"Authorization": f"Bearer {alice_token}"},
+        )
+    ).json()["id"]
 
     resp = await client.post(
         f"/api/v1/conversations/{conv_id}/messages",
@@ -604,13 +650,14 @@ async def test_create_draft_intent_forces_escalation_card(
     )
     assert second_history.status_code == 200
     ai_msg = second_history.json()[-1]
-    assert ai_msg["ai_confidence"] == 0.5
+    assert ai_msg["ai_confidence"] == 0.55
     assert ai_msg["ai_escalate"] is True
     assert ai_msg["requires_escalation"] is True
-    assert "Соберу данные для черновика" in ai_msg["content"]
+    assert "Соберу данные для заявки" in ai_msg["content"]
 
 
 # ── POST /escalate: 1-click autofill создаёт тикет ──────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_escalate_creates_prefilled_ticket(client: AsyncClient, db_session):
@@ -837,6 +884,7 @@ async def test_escalate_software_update_request_gets_low_priority(client: AsyncC
 
 # ── POST /escalate: пустой диалог → 400 ─────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_escalate_empty_conversation_returns_400(client: AsyncClient):
     """В диалоге нет ни одного сообщения → нечего классифицировать → 400."""
@@ -855,16 +903,19 @@ async def test_escalate_empty_conversation_returns_400(client: AsyncClient):
 
 # ── POST /escalate: чужой диалог → 404 ──────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_escalate_other_user_conversation_returns_404(client: AsyncClient, db_session):
     """Bob не может эскалировать диалог Alice → 404, не 403."""
     _, alice_token = await register_user(client, "escA")
     _, bob_token = await register_user(client, "escB")
 
-    conv_id = (await client.post(
-        "/api/v1/conversations/",
-        headers={"Authorization": f"Bearer {alice_token}"},
-    )).json()["id"]
+    conv_id = (
+        await client.post(
+            "/api/v1/conversations/",
+            headers={"Authorization": f"Bearer {alice_token}"},
+        )
+    ).json()["id"]
 
     # Alice пишет сообщение, чтобы диалог был непустым
     message_resp = await client.post(
@@ -885,6 +936,7 @@ async def test_escalate_other_user_conversation_returns_404(client: AsyncClient,
 
 
 # ── _load_history_for_ai: маппинг ролей и ограничение по длине ──────────────
+
 
 @pytest.mark.asyncio
 async def test_load_history_maps_roles_and_limits_length(db_session, client: AsyncClient):
@@ -921,11 +973,13 @@ async def test_load_history_maps_roles_and_limits_length(db_session, client: Asy
     total = MAX_HISTORY_MESSAGES + 5
     for i in range(total):
         role = "user" if i % 2 == 0 else "ai"
-        db_session.add(Message(
-            conversation_id=conv.id,
-            role=role,
-            content=f"msg-{i}",
-        ))
+        db_session.add(
+            Message(
+                conversation_id=conv.id,
+                role=role,
+                content=f"msg-{i}",
+            )
+        )
     await db_session.flush()
 
     history = await load_history_for_ai(db_session, conv.id)
@@ -943,6 +997,7 @@ async def test_load_history_maps_roles_and_limits_length(db_session, client: Asy
 
 
 # ── _extract_steps_tried: эвристика по ключевым словам ──────────────────────
+
 
 def test_extract_steps_tried_finds_attempts():
     """Если пользователь упомянул "пробовал/перезагружал" — забираем строку."""
@@ -983,24 +1038,32 @@ def test_support_draft_detection_handles_draft_request_and_urgent_wire():
         should_offer_support_draft,
     )
 
-    assert should_offer_support_draft([
-        {"role": "user", "content": "порвался провод, срочно"},
-    ])
-    urgent_policy = detect_conversation_policy([
-        {"role": "user", "content": "порвался провод, срочно"},
-    ])
+    assert should_offer_support_draft(
+        [
+            {"role": "user", "content": "порвался провод, срочно"},
+        ]
+    )
+    urgent_policy = detect_conversation_policy(
+        [
+            {"role": "user", "content": "порвался провод, срочно"},
+        ]
+    )
     assert urgent_policy.intent == ConversationIntent.EMERGENCY
-    assert should_offer_support_draft([
-        {"role": "user", "content": "порвался провод, срочно"},
-        {"role": "assistant", "content": "Потребуется специалист."},
-        {
-            "role": "user",
-            "content": "давай создадим черновик для запроса к тех поддержке",
-        },
-    ])
-    assert not should_offer_support_draft([
-        {"role": "user", "content": "как обновить VS Code?"},
-    ])
+    assert should_offer_support_draft(
+        [
+            {"role": "user", "content": "порвался провод, срочно"},
+            {"role": "assistant", "content": "Потребуется специалист."},
+            {
+                "role": "user",
+                "content": "давай создадим черновик для запроса к тех поддержке",
+            },
+        ]
+    )
+    assert not should_offer_support_draft(
+        [
+            {"role": "user", "content": "как обновить VS Code?"},
+        ]
+    )
 
 
 # ── Блок 3: AI latency capture ───────────────────────────────────────────────
@@ -1073,10 +1136,6 @@ async def test_ai_log_records_latency_passed_through_payload(
     await process_next_ai_job(db_session)
 
     log = (
-        await db_session.execute(
-            select(AILog).where(AILog.conversation_id == conv_id)
-        )
+        await db_session.execute(select(AILog).where(AILog.conversation_id == conv_id))
     ).scalar_one()
     assert log.ai_response_time_ms == captured_latency_ms
-
-

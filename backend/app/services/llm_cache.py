@@ -175,6 +175,4 @@ def is_cacheable(payload: dict[str, Any], red_zone_threshold: float) -> bool:
     if not isinstance(answer, str) or not answer.strip():
         return False
     confidence = payload.get("confidence")
-    if isinstance(confidence, (int, float)) and confidence < red_zone_threshold:
-        return False
-    return True
+    return not (isinstance(confidence, (int, float)) and confidence < red_zone_threshold)

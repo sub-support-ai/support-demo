@@ -1,6 +1,5 @@
 from app.models.user import User
 
-
 OFFICE_OPTIONS = ("Главный офис", "Склад", "Удаленно")
 AFFECTED_ITEM_OPTIONS = (
     "Рабочее место",

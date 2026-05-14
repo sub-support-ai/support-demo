@@ -1,28 +1,25 @@
-﻿"""add_reopen_count_to_tickets
+"""add_reopen_count_to_tickets
 
 Revision ID: 2eff2e137a7e
 Revises: a8b1c2d3e4f5
 Create Date: 2026-05-08 22:51:40.078456
 """
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
 
+from alembic import op
 
 revision: str = "2eff2e137a7e"
-down_revision: Union[str, Sequence[str], None] = "a8b1c2d3e4f5"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = "a8b1c2d3e4f5"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def _has_column(table_name: str, column_name: str) -> bool:
     inspector = sa.inspect(op.get_bind())
-    return any(
-        column["name"] == column_name
-        for column in inspector.get_columns(table_name)
-    )
+    return any(column["name"] == column_name for column in inspector.get_columns(table_name))
 
 
 def upgrade() -> None:

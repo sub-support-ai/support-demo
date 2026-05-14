@@ -10,8 +10,8 @@
   - avg_csat_score в GET /stats/ (None когда нет оценок, число — когда есть).
 """
 
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, patch
+from datetime import UTC, datetime
+from unittest.mock import patch
 
 import pytest
 from httpx import AsyncClient
@@ -24,8 +24,8 @@ from app.models.ticket_rating import TicketRating
 from app.models.user import User
 from app.security import hash_password
 
-
 # ── Вспомогательные функции ───────────────────────────────────────────────────
+
 
 async def _register(client: AsyncClient, suffix: str) -> str:
     """Регистрирует пользователя, возвращает access_token."""
@@ -97,7 +97,7 @@ async def _create_resolved_ticket(
         user_priority=3,
         requester_name=user.username,
         requester_email=user.email,
-        resolved_at=datetime.now(timezone.utc),
+        resolved_at=datetime.now(UTC),
     )
     db.add(ticket)
     await db.flush()
@@ -131,6 +131,7 @@ async def _create_confirmed_ticket(
 
 
 # ── CSAT оценка ───────────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_rate_ticket_success(client: AsyncClient, db_session: AsyncSession):
@@ -208,7 +209,7 @@ async def test_rate_open_ticket_rejected(client: AsyncClient, db_session: AsyncS
 async def test_rate_other_users_ticket_returns_404(client: AsyncClient, db_session: AsyncSession):
     """Нельзя оценить чужой тикет — 404."""
     _, agent = await _make_agent(db_session, "csat4")
-    token_owner = await _register(client, "csat4-owner")
+    await _register(client, "csat4-owner")
     token_other = await _register(client, "csat4-other")
 
     result = await db_session.execute(sa_select(User).where(User.username == "csr_csat4-owner"))
@@ -242,6 +243,7 @@ async def test_rating_out_of_range_rejected(client: AsyncClient, db_session: Asy
 
 
 # ── Перенаправление тикета ────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_reroute_ticket_changes_department(client: AsyncClient, db_session: AsyncSession):
@@ -324,6 +326,7 @@ async def test_user_cannot_reroute(client: AsyncClient, db_session: AsyncSession
 
 # ── notify_agent_assigned ─────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_notify_agent_assigned_sends_email():
     """notify_agent_assigned вызывает send_email с правильными аргументами."""
@@ -352,6 +355,7 @@ async def test_notify_agent_assigned_sends_email():
 
 
 # ── avg_csat_score в stats ─────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_stats_avg_csat_none_when_no_ratings(client: AsyncClient):

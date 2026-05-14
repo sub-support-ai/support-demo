@@ -105,7 +105,9 @@ def _parse_markdown(path: Path) -> dict[str, Any] | None:
         return None
 
     if not isinstance(frontmatter, dict):
-        logger.warning("%s: frontmatter должен быть dict, получили %s", path, type(frontmatter).__name__)
+        logger.warning(
+            "%s: frontmatter должен быть dict, получили %s", path, type(frontmatter).__name__
+        )
         return None
 
     body_md = match.group("body").strip()
@@ -146,7 +148,9 @@ def _collect_markdown_files(root: Path, pattern: str) -> list[Path]:
     return sorted(root.rglob(pattern))
 
 
-async def import_markdown_directory(directory: Path, pattern: str = "*.md", dry_run: bool = False) -> None:
+async def import_markdown_directory(
+    directory: Path, pattern: str = "*.md", dry_run: bool = False
+) -> None:
     files = _collect_markdown_files(directory, pattern)
     if not files:
         print(f"В {directory} не найдено файлов по шаблону {pattern!r}")
@@ -177,7 +181,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Импорт KB из MD-файлов")
     parser.add_argument("directory", type=Path, help="Папка с MD-файлами или один файл")
     parser.add_argument("--pattern", default="*.md", help="Glob-шаблон файлов (default: *.md)")
-    parser.add_argument("--dry-run", action="store_true", help="Не записывать в БД, только проверить парсинг")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Не записывать в БД, только проверить парсинг"
+    )
     parser.add_argument("--verbose", "-v", action="store_true", help="DEBUG-логи")
     args = parser.parse_args()
 

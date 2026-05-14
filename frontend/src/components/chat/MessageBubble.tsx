@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useSubmitKnowledgeFeedback } from "../../api/knowledge";
 import type {
   EscalationContext,
+  IntakeState,
   Message,
   RequestContextDefaults,
 } from "../../api/types";
@@ -103,14 +104,18 @@ export function MessageBubble({
   escalationDisabled,
   escalationLoading,
   contextDefaults,
+  intakeState,
   showAiConfidence = false,
+  showEscalationCard = true,
   onEscalate,
 }: {
   message: Message;
   escalationDisabled?: boolean;
   escalationLoading?: boolean;
   contextDefaults?: RequestContextDefaults | null;
+  intakeState?: IntakeState | null;
   showAiConfidence?: boolean;
+  showEscalationCard?: boolean;
   onEscalate: (conversationId: number, context: EscalationContext) => void;
 }) {
   const isUser = message.role === "user";
@@ -136,14 +141,17 @@ export function MessageBubble({
               <KnowledgeFeedbackActions message={message} />
             </Paper>
           )}
-          <EscalationCard
-            contextDefaults={contextDefaults}
-            disabled={escalationDisabled}
-            loading={escalationLoading}
-            onEscalate={(context) =>
-              onEscalate(message.conversation_id, context)
-            }
-          />
+          {showEscalationCard && (
+            <EscalationCard
+              contextDefaults={contextDefaults}
+              intakeState={intakeState}
+              disabled={escalationDisabled}
+              loading={escalationLoading}
+              onEscalate={(context) =>
+                onEscalate(message.conversation_id, context)
+              }
+            />
+          )}
         </div>
       </div>
     );

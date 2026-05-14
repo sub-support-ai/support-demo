@@ -152,7 +152,7 @@ def _summary(results: list[CaseResult], top_k: int) -> dict:
     mean_score = sum(matched_scores) / len(matched_scores) if matched_scores else 0.0
     return {
         "total_cases": total,
-        f"recall@1": hits_at_1 / total if total else 0.0,
+        "recall@1": hits_at_1 / total if total else 0.0,
         f"recall@{top_k}": hits_at_k / total if total else 0.0,
         "mrr": mrr,
         "mean_match_score": mean_score,

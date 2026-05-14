@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import AsyncClient
@@ -65,9 +65,9 @@ async def test_process_ai_job_skips_duplicate_response_for_same_user_turn(
         status="running",
         attempts=1,
         max_attempts=3,
-        run_after=datetime.now(timezone.utc),
-        locked_at=datetime.now(timezone.utc),
-        started_at=datetime.now(timezone.utc),
+        run_after=datetime.now(UTC),
+        locked_at=datetime.now(UTC),
+        started_at=datetime.now(UTC),
     )
     db_session.add(job)
     await db_session.flush()
@@ -87,13 +87,17 @@ async def test_process_ai_job_skips_duplicate_response_for_same_user_turn(
     assert conversation.ai_stage is None
 
     ai_messages = (
-        await db_session.execute(
-            select(Message).where(
-                Message.conversation_id == conversation.id,
-                Message.role == "ai",
+        (
+            await db_session.execute(
+                select(Message).where(
+                    Message.conversation_id == conversation.id,
+                    Message.role == "ai",
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(ai_messages) == 1
 
 
@@ -116,7 +120,7 @@ async def test_admin_can_list_failed_jobs(
             status="failed",
             attempts=3,
             max_attempts=3,
-            run_after=datetime.now(timezone.utc),
+            run_after=datetime.now(UTC),
             error="Ollama timeout",
         )
     )
@@ -127,7 +131,7 @@ async def test_admin_can_list_failed_jobs(
             status="failed",
             attempts=3,
             max_attempts=3,
-            run_after=datetime.now(timezone.utc),
+            run_after=datetime.now(UTC),
             error="Embedding service unavailable",
         )
     )
@@ -175,7 +179,7 @@ async def test_admin_can_filter_jobs_by_kind_and_status(
             status="queued",
             attempts=0,
             max_attempts=3,
-            run_after=datetime.now(timezone.utc),
+            run_after=datetime.now(UTC),
         )
     )
     db_session.add(
@@ -185,7 +189,7 @@ async def test_admin_can_filter_jobs_by_kind_and_status(
             status="failed",
             attempts=3,
             max_attempts=3,
-            run_after=datetime.now(timezone.utc),
+            run_after=datetime.now(UTC),
             error="Embedding service unavailable",
         )
     )
@@ -221,9 +225,9 @@ async def test_admin_can_retry_failed_ai_job(
         status="failed",
         attempts=3,
         max_attempts=3,
-        run_after=datetime.now(timezone.utc),
+        run_after=datetime.now(UTC),
         error="temporary failure",
-        finished_at=datetime.now(timezone.utc),
+        finished_at=datetime.now(UTC),
     )
     db_session.add(job)
     await db_session.flush()
@@ -265,9 +269,9 @@ async def test_admin_can_retry_failed_knowledge_embedding_job(
         status="failed",
         attempts=3,
         max_attempts=3,
-        run_after=datetime.now(timezone.utc),
+        run_after=datetime.now(UTC),
         error="embedding failed",
-        finished_at=datetime.now(timezone.utc),
+        finished_at=datetime.now(UTC),
     )
     db_session.add(job)
     await db_session.flush()
@@ -302,9 +306,9 @@ async def test_admin_can_requeue_running_ai_job(
         status="running",
         attempts=1,
         max_attempts=3,
-        run_after=datetime.now(timezone.utc),
-        locked_at=datetime.now(timezone.utc),
-        started_at=datetime.now(timezone.utc),
+        run_after=datetime.now(UTC),
+        locked_at=datetime.now(UTC),
+        started_at=datetime.now(UTC),
     )
     db_session.add(job)
     await db_session.flush()
@@ -337,9 +341,9 @@ async def test_admin_can_requeue_running_knowledge_embedding_job(
         status="running",
         attempts=1,
         max_attempts=3,
-        run_after=datetime.now(timezone.utc),
-        locked_at=datetime.now(timezone.utc),
-        started_at=datetime.now(timezone.utc),
+        run_after=datetime.now(UTC),
+        locked_at=datetime.now(UTC),
+        started_at=datetime.now(UTC),
     )
     db_session.add(job)
     await db_session.flush()
@@ -374,9 +378,9 @@ async def test_regular_user_cannot_requeue_ai_job(
         status="running",
         attempts=1,
         max_attempts=3,
-        run_after=datetime.now(timezone.utc),
-        locked_at=datetime.now(timezone.utc),
-        started_at=datetime.now(timezone.utc),
+        run_after=datetime.now(UTC),
+        locked_at=datetime.now(UTC),
+        started_at=datetime.now(UTC),
     )
     db_session.add(job)
     await db_session.flush()
@@ -428,7 +432,7 @@ async def test_requeue_ai_job_rejects_non_running_status(
         status=job_status,
         attempts=1,
         max_attempts=3,
-        run_after=datetime.now(timezone.utc),
+        run_after=datetime.now(UTC),
     )
     db_session.add(job)
     await db_session.flush()
@@ -459,9 +463,9 @@ async def test_requeue_ai_job_rejects_when_attempts_exhausted(
         status="running",
         attempts=3,
         max_attempts=3,
-        run_after=datetime.now(timezone.utc),
-        locked_at=datetime.now(timezone.utc),
-        started_at=datetime.now(timezone.utc),
+        run_after=datetime.now(UTC),
+        locked_at=datetime.now(UTC),
+        started_at=datetime.now(UTC),
     )
     db_session.add(job)
     await db_session.flush()
@@ -514,9 +518,7 @@ async def test_requeue_knowledge_embedding_job_rejects_non_running_status(
     db_session: AsyncSession,
     job_status: str,
 ):
-    admin_id, token = await _register_user_with_id(
-        client, f"requeueke409{job_status}"
-    )
+    admin_id, token = await _register_user_with_id(client, f"requeueke409{job_status}")
     admin = await db_session.get(User, admin_id)
     assert admin is not None
     admin.role = "admin"
@@ -526,7 +528,7 @@ async def test_requeue_knowledge_embedding_job_rejects_non_running_status(
         status=job_status,
         attempts=1,
         max_attempts=3,
-        run_after=datetime.now(timezone.utc),
+        run_after=datetime.now(UTC),
     )
     db_session.add(job)
     await db_session.flush()
@@ -555,9 +557,9 @@ async def test_requeue_knowledge_embedding_job_rejects_when_attempts_exhausted(
         status="running",
         attempts=3,
         max_attempts=3,
-        run_after=datetime.now(timezone.utc),
-        locked_at=datetime.now(timezone.utc),
-        started_at=datetime.now(timezone.utc),
+        run_after=datetime.now(UTC),
+        locked_at=datetime.now(UTC),
+        started_at=datetime.now(UTC),
     )
     db_session.add(job)
     await db_session.flush()
@@ -589,9 +591,9 @@ async def test_requeue_ai_job_marks_is_stale_for_old_lock(
         status="running",
         attempts=1,
         max_attempts=3,
-        run_after=datetime.now(timezone.utc),
-        locked_at=datetime.now(timezone.utc),
-        started_at=datetime.now(timezone.utc),
+        run_after=datetime.now(UTC),
+        locked_at=datetime.now(UTC),
+        started_at=datetime.now(UTC),
     )
     # Старый lock (20 минут назад) — is_stale должен быть True.
     other = Conversation(user_id=admin_id, status="ai_processing")
@@ -602,9 +604,9 @@ async def test_requeue_ai_job_marks_is_stale_for_old_lock(
         status="running",
         attempts=1,
         max_attempts=3,
-        run_after=datetime.now(timezone.utc),
-        locked_at=datetime.now(timezone.utc) - timedelta(minutes=20),
-        started_at=datetime.now(timezone.utc) - timedelta(minutes=20),
+        run_after=datetime.now(UTC),
+        locked_at=datetime.now(UTC) - timedelta(minutes=20),
+        started_at=datetime.now(UTC) - timedelta(minutes=20),
     )
     db_session.add_all([fresh_job, stale_job])
     await db_session.flush()
@@ -636,9 +638,9 @@ async def test_list_jobs_marks_stale_knowledge_embedding_job(
         status="running",
         attempts=1,
         max_attempts=3,
-        run_after=datetime.now(timezone.utc),
-        locked_at=datetime.now(timezone.utc),
-        started_at=datetime.now(timezone.utc),
+        run_after=datetime.now(UTC),
+        locked_at=datetime.now(UTC),
+        started_at=datetime.now(UTC),
     )
     stale_job = KnowledgeEmbeddingJob(
         article_id=None,
@@ -646,9 +648,9 @@ async def test_list_jobs_marks_stale_knowledge_embedding_job(
         status="running",
         attempts=1,
         max_attempts=3,
-        run_after=datetime.now(timezone.utc),
-        locked_at=datetime.now(timezone.utc) - timedelta(minutes=20),
-        started_at=datetime.now(timezone.utc) - timedelta(minutes=20),
+        run_after=datetime.now(UTC),
+        locked_at=datetime.now(UTC) - timedelta(minutes=20),
+        started_at=datetime.now(UTC) - timedelta(minutes=20),
     )
     queued_old_lock_job = KnowledgeEmbeddingJob(
         article_id=None,
@@ -656,8 +658,8 @@ async def test_list_jobs_marks_stale_knowledge_embedding_job(
         status="queued",
         attempts=0,
         max_attempts=3,
-        run_after=datetime.now(timezone.utc),
-        locked_at=datetime.now(timezone.utc) - timedelta(minutes=20),
+        run_after=datetime.now(UTC),
+        locked_at=datetime.now(UTC) - timedelta(minutes=20),
     )
     db_session.add_all([fresh_job, stale_job, queued_old_lock_job])
     await db_session.flush()

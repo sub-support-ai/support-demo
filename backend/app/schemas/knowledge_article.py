@@ -30,7 +30,9 @@ class KnowledgeArticleBase(BaseModel):
     expires_at: datetime | None = None
     is_active: bool = True
 
-    @field_validator("request_type", "problem", "when_to_escalate", "keywords", "source_url", "owner")
+    @field_validator(
+        "request_type", "problem", "when_to_escalate", "keywords", "source_url", "owner"
+    )
     @classmethod
     def strip_optional_text(cls, value: str | None) -> str | None:
         if value is None:
@@ -92,7 +94,9 @@ class KnowledgeArticleUpdate(BaseModel):
     expires_at: datetime | None = None
     is_active: bool | None = None
 
-    @field_validator("request_type", "problem", "when_to_escalate", "keywords", "source_url", "owner")
+    @field_validator(
+        "request_type", "problem", "when_to_escalate", "keywords", "source_url", "owner"
+    )
     @classmethod
     def strip_optional_text(cls, value: str | None) -> str | None:
         if value is None:

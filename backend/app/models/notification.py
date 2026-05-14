@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, false, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -27,8 +27,8 @@ class Notification(Base):
     event_type: Mapped[str] = mapped_column(String(60), nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(160), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
-    target_type: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
-    target_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    target_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    target_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_read: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
@@ -42,6 +42,6 @@ class Notification(Base):
         nullable=False,
         index=True,
     )
-    read_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     user: Mapped["User"] = relationship("User")

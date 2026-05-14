@@ -22,9 +22,9 @@ Changes:
   Индекс создаётся через CREATE INDEX IF NOT EXISTS.
 """
 
-from alembic import op
 import sqlalchemy as sa
 
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "c5d6e7f8a9b0"
@@ -80,8 +80,7 @@ def upgrade() -> None:
 
     # ── 2. Составной индекс (agent_id, status) ────────────────────────────────
     op.execute(
-        "CREATE INDEX IF NOT EXISTS ix_tickets_agent_id_status "
-        "ON tickets (agent_id, status);"
+        "CREATE INDEX IF NOT EXISTS ix_tickets_agent_id_status ON tickets (agent_id, status);"
     )
 
 

@@ -10,8 +10,6 @@ TTR  = время от создания до resolved_at.
   - GET /stats/ возвращает avg_ttfr_seconds и avg_ttr_seconds.
 """
 
-from datetime import datetime, timedelta, timezone
-
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,7 +19,6 @@ from app.models.agent import Agent
 from app.models.ticket import Ticket
 from app.models.user import User
 from app.security import hash_password
-
 
 # ── Фикстуры ─────────────────────────────────────────────────────────────────
 
@@ -106,7 +103,7 @@ async def _create_ticket_direct(
     """
     ticket = Ticket(
         user_id=user.id,
-        agent_id=agent.id,       # PK таблицы agents, не users
+        agent_id=agent.id,  # PK таблицы agents, не users
         title=title,
         body=body,
         department="IT",
@@ -132,12 +129,13 @@ async def test_first_response_at_set_on_first_agent_comment(
 
     # Получаем объект пользователя из БД по username
     from sqlalchemy import select as sa_select
-    result = await db_session.execute(
-        sa_select(User).where(User.username == "ttfr_frat1-user")
-    )
+
+    result = await db_session.execute(sa_select(User).where(User.username == "ttfr_frat1-user"))
     user_obj = result.scalar_one()
 
-    ticket = await _create_ticket_direct(db_session, user_obj, agent, "Нет интернета", "Интернет пропал")
+    ticket = await _create_ticket_direct(
+        db_session, user_obj, agent, "Нет интернета", "Интернет пропал"
+    )
 
     agent_token = await _login(client, agent_user.username)
     comment_r = await client.post(
@@ -161,12 +159,12 @@ async def test_first_response_at_not_overwritten_on_second_comment(
     agent_user, agent = await _make_agent(db_session, "frat2")
     _, user_token = await _register(client, "frat2-user")
 
-    result = await db_session.execute(
-        sa_select(User).where(User.username == "ttfr_frat2-user")
-    )
+    result = await db_session.execute(sa_select(User).where(User.username == "ttfr_frat2-user"))
     user_obj = result.scalar_one()
 
-    ticket = await _create_ticket_direct(db_session, user_obj, agent, "Зависает ПК", "Компьютер зависает")
+    ticket = await _create_ticket_direct(
+        db_session, user_obj, agent, "Зависает ПК", "Компьютер зависает"
+    )
 
     agent_token = await _login(client, agent_user.username)
 
@@ -231,8 +229,12 @@ async def test_stats_returns_ttfr_ttr_fields(client: AsyncClient):
     assert "avg_ttfr_seconds" in tickets
     assert "avg_ttr_seconds" in tickets
     # Если данных нет — None (не отсутствующее поле)
-    assert tickets["avg_ttfr_seconds"] is None or isinstance(tickets["avg_ttfr_seconds"], (int, float))
-    assert tickets["avg_ttr_seconds"] is None or isinstance(tickets["avg_ttr_seconds"], (int, float))
+    assert tickets["avg_ttfr_seconds"] is None or isinstance(
+        tickets["avg_ttfr_seconds"], (int, float)
+    )
+    assert tickets["avg_ttr_seconds"] is None or isinstance(
+        tickets["avg_ttr_seconds"], (int, float)
+    )
 
 
 @pytest.mark.asyncio

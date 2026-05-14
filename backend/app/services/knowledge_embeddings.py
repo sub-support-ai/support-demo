@@ -1,13 +1,13 @@
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 
 from app.config import get_settings
-from app.services.ai_service_client import ai_service_headers
 from app.models.knowledge_article import KnowledgeChunk
+from app.services.ai_service_client import ai_service_headers
 
 logger = logging.getLogger(__name__)
 
@@ -141,5 +141,5 @@ async def embed_texts(texts: list[str]) -> EmbeddingBatch:
 
 def mark_chunk_embedded(chunk: KnowledgeChunk, model: str) -> None:
     chunk.embedding_model = model
-    chunk.embedding_updated_at = datetime.now(timezone.utc)
+    chunk.embedding_updated_at = datetime.now(UTC)
     chunk.token_count = estimate_token_count(chunk.content)

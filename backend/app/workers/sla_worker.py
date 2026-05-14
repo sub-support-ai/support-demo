@@ -1,13 +1,13 @@
 import asyncio
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete
 
 from app.database import AsyncSessionLocal
-from app.services.sla_escalation import escalate_overdue_tickets
 from app.metrics import refresh_queue_depth_metrics
+from app.services.sla_escalation import escalate_overdue_tickets
 from app.workers.base import BaseWorker
 
 logger = logging.getLogger(__name__)
@@ -39,26 +39,23 @@ async def _run_retention_once() -> None:
     Если LOG_RETENTION_DAYS == 0 — retention отключён, выходим сразу.
     """
     from app.config import get_settings
+
     retention_days = get_settings().LOG_RETENTION_DAYS
     if not retention_days:
         return
 
-    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+    cutoff = datetime.now(UTC) - timedelta(days=retention_days)
 
-    from app.models.audit_log import AuditLog
     from app.models.ai_fallback_event import AIFallbackEvent
     from app.models.ai_job import AIJob
+    from app.models.audit_log import AuditLog
     from app.models.knowledge_embedding_job import KnowledgeEmbeddingJob
 
     async with AsyncSessionLocal() as db:
         # audit_logs — все старше cutoff
-        r1 = await db.execute(
-            delete(AuditLog).where(AuditLog.created_at < cutoff)
-        )
+        r1 = await db.execute(delete(AuditLog).where(AuditLog.created_at < cutoff))
         # ai_fallback_events — все старше cutoff
-        r2 = await db.execute(
-            delete(AIFallbackEvent).where(AIFallbackEvent.created_at < cutoff)
-        )
+        r2 = await db.execute(delete(AIFallbackEvent).where(AIFallbackEvent.created_at < cutoff))
         # ai_jobs — только завершённые (done/failed) старше cutoff
         r3 = await db.execute(
             delete(AIJob).where(
@@ -75,12 +72,7 @@ async def _run_retention_once() -> None:
         )
         await db.commit()
 
-    deleted = (
-        (r1.rowcount or 0)
-        + (r2.rowcount or 0)
-        + (r3.rowcount or 0)
-        + (r4.rowcount or 0)
-    )
+    deleted = (r1.rowcount or 0) + (r2.rowcount or 0) + (r3.rowcount or 0) + (r4.rowcount or 0)
     if deleted:
         logger.info(
             "Retention: удалено устаревших записей",
@@ -126,6 +118,7 @@ class SLAWorker(BaseWorker):
         # Обновляем Prometheus-gauges глубины очередей: SLA-воркер уже тикает
         # каждые 30 с, используем его тик чтобы не поднимать отдельный поллер.
         from app.config import get_settings
+
         try:
             await refresh_queue_depth_metrics(get_settings().DATABASE_URL)
         except Exception:

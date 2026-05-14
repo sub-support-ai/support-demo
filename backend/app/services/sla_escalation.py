@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,7 +30,7 @@ async def escalate_overdue_ticket(
     ticket: Ticket,
     now: datetime | None = None,
 ) -> bool:
-    current_time = now or datetime.now(timezone.utc)
+    current_time = now or datetime.now(UTC)
     senior_agent = await find_senior_agent_for_ticket(db, ticket)
     if senior_agent is None:
         return False
@@ -109,7 +109,7 @@ async def escalate_overdue_tickets(
     limit: int = 50,
     now: datetime | None = None,
 ) -> int:
-    current_time = now or datetime.now(timezone.utc)
+    current_time = now or datetime.now(UTC)
     result = await db.execute(
         select(Ticket)
         .where(

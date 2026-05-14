@@ -12,22 +12,22 @@
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func, select, case, or_
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.database import get_db
 from app.dependencies import get_current_user, require_role
 from app.models.ai_fallback_event import AIFallbackEvent
-from app.models.ticket import Ticket
-from app.models.ai_log import AILog
 from app.models.ai_job import AIJob
+from app.models.ai_log import AILog
 from app.models.conversation import Conversation
 from app.models.knowledge_article import KnowledgeArticle, KnowledgeArticleFeedback
 from app.models.knowledge_embedding_job import KnowledgeEmbeddingJob
+from app.models.ticket import Ticket
 from app.models.ticket_rating import TicketRating
 from app.models.user import User
 from app.schemas.stats import (
@@ -91,9 +91,7 @@ async def get_stats(
 
     # Всего тикетов
     ticket_filters = await _ticket_scope_filters(db, current_user)
-    total_result = await db.execute(
-        select(func.count()).select_from(Ticket).where(*ticket_filters)
-    )
+    total_result = await db.execute(select(func.count()).select_from(Ticket).where(*ticket_filters))
     total_tickets = total_result.scalar() or 0
 
     # По статусам: {"new": 5, "in_progress": 12, "resolved": 30, ...}
@@ -138,7 +136,7 @@ async def get_stats(
             *ticket_filters,
             Ticket.status.in_(tuple(OPEN_STATUSES)),
             Ticket.sla_deadline_at.is_not(None),
-            Ticket.sla_deadline_at < datetime.now(timezone.utc),
+            Ticket.sla_deadline_at < datetime.now(UTC),
         )
     )
     reopen_result = await db.execute(
@@ -161,22 +159,18 @@ async def get_stats(
     # не поддерживает эту функцию — там avg будет None, и мы защищаемся проверкой).
     ttfr_result = await db.execute(
         select(
-            func.avg(
-                func.extract("epoch", Ticket.first_response_at - Ticket.created_at)
-            ).label("avg_ttfr")
-        )
-        .where(
+            func.avg(func.extract("epoch", Ticket.first_response_at - Ticket.created_at)).label(
+                "avg_ttfr"
+            )
+        ).where(
             *ticket_filters,
             Ticket.first_response_at.is_not(None),
         )
     )
     ttr_result = await db.execute(
         select(
-            func.avg(
-                func.extract("epoch", Ticket.resolved_at - Ticket.created_at)
-            ).label("avg_ttr")
-        )
-        .where(
+            func.avg(func.extract("epoch", Ticket.resolved_at - Ticket.created_at)).label("avg_ttr")
+        ).where(
             *ticket_filters,
             Ticket.resolved_at.is_not(None),
         )
@@ -213,50 +207,37 @@ async def get_stats(
 
     # Общие метрики из ai_logs одним запросом
     ai_stats_query = select(
-            func.count().label("total"),
-            func.avg(AILog.confidence_score).label("avg_confidence"),
-            # Тикеты с низкой уверенностью (< 0.8) — нужна проверка агентом
-            func.sum(
-                case((AILog.confidence_score < 0.8, 1), else_=0)
-            ).label("low_confidence"),
-            # Роутинг подтверждён агентом
-            func.sum(
-                case((AILog.routing_was_correct == True, 1), else_=0)
-            ).label("routing_correct"),
-            # Роутинг исправлен агентом
-            func.sum(
-                case((AILog.routing_was_correct == False, 1), else_=0)
-            ).label("routing_incorrect"),
-            # AI решил без тикета
-            func.sum(
-                case((AILog.outcome == "resolved_by_ai", 1), else_=0)
-            ).label("resolved_by_ai"),
-            # AI создал тикет (пользователь принял или написал свой)
-            func.sum(
-                case((AILog.outcome.in_(
-                    ["escalated_ai_ticket", "escalated_user_ticket"]
-                ), 1), else_=0)
-            ).label("escalated"),
-            # Обратная связь
-            func.sum(
-                case((AILog.user_feedback == "helped", 1), else_=0)
-            ).label("feedback_helped"),
-            func.sum(
-                case((AILog.user_feedback == "not_helped", 1), else_=0)
-            ).label("feedback_not_helped"),
+        func.count().label("total"),
+        func.avg(AILog.confidence_score).label("avg_confidence"),
+        # Тикеты с низкой уверенностью (< 0.8) — нужна проверка агентом
+        func.sum(case((AILog.confidence_score < 0.8, 1), else_=0)).label("low_confidence"),
+        # Роутинг подтверждён агентом
+        func.sum(case((AILog.routing_was_correct.is_(True), 1), else_=0)).label("routing_correct"),
+        # Роутинг исправлен агентом
+        func.sum(case((AILog.routing_was_correct.is_(False), 1), else_=0)).label(
+            "routing_incorrect"
+        ),
+        # AI решил без тикета
+        func.sum(case((AILog.outcome == "resolved_by_ai", 1), else_=0)).label("resolved_by_ai"),
+        # AI создал тикет (пользователь принял или написал свой)
+        func.sum(
+            case((AILog.outcome.in_(["escalated_ai_ticket", "escalated_user_ticket"]), 1), else_=0)
+        ).label("escalated"),
+        # Обратная связь
+        func.sum(case((AILog.user_feedback == "helped", 1), else_=0)).label("feedback_helped"),
+        func.sum(case((AILog.user_feedback == "not_helped", 1), else_=0)).label(
+            "feedback_not_helped"
+        ),
     )
     if current_user.role == "admin":
         pass
     elif current_user.role == "agent":
-        ai_stats_query = (
-            ai_stats_query
-            .join(Ticket, AILog.ticket_id == Ticket.id)
-            .where(*ticket_filters)
+        ai_stats_query = ai_stats_query.join(Ticket, AILog.ticket_id == Ticket.id).where(
+            *ticket_filters
         )
     else:
         ai_stats_query = (
-            ai_stats_query
-            .outerjoin(Ticket, AILog.ticket_id == Ticket.id)
+            ai_stats_query.outerjoin(Ticket, AILog.ticket_id == Ticket.id)
             .outerjoin(Conversation, AILog.conversation_id == Conversation.id)
             .where(
                 or_(
@@ -273,12 +254,10 @@ async def get_stats(
     routing_correct = ai_row.routing_correct or 0
     routing_incorrect = ai_row.routing_incorrect or 0
     total_reviewed = routing_correct + routing_incorrect
-    
 
     # % правильного роутинга — 0 если агенты ещё ничего не проверяли
     routing_accuracy = (
-        round(routing_correct / total_reviewed * 100, 1)
-        if total_reviewed > 0 else 0.0
+        round(routing_correct / total_reviewed * 100, 1) if total_reviewed > 0 else 0.0
     )
 
     ai_stats = AIStats(
@@ -298,8 +277,9 @@ async def get_stats(
         select(AIJob.status, func.count().label("cnt")).group_by(AIJob.status)
     )
     knowledge_jobs_result = await db.execute(
-        select(KnowledgeEmbeddingJob.status, func.count().label("cnt"))
-        .group_by(KnowledgeEmbeddingJob.status)
+        select(KnowledgeEmbeddingJob.status, func.count().label("cnt")).group_by(
+            KnowledgeEmbeddingJob.status
+        )
     )
     jobs_stats = JobsStats(
         ai=_queue_stats(ai_jobs_result),
@@ -308,7 +288,7 @@ async def get_stats(
 
     logger.info(
         "Статистика собрана",
-        extra={"total_tickets": total_tickets, "total_ai_processed": total_processed}
+        extra={"total_tickets": total_tickets, "total_ai_processed": total_processed},
     )
 
     return StatsResponse(tickets=ticket_stats, ai=ai_stats, jobs=jobs_stats)
@@ -340,13 +320,13 @@ async def get_ai_fallbacks_stats(
         default=None,
         description=(
             "Начало окна (ISO8601 с таймзоной). По умолчанию — 24 часа назад. "
-            "Окно ограничено {0} днями для защиты от scan'а всей таблицы."
-        ).format(MAX_FALLBACKS_WINDOW_DAYS),
+            f"Окно ограничено {MAX_FALLBACKS_WINDOW_DAYS} днями для защиты от scan'а всей таблицы."
+        ),
     ),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_role("admin")),
 ):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if since is None:
         since_dt = now - DEFAULT_FALLBACKS_WINDOW
     else:
@@ -358,7 +338,7 @@ async def get_ai_fallbacks_stats(
     # Если входящий datetime naive — считаем UTC, иначе фильтр по
     # AIFallbackEvent.created_at >= since будет сравнивать разные TZ.
     if since_dt.tzinfo is None:
-        since_dt = since_dt.replace(tzinfo=timezone.utc)
+        since_dt = since_dt.replace(tzinfo=UTC)
 
     by_reason_result = await db.execute(
         select(AIFallbackEvent.reason, func.count().label("cnt"))
@@ -395,9 +375,7 @@ _KB_EXPIRING_WINDOW_DAYS = 30
 def _summary_from_article(article: KnowledgeArticle) -> KnowledgeArticleSummary:
     total_feedback = article.helped_count + article.not_helped_count + article.not_relevant_count
     helpfulness = (
-        round(article.helped_count / total_feedback * 100, 1)
-        if total_feedback > 0
-        else None
+        round(article.helped_count / total_feedback * 100, 1) if total_feedback > 0 else None
     )
     return KnowledgeArticleSummary(
         article_id=article.id,
@@ -428,7 +406,7 @@ async def get_knowledge_stats(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_role("admin")),
 ):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     expiring_cutoff = now + timedelta(days=_KB_EXPIRING_WINDOW_DAYS)
 
     total = (await db.execute(select(func.count()).select_from(KnowledgeArticle))).scalar() or 0
@@ -569,13 +547,14 @@ async def get_kb_score_distribution(
     _: User = Depends(require_role("admin")),
 ):
     settings = get_settings()
-    since = datetime.now(timezone.utc) - timedelta(days=days)
+    since = datetime.now(UTC) - timedelta(days=days)
 
     # Тянем минимум — score и decision. На больших окнах быстрее, чем
     # тянуть полные ORM-объекты.
     rows = await db.execute(
-        select(KnowledgeArticleFeedback.score, KnowledgeArticleFeedback.decision)
-        .where(KnowledgeArticleFeedback.created_at >= since)
+        select(KnowledgeArticleFeedback.score, KnowledgeArticleFeedback.decision).where(
+            KnowledgeArticleFeedback.created_at >= since
+        )
     )
     records = list(rows.all())
     total = len(records)
@@ -593,7 +572,7 @@ async def get_kb_score_distribution(
 
     buckets = [
         KnowledgeScoreBucket(range_start=start, range_end=end, count=cnt)
-        for (start, end), cnt in zip(_SCORE_BUCKETS, counts)
+        for (start, end), cnt in zip(_SCORE_BUCKETS, counts, strict=True)
     ]
 
     return KnowledgeScoreDistribution(

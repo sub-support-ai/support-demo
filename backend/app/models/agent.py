@@ -32,10 +32,11 @@ class Agent(Base):
                         Считается из ai_logs: как часто агент соглашался
                         с решением модели. Растёт по мере дообучения.
     """
+
     __tablename__ = "agents"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    user_id: Mapped[Optional[int]] = mapped_column(
+    user_id: Mapped[int | None] = mapped_column(
         Integer,
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,

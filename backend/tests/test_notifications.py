@@ -7,13 +7,11 @@
   - notify_ticket_status не падает при None requester_email.
 """
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from app.services.email import notify_ticket_status, send_email
-
 
 # ── send_email ────────────────────────────────────────────────────────────────
 
@@ -22,6 +20,7 @@ from app.services.email import notify_ticket_status, send_email
 async def test_send_email_noop_when_no_smtp_host(monkeypatch):
     """Без SMTP_HOST письмо не отправляется, исключений нет."""
     from app.config import Settings
+
     settings = Settings()
     settings.SMTP_HOST = None
     monkeypatch.setattr("app.services.email.get_settings", lambda: settings)
@@ -35,8 +34,9 @@ async def test_send_email_noop_when_no_smtp_host(monkeypatch):
 @pytest.mark.asyncio
 async def test_send_email_calls_send_sync_when_configured(monkeypatch):
     """Если SMTP_HOST задан — _send_sync вызывается в executor."""
-    from app.config import Settings
     from pydantic import SecretStr
+
+    from app.config import Settings
 
     settings = Settings()
     settings.SMTP_HOST = "smtp.example.com"
@@ -64,6 +64,7 @@ async def test_send_email_calls_send_sync_when_configured(monkeypatch):
 async def test_send_email_swallows_smtp_exception(monkeypatch):
     """Ошибка SMTP не прокидывается наружу — только WARNING в лог."""
     from app.config import Settings
+
     settings = Settings()
     settings.SMTP_HOST = "smtp.broken.example.com"
     settings.SMTP_PORT = 587
@@ -134,7 +135,7 @@ async def test_notify_ticket_status_confirmed_sends_email():
 
     assert len(sent) == 1
     assert "42" in sent[0]["subject"]
-    assert "employee@corp.ru" == sent[0]["to"]
+    assert sent[0]["to"] == "employee@corp.ru"
     assert "IT" in sent[0]["body"]
 
 
@@ -144,6 +145,7 @@ async def test_notify_ticket_status_confirmed_sends_email():
 def test_log_retention_days_default():
     """LOG_RETENTION_DAYS по умолчанию 90."""
     from app.config import Settings
+
     s = Settings()
     assert s.LOG_RETENTION_DAYS == 90
 
@@ -151,6 +153,7 @@ def test_log_retention_days_default():
 def test_log_retention_days_zero_disables():
     """LOG_RETENTION_DAYS=0 означает 'не удалять'."""
     from app.config import Settings
+
     s = Settings()
     s.LOG_RETENTION_DAYS = 0
     assert s.LOG_RETENTION_DAYS == 0

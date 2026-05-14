@@ -25,7 +25,6 @@ from app.services.ticket_state_machine import (
     transition_via_operator,
 )
 
-
 ALL_STATUSES = ("pending_user", "confirmed", "in_progress", "resolved", "closed")
 
 

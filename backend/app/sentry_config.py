@@ -25,8 +25,9 @@ def setup_sentry() -> None:
     Вызывается один раз при старте приложения (в main.py).
     Если SENTRY_DSN не задан — ничего не делает.
     """
-    from app.config import get_settings
     import os
+
+    from app.config import get_settings
 
     dsn = os.getenv("SENTRY_DSN", "")
 
@@ -37,8 +38,8 @@ def setup_sentry() -> None:
     try:
         import sentry_sdk
         from sentry_sdk.integrations.fastapi import FastApiIntegration
-        from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
         from sentry_sdk.integrations.logging import LoggingIntegration
+        from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 
         settings = get_settings()
 
@@ -48,10 +49,10 @@ def setup_sentry() -> None:
             # Записывает 100% транзакций в dev, 10% в prod (не перегружает квоту)
             traces_sample_rate=1.0 if settings.APP_ENV != "production" else 0.1,
             integrations=[
-                FastApiIntegration(),        # ловит ошибки в эндпоинтах
-                SqlalchemyIntegration(),     # ловит ошибки БД
+                FastApiIntegration(),  # ловит ошибки в эндпоинтах
+                SqlalchemyIntegration(),  # ловит ошибки БД
                 LoggingIntegration(
-                    level=logging.INFO,      # INFO и выше — в Sentry как breadcrumbs
+                    level=logging.INFO,  # INFO и выше — в Sentry как breadcrumbs
                     event_level=logging.ERROR,  # ERROR и выше — как отдельные события
                 ),
             ],
@@ -63,6 +64,5 @@ def setup_sentry() -> None:
 
     except ImportError:
         logger.warning(
-            "Пакет sentry-sdk не установлен. "
-            "Добавь sentry-sdk[fastapi] в requirements.txt"
+            "Пакет sentry-sdk не установлен. Добавь sentry-sdk[fastapi] в requirements.txt"
         )

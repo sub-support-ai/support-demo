@@ -17,15 +17,18 @@ from app.models.agent import Agent
 from app.models.user import User
 from app.security import hash_password
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+
 async def _register(client: AsyncClient, suffix: str) -> tuple[int, str]:
-    r = await client.post("/api/v1/auth/register", json={
-        "email": f"statsuser{suffix}@example.com",
-        "username": f"statsuser{suffix}",
-        "password": "Secret123!",
-    })
+    r = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": f"statsuser{suffix}@example.com",
+            "username": f"statsuser{suffix}",
+            "password": "Secret123!",
+        },
+    )
     assert r.status_code == 201
     token = r.json()["access_token"]
     me = await client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
@@ -38,11 +41,14 @@ async def _register_admin(client: AsyncClient, suffix: str) -> tuple[int, str]:
     prev = settings.BOOTSTRAP_ADMIN_EMAIL
     settings.BOOTSTRAP_ADMIN_EMAIL = email
     try:
-        r = await client.post("/api/v1/auth/register", json={
-            "email": email,
-            "username": f"statsadmin{suffix}",
-            "password": "Secret123!",
-        })
+        r = await client.post(
+            "/api/v1/auth/register",
+            json={
+                "email": email,
+                "username": f"statsadmin{suffix}",
+                "password": "Secret123!",
+            },
+        )
     finally:
         settings.BOOTSTRAP_ADMIN_EMAIL = prev
     assert r.status_code == 201
@@ -76,6 +82,7 @@ async def _make_agent(
 
 
 # ── GET /stats/ ───────────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_stats_empty_db_user(client: AsyncClient):
@@ -124,6 +131,7 @@ async def test_stats_requires_auth(client: AsyncClient):
 
 # ── GET /stats/ai/fallbacks ───────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_stats_ai_fallbacks_admin_only_forbidden_for_user(client: AsyncClient):
     """Обычный пользователь получает 403 на /stats/ai/fallbacks."""
@@ -168,6 +176,7 @@ async def test_stats_ai_fallbacks_custom_since(client: AsyncClient):
 
 # ── GET /stats/knowledge ──────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_stats_knowledge_forbidden_for_user(client: AsyncClient):
     """Обычный пользователь получает 403 на /stats/knowledge."""
@@ -197,6 +206,7 @@ async def test_stats_knowledge_admin_empty(client: AsyncClient):
 
 
 # ── GET /stats/knowledge/score-distribution ───────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_stats_score_distribution_forbidden_for_user(client: AsyncClient):

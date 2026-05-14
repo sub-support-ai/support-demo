@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from httpx import AsyncClient
@@ -11,27 +11,28 @@ from app.models.knowledge_article import KnowledgeArticle, KnowledgeArticleFeedb
 from app.models.knowledge_embedding_job import KnowledgeEmbeddingJob
 from app.models.message import Message
 from app.models.user import User
+from app.services.knowledge_base import (
+    KnowledgeMatch,
+    KnowledgeSearchFilters,
+    _build_kb_query,
+    _build_matches,
+    _merge_matches,
+    find_knowledge_answer,
+    search_knowledge_articles,
+    split_knowledge_text,
+    sync_knowledge_article_index,
+    tokenize,
+)
+from app.services.knowledge_embedding_jobs import (
+    enqueue_knowledge_embedding_job,
+    process_knowledge_embedding_job,
+)
 from app.services.knowledge_embeddings import (
     EmbeddingBatch,
     estimate_token_count,
     mark_chunk_embedded,
     needs_embedding,
     vector_literal,
-)
-from app.services.knowledge_base import find_knowledge_answer, search_knowledge_articles
-from app.services.knowledge_base import (
-    KnowledgeMatch,
-    KnowledgeSearchFilters,
-    split_knowledge_text,
-    sync_knowledge_article_index,
-    tokenize,
-    _build_kb_query,
-    _build_matches,
-    _merge_matches,
-)
-from app.services.knowledge_embedding_jobs import (
-    enqueue_knowledge_embedding_job,
-    process_knowledge_embedding_job,
 )
 
 
@@ -133,7 +134,7 @@ def test_knowledge_search_rejects_conflicting_explicit_system():
         query,
         tokenize(query),
         KnowledgeSearchFilters(),
-        datetime.now(timezone.utc),
+        datetime.now(UTC),
     )
 
     assert matches == []
@@ -163,7 +164,7 @@ def test_knowledge_search_prefers_matching_system_password_article():
         query,
         tokenize(query),
         KnowledgeSearchFilters(),
-        datetime.now(timezone.utc),
+        datetime.now(UTC),
     )
 
     assert matches
@@ -224,19 +225,23 @@ async def test_sync_knowledge_article_index_rebuilds_chunks_and_resets_embedding
     await db_session.flush()
 
     chunks = (
-        await db_session.execute(
-            select(KnowledgeChunk)
-            .where(KnowledgeChunk.article_id == article.id)
-            .order_by(KnowledgeChunk.chunk_index.asc())
+        (
+            await db_session.execute(
+                select(KnowledgeChunk)
+                .where(KnowledgeChunk.article_id == article.id)
+                .order_by(KnowledgeChunk.chunk_index.asc())
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(chunks) >= 2
     assert all(chunk.is_active for chunk in chunks)
     assert all(chunk.token_count for chunk in chunks)
 
     first_chunk = chunks[0]
     first_chunk.embedding_model = "nomic-embed-text"
-    first_chunk.embedding_updated_at = datetime.now(timezone.utc)
+    first_chunk.embedding_updated_at = datetime.now(UTC)
     first_chunk.content = "stale content"
     await db_session.flush()
 
@@ -461,10 +466,14 @@ async def test_admin_can_update_knowledge_article_and_rebuild_search_text(
     assert "ошибка 809" in article.search_text
     assert "код ошибки" in article.search_text
     chunks = (
-        await db_session.execute(
-            select(KnowledgeChunk).where(KnowledgeChunk.article_id == article.id)
+        (
+            await db_session.execute(
+                select(KnowledgeChunk).where(KnowledgeChunk.article_id == article.id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert chunks
     assert chunks[0].is_active is True
 
@@ -501,17 +510,25 @@ async def test_admin_can_enqueue_knowledge_article_reindex_job(
     assert data["status"] == "queued"
 
     jobs = (
-        await db_session.execute(
-            select(KnowledgeEmbeddingJob).where(KnowledgeEmbeddingJob.article_id == article.id)
+        (
+            await db_session.execute(
+                select(KnowledgeEmbeddingJob).where(KnowledgeEmbeddingJob.article_id == article.id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(jobs) == 1
 
     chunks = (
-        await db_session.execute(
-            select(KnowledgeChunk).where(KnowledgeChunk.article_id == article.id)
+        (
+            await db_session.execute(
+                select(KnowledgeChunk).where(KnowledgeChunk.article_id == article.id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert chunks
 
 
@@ -537,10 +554,14 @@ async def test_admin_can_enqueue_full_knowledge_reindex_job(
     assert data["status"] == "queued"
 
     jobs = (
-        await db_session.execute(
-            select(KnowledgeEmbeddingJob).where(KnowledgeEmbeddingJob.article_id.is_(None))
+        (
+            await db_session.execute(
+                select(KnowledgeEmbeddingJob).where(KnowledgeEmbeddingJob.article_id.is_(None))
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(jobs) == 1
 
 
@@ -586,10 +607,14 @@ async def test_process_knowledge_embedding_job_marks_chunks_embedded(
     assert job.embedding_model == "test-embedding"
 
     chunks = (
-        await db_session.execute(
-            select(KnowledgeChunk).where(KnowledgeChunk.article_id == article.id)
+        (
+            await db_session.execute(
+                select(KnowledgeChunk).where(KnowledgeChunk.article_id == article.id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert chunks
     assert all(chunk.embedding_model == "test-embedding" for chunk in chunks)
     assert all(chunk.embedding_updated_at is not None for chunk in chunks)
@@ -826,7 +851,7 @@ async def test_zero_red_zone_disables_forced_escalation(
 
     monkeypatch.setattr(conversation_ai, "get_ai_answer", low_confidence_no_escalate)
 
-    from tests.test_conversations import register_user, process_next_ai_job
+    from tests.test_conversations import process_next_ai_job, register_user
 
     _, token = await register_user(client, "rzdisabled")
     headers = {"Authorization": f"Bearer {token}"}

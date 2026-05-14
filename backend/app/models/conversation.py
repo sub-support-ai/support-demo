@@ -1,10 +1,17 @@
-from datetime import datetime
-from typing import Optional
+from __future__ import annotations
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, func
+from datetime import datetime
+from typing import TYPE_CHECKING
+
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+
+if TYPE_CHECKING:
+    from app.models.message import Message
+    from app.models.ticket import Ticket
+    from app.models.user import User
 
 
 class Conversation(Base):
@@ -24,24 +31,20 @@ class Conversation(Base):
       dont_need_help — не нужна помощь
       None           — закрыл без объяснений
     """
+
     __tablename__ = "conversations"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
 
     user_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False, index=True
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
 
     # Текущий статус диалога
-    status: Mapped[str] = mapped_column(
-        String(20), default="active", nullable=False, index=True
-    )
+    status: Mapped[str] = mapped_column(String(20), default="active", nullable=False, index=True)
 
     # Причина отказа — заполняется только при status = "declined"
-    decline_reason: Mapped[Optional[str]] = mapped_column(
-        String(50), nullable=True
-    )
+    decline_reason: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
     # ПСЕВДО-СТРИМИНГ: текущая стадия обработки AI-ответа.
     # Поле обновляется несколькими отдельными commit'ами внутри
@@ -49,22 +52,16 @@ class Conversation(Base):
     # без реального стриминга токенов.
     # Значения: thinking / searching / found_kb / generating / None (idle).
     # Очищается после завершения или падения джобы.
-    ai_stage: Mapped[Optional[str]] = mapped_column(
-        String(20), nullable=True
-    )
+    ai_stage: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    intake_state: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
     # Связи
-    user: Mapped["User"] = relationship("User")
-    messages: Mapped[list["Message"]] = relationship(
-        "Message", back_populates="conversation"
-    )
-    tickets: Mapped[list["Ticket"]] = relationship(
-        "Ticket", back_populates="conversation"
-    )
+    user: Mapped[User] = relationship("User")
+    messages: Mapped[list[Message]] = relationship("Message", back_populates="conversation")
+    tickets: Mapped[list[Ticket]] = relationship("Ticket", back_populates="conversation")

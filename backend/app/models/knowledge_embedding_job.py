@@ -11,13 +11,13 @@ class KnowledgeEmbeddingJob(Base):
     __tablename__ = "knowledge_embedding_jobs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    article_id: Mapped[Optional[int]] = mapped_column(
+    article_id: Mapped[int | None] = mapped_column(
         Integer,
         ForeignKey("knowledge_articles.id", ondelete="CASCADE"),
         nullable=True,
         index=True,
     )
-    requested_by_user_id: Mapped[Optional[int]] = mapped_column(
+    requested_by_user_id: Mapped[int | None] = mapped_column(
         Integer,
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
@@ -32,12 +32,12 @@ class KnowledgeEmbeddingJob(Base):
         nullable=False,
         index=True,
     )
-    locked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    error: Mapped[Optional[str]] = mapped_column(Text)
+    locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error: Mapped[str | None] = mapped_column(Text)
     updated_chunks: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    embedding_model: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    embedding_model: Mapped[str | None] = mapped_column(String(80), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

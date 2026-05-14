@@ -10,6 +10,7 @@ from app.models.ai_log import AILog
 from app.models.conversation import Conversation
 from app.models.knowledge_article import KnowledgeArticle, KnowledgeArticleFeedback
 from app.models.message import Message
+from app.models.user import User
 from app.services.ai_fallback import (
     FALLBACK_REASON_PAYLOAD_KEY,
     record_ai_fallback,
@@ -19,6 +20,7 @@ from app.services.conversation_intent import (
     ConversationAction,
     detect_conversation_policy,
 )
+from app.services.intake_requirements import build_intake_ai_payload, build_intake_state
 from app.services.knowledge_base import LATENCY_PAYLOAD_KEY, find_knowledge_answer
 
 logger = logging.getLogger(__name__)
@@ -93,8 +95,14 @@ _CHARS_PER_TOKEN = 3
 # от AI-сервиса/KB вне этого whitelist'а — отбрасываем: фронтовая схема
 # SourceRead типизирована, и неизвестные поля только добавят шум в JSON.
 _SOURCE_FIELDS = {
-    "title", "url", "article_id", "chunk_id",
-    "snippet", "retrieval", "score", "decision",
+    "title",
+    "url",
+    "article_id",
+    "chunk_id",
+    "snippet",
+    "retrieval",
+    "score",
+    "decision",
 }
 # Sources на одно AI-сообщение лимитируются: 5 ссылок — потолок UX'а.
 # Всё, что больше, перегружает чат и обычно не релевантно.
@@ -373,7 +381,15 @@ async def generate_ai_message(db: AsyncSession, conversation_id: int) -> Message
     history = await load_history_for_ai(db, conversation_id)
     policy = detect_conversation_policy(history)
     if policy.action == ConversationAction.ESCALATE:
-        ai_payload = policy.to_ai_payload()
+        user = await db.get(User, conversation.user_id)
+        intake_state = build_intake_state(
+            conversation.intake_state,
+            history,
+            requester_name=user.username if user is not None else None,
+            requester_email=user.email if user is not None else None,
+        )
+        conversation.intake_state = intake_state
+        ai_payload = build_intake_ai_payload(intake_state, reason=policy.reason)
     else:
         # ПСЕВДО-СТРИМИНГ: ищем ответ в базе знаний.
         await _set_ai_stage(conversation_id, "searching")
@@ -416,10 +432,7 @@ async def generate_ai_message(db: AsyncSession, conversation_id: int) -> Message
     escalate = bool(ai_payload.get("escalate"))
 
     red_zone_threshold = get_settings().RAG_CONFIDENCE_RED_ZONE
-    requires_escalation = (
-        escalate
-        or (confidence is not None and confidence < red_zone_threshold)
-    )
+    requires_escalation = escalate or (confidence is not None and confidence < red_zone_threshold)
 
     ai_message = Message(
         conversation_id=conversation_id,
