@@ -1041,3 +1041,77 @@ async def test_negative_feedback_can_reopen_closed_ticket(
         .limit(1)
     )
     assert result.scalar_one().user_feedback == "not_helped"
+
+
+@pytest.mark.asyncio
+async def test_ai_assist_returns_summary_and_empty_similar(client: AsyncClient):
+    _, admin_token = await register_admin(client, suffix="assist1")
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+    create = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "Не могу подключиться к VPN",
+            "body": "Ошибка 800 при подключении к корпоративному VPN",
+            "user_priority": 2,
+            "office": "Москва",
+            "affected_item": "VPN",
+        },
+        headers=admin_headers,
+    )
+    assert create.status_code == 201
+    ticket_id = create.json()["id"]
+
+    resp = await client.get(
+        f"/api/v1/tickets/{ticket_id}/ai-assist",
+        headers=admin_headers,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "summary" in data
+    assert "ai_response_draft" in data
+    assert isinstance(data["similar_tickets"], list)
+
+
+@pytest.mark.asyncio
+async def test_ai_assist_similar_tickets_excludes_self(client: AsyncClient):
+    _, admin_token = await register_admin(client, suffix="assist2")
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+    t = await client.post(
+        "/api/v1/tickets/",
+        json={"title": "VPN ошибка", "body": "VPN не подключается", "user_priority": 3},
+        headers=admin_headers,
+    )
+    assert t.status_code == 201
+    ticket_id = t.json()["id"]
+
+    resp = await client.get(
+        f"/api/v1/tickets/{ticket_id}/ai-assist",
+        headers=admin_headers,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    # тикет не должен попасть в список похожих сам с собой
+    similar_ids = [s["id"] for s in data["similar_tickets"]]
+    assert ticket_id not in similar_ids
+
+
+@pytest.mark.asyncio
+async def test_ai_assist_requires_operator(client: AsyncClient):
+    _, user_token = await register_user(client, suffix="assistuser")
+    user_headers = {"Authorization": f"Bearer {user_token}"}
+
+    create = await client.post(
+        "/api/v1/tickets/",
+        json={"title": "Тест", "body": "Тело тикета", "user_priority": 3},
+        headers=user_headers,
+    )
+    assert create.status_code == 201
+    ticket_id = create.json()["id"]
+
+    resp = await client.get(
+        f"/api/v1/tickets/{ticket_id}/ai-assist",
+        headers=user_headers,
+    )
+    assert resp.status_code == 404

@@ -368,3 +368,17 @@ export interface KBQualityStats {
   expiring_soon: KBArticleQualityItem[];
   unanswered_queries: UnansweredQuery[];
 }
+
+export interface SimilarTicket {
+  id: number;
+  title: string;
+  department: string;
+  ai_category: string | null;
+  resolved_at: string | null;
+}
+
+export interface TicketAiAssist {
+  summary: string | null;
+  ai_response_draft: string | null;
+  similar_tickets: SimilarTicket[];
+}
