@@ -8,6 +8,7 @@ import type {
   JobKind,
   JobStatusFilter,
   JobsResponse,
+  KBQualityStats,
   KnowledgeEmbeddingJob,
   StatsResponse,
 } from "./types";
@@ -138,5 +139,18 @@ export function useRequeueKnowledgeEmbeddingJob() {
       queryClient.invalidateQueries({ queryKey: ["stats"] });
       queryClient.invalidateQueries({ queryKey: ["knowledge", "articles"] });
     },
+  });
+}
+
+export function useKBQualityStats(enabled: boolean) {
+  return useQuery({
+    queryKey: ["stats", "knowledge", "quality"],
+    queryFn: async () => {
+      const { data } = await api.get<KBQualityStats>("/stats/knowledge");
+      return data;
+    },
+    enabled,
+    refetchInterval: enabled ? 60000 : false,
+    refetchIntervalInBackground: false,
   });
 }

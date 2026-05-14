@@ -1,3 +1,6 @@
+from datetime import datetime
+from typing import Optional
+
 from pydantic import BaseModel
 
 
@@ -44,6 +47,32 @@ class StatsResponse(BaseModel):
     tickets: TicketStats
     ai: AIStats
     jobs: JobsStats
+
+
+class KBArticleQualityItem(BaseModel):
+    id: int
+    title: str
+    department: Optional[str] = None
+    view_count: int = 0
+    helped_count: int = 0
+    not_helped_count: int = 0
+    not_relevant_count: int = 0
+    expires_at: Optional[datetime] = None
+    helpfulness_ratio: Optional[float] = None
+
+
+class UnansweredQuery(BaseModel):
+    query: str
+    count: int
+    last_seen: datetime
+
+
+class KBQualityStats(BaseModel):
+    """Качество базы знаний — для страницы аналитики KB."""
+    not_helping: list[KBArticleQualityItem] = []      # высокий not_helped при достаточном объёме
+    never_shown: list[KBArticleQualityItem] = []       # активные статьи с view_count = 0
+    expiring_soon: list[KBArticleQualityItem] = []     # expires_at < now + 14 дней
+    unanswered_queries: list[UnansweredQuery] = []     # запросы без KB-ответа, ушедшие в эскалацию
 
 
 class AIFallbacksStats(BaseModel):

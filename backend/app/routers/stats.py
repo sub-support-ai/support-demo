@@ -21,6 +21,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.dependencies import get_current_user, require_role
 from app.models.ai_fallback_event import AIFallbackEvent
+from app.models.knowledge_article import KnowledgeArticle
+from app.models.message import Message
 from app.models.ticket import Ticket
 from app.models.ai_log import AILog
 from app.models.ai_job import AIJob
@@ -32,8 +34,11 @@ from app.schemas.stats import (
     AIStats,
     JobQueueStats,
     JobsStats,
+    KBArticleQualityItem,
+    KBQualityStats,
     StatsResponse,
     TicketStats,
+    UnansweredQuery,
 )
 from app.services.agents import get_active_agent_for_user
 from app.services.sla import OPEN_STATUSES
@@ -317,4 +322,130 @@ async def get_ai_fallbacks_stats(
         total=sum(by_reason.values()),
         by_reason=by_reason,
         by_service=by_service,
+    )
+
+
+# ── Качество базы знаний ────────────────────────────────────────────────────
+
+_EXPIRY_WARN_DAYS = 14
+_MIN_FEEDBACK_FOR_QUALITY = 3   # меньше 3 оценок — статья "ещё не проверена"
+_UNANSWERED_LIMIT = 25          # топ-25 незакрытых запросов
+
+
+@router.get(
+    "/knowledge",
+    response_model=KBQualityStats,
+    summary="Качество базы знаний",
+    description=(
+        "Возвращает статьи с плохой обратной связью, никогда не показанные, "
+        "с истекающим сроком и запросы без KB-ответа. Только для admin."
+    ),
+)
+async def get_kb_quality(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_role("admin")),
+):
+    now = datetime.now(timezone.utc)
+    expiry_threshold = now + timedelta(days=_EXPIRY_WARN_DAYS)
+
+    # ── Статьи с плохой обратной связью ───────────────────────────────────
+    # not_helped > helped И суммарных оценок >= MIN_FEEDBACK_FOR_QUALITY
+    bad_result = await db.execute(
+        select(KnowledgeArticle)
+        .where(
+            KnowledgeArticle.is_active.is_(True),
+            (KnowledgeArticle.not_helped_count + KnowledgeArticle.not_relevant_count)
+            > KnowledgeArticle.helped_count,
+            (KnowledgeArticle.helped_count
+             + KnowledgeArticle.not_helped_count
+             + KnowledgeArticle.not_relevant_count) >= _MIN_FEEDBACK_FOR_QUALITY,
+        )
+        .order_by(
+            (KnowledgeArticle.not_helped_count + KnowledgeArticle.not_relevant_count).desc()
+        )
+        .limit(20)
+    )
+    not_helping = [
+        _article_quality_item(a) for a in bad_result.scalars().all()
+    ]
+
+    # ── Активные статьи, которые ни разу не показали пользователю ─────────
+    never_result = await db.execute(
+        select(KnowledgeArticle)
+        .where(
+            KnowledgeArticle.is_active.is_(True),
+            KnowledgeArticle.view_count == 0,
+        )
+        .order_by(KnowledgeArticle.id.asc())
+        .limit(30)
+    )
+    never_shown = [
+        _article_quality_item(a) for a in never_result.scalars().all()
+    ]
+
+    # ── Статьи с истекающим сроком ─────────────────────────────────────────
+    expiring_result = await db.execute(
+        select(KnowledgeArticle)
+        .where(
+            KnowledgeArticle.is_active.is_(True),
+            KnowledgeArticle.expires_at.is_not(None),
+            KnowledgeArticle.expires_at <= expiry_threshold,
+        )
+        .order_by(KnowledgeArticle.expires_at.asc())
+        .limit(20)
+    )
+    expiring_soon = [
+        _article_quality_item(a) for a in expiring_result.scalars().all()
+    ]
+
+    # ── Запросы без KB-ответа: последнее user-сообщение в эскалированных диалогах
+    # Диалоги со статусом "escalated" — пользователь не получил ответа из KB.
+    # Берём последнее user-сообщение из каждого такого диалога, группируем
+    # по тексту и считаем частоту.
+    escalated_conv_ids_q = (
+        select(Conversation.id)
+        .where(Conversation.status == "escalated")
+        .scalar_subquery()
+    )
+    unansw_result = await db.execute(
+        select(
+            Message.content.label("query"),
+            func.count().label("cnt"),
+            func.max(Message.created_at).label("last_seen"),
+        )
+        .where(
+            Message.role == "user",
+            Message.conversation_id.in_(escalated_conv_ids_q),
+            func.length(Message.content) > 10,
+        )
+        .group_by(Message.content)
+        .order_by(func.count().desc())
+        .limit(_UNANSWERED_LIMIT)
+    )
+    unanswered_queries = [
+        UnansweredQuery(query=row.query, count=int(row.cnt), last_seen=row.last_seen)
+        for row in unansw_result
+    ]
+
+    return KBQualityStats(
+        not_helping=not_helping,
+        never_shown=never_shown,
+        expiring_soon=expiring_soon,
+        unanswered_queries=unanswered_queries,
+    )
+
+
+def _article_quality_item(article: KnowledgeArticle) -> KBArticleQualityItem:
+    total = article.helped_count + article.not_helped_count + article.not_relevant_count
+    ratio = round(article.helped_count / total, 2) if total > 0 else None
+    return KBArticleQualityItem(
+        id=article.id,
+        title=article.title,
+        department=article.department,
+        view_count=article.view_count,
+        helped_count=article.helped_count,
+        not_helped_count=article.not_helped_count,
+        not_relevant_count=article.not_relevant_count,
+        expires_at=article.expires_at,
+        helpfulness_ratio=ratio,
     )

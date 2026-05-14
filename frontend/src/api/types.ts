@@ -343,3 +343,28 @@ export interface AIFallbacksStats {
   by_reason: Record<string, number>;
   by_service: Record<string, number>;
 }
+
+export interface KBArticleQualityItem {
+  id: number;
+  title: string;
+  department: string | null;
+  view_count: number;
+  helped_count: number;
+  not_helped_count: number;
+  not_relevant_count: number;
+  expires_at: string | null;
+  helpfulness_ratio: number | null;
+}
+
+export interface UnansweredQuery {
+  query: string;
+  count: number;
+  last_seen: string;
+}
+
+export interface KBQualityStats {
+  not_helping: KBArticleQualityItem[];
+  never_shown: KBArticleQualityItem[];
+  expiring_soon: KBArticleQualityItem[];
+  unanswered_queries: UnansweredQuery[];
+}
