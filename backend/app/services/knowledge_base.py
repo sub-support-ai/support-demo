@@ -745,6 +745,7 @@ def build_knowledge_answer(match: KnowledgeMatch, query: str) -> dict:
 async def find_knowledge_answer(
     db: AsyncSession,
     messages: list[dict[str, str]],
+    filters: KnowledgeSearchFilters | None = None,
 ) -> dict | None:
     """Ищет ответ в KB и возвращает payload с замеренной латенси поиска.
 
@@ -766,7 +767,7 @@ async def find_knowledge_answer(
     query = f"{latest}\n{combined}"
 
     started = time.perf_counter()
-    matches = await search_knowledge_articles(db, query, limit=1)
+    matches = await search_knowledge_articles(db, query, filters=filters, limit=1)
     latency_ms = int((time.perf_counter() - started) * 1000)
 
     if not matches:

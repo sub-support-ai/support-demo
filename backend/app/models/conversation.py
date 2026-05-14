@@ -1,7 +1,7 @@
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, func
+from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -42,6 +42,11 @@ class Conversation(Base):
     decline_reason: Mapped[Optional[str]] = mapped_column(
         String(50), nullable=True
     )
+
+    # Intake flow: catalog_code — код типа обращения из service_catalog
+    # intake_fields — собранные поля + служебный ключ _last_asked
+    catalog_code: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    intake_fields: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
