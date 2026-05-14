@@ -18,10 +18,16 @@ from app.services.ai_fallback import (
 from app.services.ai_service_client import ai_service_headers
 from app.services.conversation_intent import (
     ConversationAction,
+    build_intake_answer,
     detect_conversation_policy,
+    should_offer_support_draft,
 )
-from app.services.intake_requirements import build_intake_ai_payload, build_intake_state
-from app.services.knowledge_base import LATENCY_PAYLOAD_KEY, find_knowledge_answer
+from app.services.knowledge_base import (
+    LATENCY_PAYLOAD_KEY,
+    KnowledgeSearchFilters,
+    find_knowledge_answer,
+)
+from app.services.service_catalog import CatalogItem, detect_catalog_item, get_catalog_item
 
 logger = logging.getLogger(__name__)
 
@@ -379,38 +385,34 @@ async def generate_ai_message(db: AsyncSession, conversation_id: int) -> Message
         raise ValueError(f"Conversation {conversation_id} is already escalated")
 
     history = await load_history_for_ai(db, conversation_id)
-    policy = detect_conversation_policy(history)
-    if policy.action == ConversationAction.ESCALATE:
-        user = await db.get(User, conversation.user_id)
-        intake_state = build_intake_state(
-            conversation.intake_state,
-            history,
-            requester_name=user.username if user is not None else None,
-            requester_email=user.email if user is not None else None,
-        )
-        conversation.intake_state = intake_state
-        ai_payload = build_intake_ai_payload(intake_state, reason=policy.reason)
+
+    # ── Catalog-driven intake flow ────────────────────────────────────────────
+    catalog_item = _resolve_catalog_item(conversation, history)
+    if catalog_item is not None:
+        ai_payload = await _run_intake_step(db, conversation, catalog_item, history)
     else:
-        # ПСЕВДО-СТРИМИНГ: ищем ответ в базе знаний.
-        await _set_ai_stage(conversation_id, "searching")
-        exclude_article_ids: set[int] | None = None
-        if policy.avoid_repeating_kb:
-            exclude_article_ids = await recent_kb_article_ids_for_conversation(db, conversation_id)
-        if exclude_article_ids:
+        # ── Policy-based fallback (escalation rules, KB repeat avoidance) ────
+        policy = detect_conversation_policy(history)
+        if policy.action == ConversationAction.ESCALATE:
+            ai_payload = policy.to_ai_payload()
+        else:
+            # ПСЕВДО-СТРИМИНГ: ищем ответ в базе знаний.
+            await _set_ai_stage(conversation_id, "searching")
+            exclude_article_ids: set[int] | None = None
+            if policy.avoid_repeating_kb:
+                exclude_article_ids = await recent_kb_article_ids_for_conversation(
+                    db, conversation_id
+                )
             ai_payload = await find_knowledge_answer(
-                db,
-                history,
-                exclude_article_ids=exclude_article_ids,
+                db, history, exclude_article_ids=exclude_article_ids
             )
-        else:
-            ai_payload = await find_knowledge_answer(db, history)
-        if ai_payload is None:
-            # ПСЕВДО-СТРИМИНГ: KB не нашла подходящий ответ — идём в LLM.
-            await _set_ai_stage(conversation_id, "generating")
-            ai_payload = await get_ai_answer(conversation_id, history)
-        else:
-            # ПСЕВДО-СТРИМИНГ: KB вернула ответ, быстро его формируем.
-            await _set_ai_stage(conversation_id, "found_kb")
+            if ai_payload is None:
+                # ПСЕВДО-СТРИМИНГ: KB не нашла подходящий ответ — идём в LLM.
+                await _set_ai_stage(conversation_id, "generating")
+                ai_payload = await get_ai_answer(conversation_id, history)
+            else:
+                # ПСЕВДО-СТРИМИНГ: KB вернула ответ, быстро его формируем.
+                await _set_ai_stage(conversation_id, "found_kb")
 
     # ПСЕВДО-СТРИМИНГ: обработка завершена, сбрасываем стадию.
     # Делаем до основного flush'а — клиент увидит сброс сразу после
@@ -486,3 +488,141 @@ async def generate_ai_message(db: AsyncSession, conversation_id: int) -> Message
     await db.flush()
     await db.refresh(ai_message)
     return ai_message
+
+
+
+def _resolve_catalog_item(
+    conversation: Conversation,
+    history: list[dict[str, str]],
+) -> CatalogItem | None:
+    """Возвращает активный CatalogItem для диалога.
+
+    Если catalog_code уже привязан к разговору — берём его напрямую.
+    Иначе пробуем определить по истории сообщений.
+    """
+    if conversation.catalog_code:
+        return get_catalog_item(conversation.catalog_code)
+    return detect_catalog_item(history)
+
+
+async def _run_intake_step(
+    db: AsyncSession,
+    conversation: Conversation,
+    item: CatalogItem,
+    history: list[dict[str, str]],
+) -> dict[str, Any]:
+    """Один шаг сбора данных по catalog item.
+
+    Логика:
+      1. Если catalog_code ещё не записан — это первое обнаружение.
+         Сначала пробуем KB с фильтром по отделу: вдруг есть готовый ответ.
+         Если KB не отвечает или отправляет на эскалацию — начинаем опрос.
+      2. Если catalog_code уже есть — продолжаем опрос.
+         Берём последний user-ответ как значение последнего запрошенного поля.
+      3. Когда все поля собраны — возвращаем payload с готовым резюме для черновика.
+    """
+    collected: dict[str, str] = dict(conversation.intake_fields or {})
+    first_detection = conversation.catalog_code is None
+
+    if first_detection:
+        # Попробовать KB с фильтром по отделу каталога
+        kb_filters = KnowledgeSearchFilters(department=item.kb_department) if item.kb_department else None
+        kb_payload = await find_knowledge_answer(db, history, filters=kb_filters)
+        if kb_payload and kb_payload.get("knowledge_decision") != "escalate":
+            # KB нашёл хороший ответ — возвращаем его, intake не нужен
+            return kb_payload
+
+        # KB не помог — стартуем опрос
+        conversation.catalog_code = item.code
+        conversation.intake_fields = {}
+        collected = {}
+    else:
+        # Записываем ответ пользователя на последний вопрос
+        last_asked = collected.pop("_last_asked", None)
+        if last_asked:
+            last_user_msg = _last_user_message(history)
+            if last_user_msg:
+                collected[last_asked] = last_user_msg
+
+    next_field = item.next_missing(collected)
+
+    if next_field is None:
+        # Все поля собраны — строим резюме для черновика
+        conversation.intake_fields = collected
+        return _build_draft_payload(item, collected)
+
+    # Задаём следующий вопрос
+    question = item.question_for(next_field)
+    if first_detection and not collected:
+        answer = f"Оформлю запрос «{item.title}». {question}"
+    else:
+        answer = question
+
+    collected["_last_asked"] = next_field
+    conversation.intake_fields = collected
+
+    return {
+        "answer": answer,
+        "confidence": 1.0,
+        "escalate": False,
+        "sources": [],
+        "model_version": "intake-rules-v1",
+    }
+
+
+def _last_user_message(history: list[dict[str, str]]) -> str | None:
+    for msg in reversed(history):
+        if msg.get("role") == "user":
+            return msg.get("content", "").strip() or None
+    return None
+
+
+def _build_draft_payload(item: CatalogItem, collected: dict[str, str]) -> dict[str, Any]:
+    lines = [f"**Черновик обращения: {item.title}**", ""]
+    field_labels = {
+        "username": "Заявитель",
+        "office": "Офис / кабинет",
+        "error_code": "Код ошибки",
+        "affected_system": "Система",
+        "operation": "Операция",
+        "device_description": "Устройство",
+        "software_name": "Программа",
+        "justification": "Обоснование",
+        "sender_email": "Адрес отправителя",
+        "already_clicked": "Перешли по ссылке",
+        "description": "Описание",
+        "device_type": "Тип устройства",
+        "serial_number": "Серийный номер",
+        "circumstances": "Обстоятельства",
+        "document_type": "Тип документа",
+        "delivery_date": "Срок готовности",
+        "purpose": "Назначение",
+        "vacation_start": "Начало отпуска",
+        "vacation_end": "Конец отпуска",
+        "vacation_type": "Тип отпуска",
+        "item_description": "Что закупить",
+        "budget": "Бюджет",
+    }
+    for field_name in item.required_fields:
+        label = field_labels.get(field_name, field_name)
+        value = collected.get(field_name, "—")
+        lines.append(f"- **{label}:** {value}")
+
+    lines += [
+        "",
+        "Данные собраны. Подтвердите отправку или скорректируйте любое поле.",
+    ]
+    if item.is_emergency:
+        lines.insert(0, "⚠️ Срочный запрос — будет обработан приоритетно.")
+        lines.insert(1, "")
+
+    return {
+        "answer": "\n".join(lines),
+        "confidence": 1.0,
+        "escalate": True,
+        "sources": [],
+        "model_version": "intake-rules-v1",
+        "catalog_code": item.code,
+    }
+
+

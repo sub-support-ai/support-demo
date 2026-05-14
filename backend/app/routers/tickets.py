@@ -27,6 +27,8 @@ from app.models.ticket_rating import TicketRating
 from app.models.user import User
 from app.rate_limit import rate_limit
 from app.schemas.ticket import (
+    SimilarTicket,
+    TicketAiAssist,
     TicketCommentCreate,
     TicketCommentRead,
     TicketCreate,
@@ -248,6 +250,28 @@ async def get_ticket_for_operator(
         status_code=status.HTTP_404_NOT_FOUND,
         detail="Ticket not found",
     )
+
+
+def _build_ticket_summary(ticket: Ticket) -> str | None:
+    parts = []
+    if ticket.ai_category:
+        priority = ticket.ai_priority or "не определён"
+        conf_note = ""
+        if ticket.ai_confidence is not None and ticket.ai_confidence < 0.8:
+            conf_note = f" · ⚠ уверенность AI {round(ticket.ai_confidence * 100)}%"
+        parts.append(f"**Категория:** {ticket.ai_category} · {priority}{conf_note}")
+    if ticket.requester_name:
+        loc = " · ".join(filter(None, [ticket.office, ticket.affected_item]))
+        line = f"**Заявитель:** {ticket.requester_name}"
+        if loc:
+            line += f" ({loc})"
+        parts.append(line)
+    elif ticket.office or ticket.affected_item:
+        loc = " · ".join(filter(None, [ticket.office, ticket.affected_item]))
+        parts.append(f"**Объект:** {loc}")
+    if ticket.steps_tried:
+        parts.append(f"**Уже пробовал:** {ticket.steps_tried}")
+    return "\n".join(parts) or None
 
 
 # ── Схема для resolve ─────────────────────────────────────────────────────────
@@ -860,6 +884,7 @@ async def decline_ticket(
     return ticket
 
 
+
 # ── PATCH /tickets/{id}/resolve — агент закрывает тикет ───────────────────────
 
 
@@ -1394,3 +1419,35 @@ async def delete_ticket(
 
     await db.delete(ticket)
     await db.flush()
+
+
+@router.get("/{ticket_id}/ai-assist", response_model=TicketAiAssist)
+async def get_ticket_ai_assist(
+    ticket_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TicketAiAssist:
+    ticket = await get_ticket_for_operator(ticket_id, db, current_user)
+
+    ai_log = await _get_latest_ai_log(ticket_id, db)
+    draft = ai_log.ai_response_draft if ai_log else None
+
+    similar_query = (
+        select(Ticket)
+        .where(Ticket.id != ticket_id)
+        .where(Ticket.department == ticket.department)
+        .where(Ticket.status.in_(["resolved", "closed"]))
+        .order_by(Ticket.resolved_at.desc())
+        .limit(5)
+    )
+    if ticket.ai_category:
+        similar_query = similar_query.where(Ticket.ai_category == ticket.ai_category)
+
+    similar_result = await db.execute(similar_query)
+    similar_tickets = similar_result.scalars().all()
+
+    return TicketAiAssist(
+        summary=_build_ticket_summary(ticket),
+        ai_response_draft=draft,
+        similar_tickets=[SimilarTicket.model_validate(t) for t in similar_tickets],
+    )

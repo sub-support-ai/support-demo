@@ -4,6 +4,7 @@ import { api } from "./client";
 import type {
   ResolveTicketPayload,
   Ticket,
+  TicketAiAssist,
   TicketComment,
   TicketCommentCreate,
   TicketDraftUpdate,
@@ -233,6 +234,17 @@ export function useCreateTicketComment() {
       queryClient.invalidateQueries({
         queryKey: ["tickets", comment.ticket_id, "comments"],
       });
+    },
+  });
+}
+
+export function useTicketAiAssist(ticketId: number, enabled: boolean) {
+  return useQuery({
+    queryKey: ["tickets", ticketId, "ai-assist"],
+    enabled,
+    queryFn: async () => {
+      const { data } = await api.get<TicketAiAssist>(`/tickets/${ticketId}/ai-assist`);
+      return data;
     },
   });
 }

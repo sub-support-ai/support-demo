@@ -10,13 +10,14 @@ import {
   Select,
   Stack,
   Table,
+  Tabs,
   Text,
   TextInput,
   Textarea,
   Title,
   Tooltip,
 } from "@mantine/core";
-import { IconDatabaseSearch, IconRefresh, IconSettings } from "@tabler/icons-react";
+import { IconChartBar, IconDatabaseSearch, IconRefresh, IconSettings } from "@tabler/icons-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { getApiError } from "../api/client";
@@ -29,6 +30,7 @@ import {
 } from "../api/knowledge";
 import type { KnowledgeArticle, KnowledgeArticlePayload } from "../api/types";
 import { feedbackBadgeColor, summarizeFeedback } from "../lib/knowledgeFeedback";
+import { KnowledgeQualityPage } from "./KnowledgeQualityPage";
 
 const departmentOptions = [
   { value: "IT", label: "ИТ" },
@@ -137,6 +139,7 @@ export function KnowledgePage() {
   const reindexAllArticles = useReindexAllKnowledgeArticles();
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [form, setForm] = useState<KnowledgeFormState>(emptyForm);
+  const [activeTab, setActiveTab] = useState<string | null>("articles");
 
   const selectedArticle = useMemo(
     () => articles.data?.find((article) => article.id === selectedId) ?? null,
@@ -182,9 +185,32 @@ export function KnowledgePage() {
     await reindexArticle.mutateAsync(selectedArticle.id);
   }
 
+  function handleCreateArticle(prefillTitle?: string) {
+    setActiveTab("articles");
+    setSelectedId(null);
+    setForm(prefillTitle ? { ...emptyForm, title: prefillTitle } : emptyForm);
+  }
+
   return (
     <div className="content-page knowledge-page">
       <Paper className="dashboard-panel" withBorder>
+        <Tabs value={activeTab} onChange={setActiveTab} mb="md">
+          <Tabs.List>
+            <Tabs.Tab value="articles" leftSection={<IconDatabaseSearch size={14} />}>
+              База знаний
+            </Tabs.Tab>
+            <Tabs.Tab value="quality" leftSection={<IconChartBar size={14} />}>
+              Качество
+            </Tabs.Tab>
+          </Tabs.List>
+        </Tabs>
+
+        {activeTab === "quality" && (
+          <KnowledgeQualityPage onCreateArticle={handleCreateArticle} />
+        )}
+
+        {activeTab === "articles" && (
+          <>
         <Group justify="space-between" mb="lg" align="start">
           <div>
             <Title order={2}>База знаний</Title>
@@ -466,6 +492,8 @@ export function KnowledgePage() {
             </Paper>
           </Grid.Col>
         </Grid>
+          </>
+        )}
       </Paper>
     </div>
   );

@@ -498,7 +498,7 @@ async def test_post_message_ai_unavailable_marks_red_zone(client: AsyncClient, d
     # Шлём сообщение
     msg_resp = await client.post(
         f"/api/v1/conversations/{conv_id}/messages",
-        json={"content": "Не могу войти в SAP, ошибка 403"},
+        json={"content": "Как долго хранятся архивные документы по регламенту?"},
         headers=headers,
     )
     assert msg_resp.status_code == 201
@@ -522,7 +522,7 @@ async def test_post_message_ai_unavailable_marks_red_zone(client: AsyncClient, d
     user_msg, ai_msg = messages
 
     assert user_msg["role"] == "user"
-    assert user_msg["content"] == "Не могу войти в SAP, ошибка 403"
+    assert user_msg["content"] == "Как долго хранятся архивные документы по регламенту?"
     # У user-сообщения AI-метаданных нет
     assert user_msg["ai_confidence"] is None
     assert user_msg["sources"] is None

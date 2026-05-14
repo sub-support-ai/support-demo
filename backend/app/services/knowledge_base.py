@@ -939,6 +939,7 @@ def _build_kb_query(user_messages: list[str], assistant_messages: list[str]) -> 
 async def find_knowledge_answer(
     db: AsyncSession,
     messages: list[dict[str, str]],
+    filters: KnowledgeSearchFilters | None = None,
     exclude_article_ids: set[int] | None = None,
 ) -> dict | None:
     """Ищет ответ в KB и возвращает payload с замеренной латенси поиска.
@@ -974,7 +975,7 @@ async def find_knowledge_answer(
 
     started = time.perf_counter()
     search_limit = max(1, min(5, 1 + len(exclude_article_ids or set())))
-    matches = await search_knowledge_articles(db, query, limit=search_limit)
+    matches = await search_knowledge_articles(db, query, filters=filters, limit=search_limit)
     latency_ms = int((time.perf_counter() - started) * 1000)
 
     if exclude_article_ids:

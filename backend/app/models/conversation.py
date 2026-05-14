@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Optional
 
 from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -47,14 +47,12 @@ class Conversation(Base):
     decline_reason: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
     # ПСЕВДО-СТРИМИНГ: текущая стадия обработки AI-ответа.
-    # Поле обновляется несколькими отдельными commit'ами внутри
-    # generate_ai_message(), чтобы клиент-поллер видел прогресс
-    # без реального стриминга токенов.
     # Значения: thinking / searching / found_kb / generating / None (idle).
-    # Очищается после завершения или падения джобы.
     ai_stage: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
-    intake_state: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
+    # Intake flow: код типа обращения из service_catalog + собранные поля
+    catalog_code: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    intake_fields: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

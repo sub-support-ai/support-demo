@@ -17,6 +17,7 @@ import {
   IconCheck,
   IconMessageCircle,
   IconPlayerPlay,
+  IconSparkles,
 } from "@tabler/icons-react";
 import { useMemo, useState } from "react";
 
@@ -32,6 +33,7 @@ import {
   useTicketComments,
   useUpdateTicketStatus,
 } from "../../api/tickets";
+import { AiAssistPanel } from "./AiAssistPanel";
 import {
   getDepartmentLabel,
   getStatusLabel,
@@ -100,6 +102,7 @@ export function TicketCard({
 }) {
   const viewerRole = currentUserRole ?? role ?? "user";
   const [commentsOpen, setCommentsOpen] = useState(false);
+  const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [commentText, setCommentText] = useState("");
   const [internalComment, setInternalComment] = useState(true);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
@@ -152,6 +155,13 @@ export function TicketCard({
       })) ?? [],
     [templates.data],
   );
+
+  function handleInsertDraft(text: string) {
+    setCommentText(text);
+    setInternalComment(false);
+    setCommentsOpen(true);
+    setAiPanelOpen(false);
+  }
 
   async function handleCreateComment() {
     const content = commentText.trim();
@@ -264,6 +274,24 @@ export function TicketCard({
 
         {canOperate && (
           <Stack gap="xs">
+            <Group justify="flex-end">
+              <Button
+                size="xs"
+                variant={aiPanelOpen ? "light" : "subtle"}
+                color="violet"
+                leftSection={<IconSparkles size={14} />}
+                onClick={() => setAiPanelOpen((v) => !v)}
+              >
+                AI-помощник
+              </Button>
+            </Group>
+
+            <Collapse in={aiPanelOpen}>
+              <Paper withBorder p="sm" radius="sm" bg="var(--mantine-color-violet-light)">
+                <AiAssistPanel ticketId={ticket.id} onInsertDraft={handleInsertDraft} />
+              </Paper>
+            </Collapse>
+
             <Group gap="md" justify="flex-end">
               <Checkbox
                 size="xs"

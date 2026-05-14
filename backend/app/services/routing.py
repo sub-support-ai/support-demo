@@ -20,7 +20,7 @@
   роутер conversations), и её удобно тестировать изолированно.
 """
 
-from sqlalchemy import select, update
+from sqlalchemy import case, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent import Agent
@@ -84,6 +84,10 @@ async def unassign_agent(
     await db.execute(
         update(Agent)
         .where(Agent.id == ticket.agent_id)
-        .where(Agent.active_ticket_count > 0)
-        .values(active_ticket_count=Agent.active_ticket_count - 1)
+        .values(
+            active_ticket_count=case(
+                (Agent.active_ticket_count > 0, Agent.active_ticket_count - 1),
+                else_=0,
+            )
+        )
     )

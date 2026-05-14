@@ -124,6 +124,22 @@ class TicketRatingRead(BaseModel):
     created_at: datetime
 
 
+class SimilarTicket(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    title: str
+    department: str
+    ai_category: str | None = None
+    resolved_at: datetime | None = None
+
+
+class TicketAiAssist(BaseModel):
+    summary: str | None = None
+    ai_response_draft: str | None = None
+    similar_tickets: list[SimilarTicket] = []
+
+
 class TicketRead(TicketBase):
     model_config = ConfigDict(from_attributes=True)
 

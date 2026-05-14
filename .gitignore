@@ -29,3 +29,6 @@ dist/
 Thumbs.db
 .idea/
 .vscode/
+
+# Local tooling (not part of project)
+.claude/
