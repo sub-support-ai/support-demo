@@ -190,7 +190,7 @@ async def test_stats_knowledge_forbidden_for_user(client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_stats_knowledge_admin_empty(client: AsyncClient):
-    """Admin получает KnowledgeStats с нулями на пустой KB."""
+    """Admin получает KBQualityStats с пустыми списками на пустой KB."""
     _, token = await _register_admin(client, "kb2")
     r = await client.get(
         "/api/v1/stats/knowledge",
@@ -198,11 +198,10 @@ async def test_stats_knowledge_admin_empty(client: AsyncClient):
     )
     assert r.status_code == 200
     data = r.json()
-    assert data["total_articles"] == 0
-    assert data["active_articles"] == 0
-    assert isinstance(data["by_department"], dict)
-    assert isinstance(data["top_helped"], list)
+    assert isinstance(data["not_helping"], list)
     assert isinstance(data["never_shown"], list)
+    assert isinstance(data["expiring_soon"], list)
+    assert isinstance(data["unanswered_queries"], list)
 
 
 # ── GET /stats/knowledge/score-distribution ───────────────────────────────────
