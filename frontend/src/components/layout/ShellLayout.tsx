@@ -21,6 +21,7 @@ import {
   IconListCheck,
   IconLogout,
   IconMessageCircle,
+  IconRobot,
 } from "@tabler/icons-react";
 import { NavLink as RouterNavLink, Outlet, useLocation } from "react-router-dom";
 
@@ -214,6 +215,15 @@ export function ShellLayout() {
             label="Очереди"
             leftSection={<IconListCheck size={18} />}
             active={location.pathname.startsWith("/jobs")}
+          />
+        )}
+        {me?.role === "admin" && (
+          <NavLink
+            component={RouterNavLink}
+            to="/ai-quality"
+            label="Качество AI"
+            leftSection={<IconRobot size={18} />}
+            active={location.pathname.startsWith("/ai-quality")}
           />
         )}
       </AppShell.Navbar>

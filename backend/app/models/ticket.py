@@ -1,7 +1,18 @@
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, func
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    func,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -100,6 +111,9 @@ class Ticket(Base):
 
     status: Mapped[str] = mapped_column(
         String(30), default="pending_user", nullable=False, index=True
+    )
+    ticket_kind: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="incident", server_default=text("'incident'"), index=True
     )
 
     # Кто и как создал тикет

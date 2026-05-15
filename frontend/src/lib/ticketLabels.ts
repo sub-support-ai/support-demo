@@ -66,3 +66,27 @@ export function getDepartmentLabel(department?: string | null): string {
   if (!department) return "Без отдела";
   return DEPARTMENT_LABELS[department] ?? department;
 }
+
+const TICKET_KIND_LABELS: Record<string, string> = {
+  incident: "Инцидент",
+  service_request: "Запрос услуги",
+  access_request: "Запрос доступа",
+  security_incident: "Инцидент ИБ",
+};
+
+const TICKET_KIND_COLORS: Record<string, string> = {
+  incident: "red",
+  service_request: "blue",
+  access_request: "violet",
+  security_incident: "orange",
+};
+
+export function getTicketKindLabel(kind?: string | null): string {
+  if (!kind) return "Инцидент";
+  return TICKET_KIND_LABELS[kind] ?? kind;
+}
+
+export function getTicketKindColor(kind?: string | null): string {
+  if (!kind) return "red";
+  return TICKET_KIND_COLORS[kind] ?? "gray";
+}

@@ -346,6 +346,7 @@ async def create_ticket(
         asset_id=payload.asset_id,
         request_type=clean_optional_text(payload.request_type),
         request_details=mask_pii(clean_optional_text(payload.request_details)),
+        ticket_kind=payload.ticket_kind,
         ai_category=ai_result.get("category"),
         ai_priority=ai_result.get("priority"),
         ai_confidence=ai_result.get("confidence"),
@@ -701,6 +702,7 @@ async def update_ticket_draft(
         "asset_id",
         "request_type",
         "request_details",
+        "ticket_kind",
     }
     if ticket.ticket_source == "ai_generated" and user_edited_fields.intersection(update_data):
         ticket.ticket_source = "ai_assisted"
@@ -739,6 +741,8 @@ async def update_ticket_draft(
         ticket.affected_item = clean_optional_text(update_data["affected_item"])
     if "asset_id" in update_data:
         ticket.asset_id = update_data["asset_id"]
+    if "ticket_kind" in update_data and update_data["ticket_kind"] is not None:
+        ticket.ticket_kind = update_data["ticket_kind"]
     if "request_type" in update_data:
         ticket.request_type = clean_optional_text(update_data["request_type"])
     if "request_details" in update_data:

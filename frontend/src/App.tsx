@@ -10,6 +10,7 @@ const ChatPage = lazy(() => import("./pages/ChatPage").then(m => ({ default: m.C
 const TicketsPage = lazy(() => import("./pages/TicketsPage").then(m => ({ default: m.TicketsPage })));
 const KnowledgePage = lazy(() => import("./pages/KnowledgePage").then(m => ({ default: m.KnowledgePage })));
 const JobsPage = lazy(() => import("./pages/JobsPage").then(m => ({ default: m.JobsPage })));
+const AIQualityPage = lazy(() => import("./pages/AIQualityPage").then(m => ({ default: m.AIQualityPage })));
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { token } = useAuth();
@@ -38,6 +39,7 @@ export function App() {
           <Route path="tickets" element={<TicketsPage />} />
           <Route path="knowledge" element={<KnowledgePage />} />
           <Route path="jobs" element={<JobsPage />} />
+          <Route path="ai-quality" element={<AIQualityPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

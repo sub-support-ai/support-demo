@@ -37,6 +37,8 @@ import { AiAssistPanel } from "./AiAssistPanel";
 import {
   getDepartmentLabel,
   getStatusLabel,
+  getTicketKindColor,
+  getTicketKindLabel,
   getTicketPriorityLabel,
 } from "../../lib/ticketLabels";
 
@@ -247,6 +249,9 @@ export function TicketCard({
         )}
 
         <Group gap="xs">
+          <Badge variant="filled" color={getTicketKindColor(ticket.ticket_kind)} size="xs">
+            {getTicketKindLabel(ticket.ticket_kind)}
+          </Badge>
           <Badge variant="light">{getDepartmentLabel(ticket.department)}</Badge>
           <Badge variant="light">{getTicketPriorityLabel(ticket)}</Badge>
           {slaDeadline && (

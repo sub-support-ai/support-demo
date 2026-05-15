@@ -1,5 +1,11 @@
 export type UserRole = "user" | "agent" | "admin";
 
+export type TicketKind =
+  | "incident"
+  | "service_request"
+  | "access_request"
+  | "security_incident";
+
 export type TicketStatus =
   | "new"
   | "pending_user"
@@ -196,6 +202,7 @@ export interface Ticket {
   sla_escalation_count?: number;
   is_sla_breached?: boolean;
   reopen_count?: number;
+  ticket_kind?: TicketKind | string;
   ai_category?: string | null;
   ai_priority?: string | null;
   ai_confidence?: number | null;
@@ -210,6 +217,7 @@ export interface TicketDraftUpdate {
   body?: string;
   department?: "IT" | "HR" | "finance" | "procurement" | "security" | "facilities" | "documents";
   ai_priority?: "низкий" | "средний" | "высокий";
+  ticket_kind?: TicketKind | string;
   requester_name?: string | null;
   requester_email?: string | null;
   steps_tried?: string | null;

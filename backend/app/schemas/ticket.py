@@ -41,6 +41,8 @@ from app.constants.departments import DepartmentLiteral  # noqa: E402
 
 EditableTicketPriorityLiteral = Literal["высокий", "средний", "низкий"]
 
+TicketKindLiteral = Literal["incident", "service_request", "access_request", "security_incident"]
+
 
 class TicketBase(BaseModel):
     title: str = Field(min_length=1, max_length=255)
@@ -60,6 +62,7 @@ class TicketCreate(TicketBase):
     asset_id: int | None = None
     request_type: str | None = Field(default=None, max_length=60)
     request_details: str | None = Field(default=None, max_length=2000)
+    ticket_kind: TicketKindLiteral = "incident"
 
 
 class TicketStatusUpdate(BaseModel):
@@ -79,6 +82,7 @@ class TicketDraftUpdate(BaseModel):
     asset_id: int | None = None
     request_type: str | None = Field(default=None, max_length=60)
     request_details: str | None = Field(default=None, max_length=2000)
+    ticket_kind: TicketKindLiteral | None = None
 
 
 class TicketCommentCreate(BaseModel):
@@ -157,6 +161,7 @@ class TicketRead(TicketBase):
     status: str
     department: str
     ticket_source: str
+    ticket_kind: str
     requester_name: str | None = None
     requester_email: str | None = None
     office: str | None = None
@@ -202,3 +207,4 @@ class TicketSummary(BaseModel):
     reopen_count: int
     agent_id: int | None
     asset_id: int | None = None
+    ticket_kind: str | None = None
