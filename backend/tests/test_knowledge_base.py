@@ -5,19 +5,6 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-
-@pytest.fixture(autouse=True)
-def _monkeypatch_sqlite_fallback(monkeypatch: pytest.MonkeyPatch):
-    """Force SQLite FTS fallback for all tests in this file.
-
-    Tests are calibrated for FTS-only search without TSVECTOR.
-    On PostgreSQL, this ensures the fallback path is used.
-    """
-    monkeypatch.setattr(
-        "app.services.knowledge_base._session_dialect_name",
-        lambda _db: "sqlite",
-    )
-
 from app.models.ai_log import AILog
 from app.models.conversation import Conversation
 from app.models.knowledge_article import KnowledgeArticle, KnowledgeArticleFeedback, KnowledgeChunk
@@ -47,6 +34,19 @@ from app.services.knowledge_embeddings import (
     needs_embedding,
     vector_literal,
 )
+
+
+@pytest.fixture(autouse=True)
+def _monkeypatch_sqlite_fallback(monkeypatch: pytest.MonkeyPatch):
+    """Force SQLite FTS fallback for all tests in this file.
+
+    Tests are calibrated for FTS-only search without TSVECTOR.
+    On PostgreSQL, this ensures the fallback path is used.
+    """
+    monkeypatch.setattr(
+        "app.services.knowledge_base._session_dialect_name",
+        lambda _db: "sqlite",
+    )
 
 
 @pytest.mark.asyncio
