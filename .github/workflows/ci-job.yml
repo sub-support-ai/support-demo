@@ -40,9 +40,6 @@ jobs:
       - name: Run Alembic migrations
         working-directory: backend
         env:
-          POSTGRES_HOST: localhost
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: app_db
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/app_db
         run: |
           python -m alembic upgrade head
