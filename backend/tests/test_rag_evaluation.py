@@ -74,13 +74,22 @@ async def seeded_kb(db_session: AsyncSession, baseline_cases) -> AsyncSession:
 
 
 @pytest.mark.asyncio
-async def test_baseline_meets_quality_thresholds(seeded_kb, baseline_cases):
+async def test_baseline_meets_quality_thresholds(seeded_kb, baseline_cases, monkeypatch):
     """Полный прогон baseline через search_knowledge_articles + проверка порогов.
+
+    Тест использует SQLite-FTS-fallback (токенный скоринг без TSVECTOR).
+    На PostgreSQL принудительно включаем fallback-путь через monkeypatch,
+    чтобы тест работал одинаково на SQLite (локально) и PostgreSQL (CI).
+    Пороги откалиброваны именно под этот путь.
 
     Если этот тест упал — НЕ снижайте пороги без обсуждения. Это регрессия:
     выясните, какая правка ranking'а её внесла, и почему она оправдана
     (например, могли пожертвовать precision@1 ради точности на длинном tail'е).
     """
+    monkeypatch.setattr(
+        "app.services.knowledge_base._session_dialect_name",
+        lambda _db: "sqlite",
+    )
     per_query: list[QueryReport] = []
     for case in baseline_cases:
         matches = await search_knowledge_articles(seeded_kb, case.query, limit=5)
