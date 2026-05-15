@@ -27,11 +27,11 @@ def upgrade() -> None:
     op.add_column("knowledge_articles", sa.Column("owner", sa.String(length=120), nullable=True))
     op.add_column(
         "knowledge_articles",
-        sa.Column("access_scope", sa.String(length=20), nullable=False, server_default="public"),
+        sa.Column("access_scope", sa.String(length=20), nullable=False, server_default=sa.text("'public'")),
     )
     op.add_column(
         "knowledge_articles",
-        sa.Column("version", sa.Integer(), nullable=False, server_default="1"),
+        sa.Column("version", sa.Integer(), nullable=False, server_default=sa.text("1")),
     )
     op.add_column(
         "knowledge_articles", sa.Column("reviewed_at", sa.DateTime(timezone=True), nullable=True)
@@ -49,19 +49,19 @@ def upgrade() -> None:
     )
     op.add_column(
         "knowledge_articles",
-        sa.Column("view_count", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("view_count", sa.Integer(), nullable=False, server_default=sa.text("0")),
     )
     op.add_column(
         "knowledge_articles",
-        sa.Column("helped_count", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("helped_count", sa.Integer(), nullable=False, server_default=sa.text("0")),
     )
     op.add_column(
         "knowledge_articles",
-        sa.Column("not_helped_count", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("not_helped_count", sa.Integer(), nullable=False, server_default=sa.text("0")),
     )
     op.add_column(
         "knowledge_articles",
-        sa.Column("not_relevant_count", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("not_relevant_count", sa.Integer(), nullable=False, server_default=sa.text("0")),
     )
     op.create_index(
         op.f("ix_knowledge_articles_access_scope"),

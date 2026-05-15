@@ -25,7 +25,7 @@ def upgrade() -> None:
         "tickets", sa.Column("sla_deadline_at", sa.DateTime(timezone=True), nullable=True)
     )
     op.add_column(
-        "tickets", sa.Column("reopen_count", sa.Integer(), server_default="0", nullable=False)
+        "tickets", sa.Column("reopen_count", sa.Integer(), server_default=sa.text("0"), nullable=False)
     )
     op.create_index(
         op.f("ix_tickets_sla_deadline_at"), "tickets", ["sla_deadline_at"], unique=False

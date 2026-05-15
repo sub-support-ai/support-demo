@@ -30,7 +30,7 @@ def upgrade() -> None:
                 "reopen_count",
                 sa.Integer(),
                 nullable=False,
-                server_default="0",
+                server_default=sa.text("0"),
             ),
         )
         op.alter_column("tickets", "reopen_count", server_default=None)
