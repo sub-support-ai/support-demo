@@ -12,7 +12,6 @@ Create Date: 2026-05-15 12:00:00.000000
 from collections.abc import Sequence
 
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
 
 from alembic import op
 
@@ -28,20 +27,20 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
         sa.Column("name", sa.String(200), nullable=False),
         sa.Column("description", sa.Text(), nullable=True),
-        sa.Column("is_active", sa.Boolean(), nullable=False, server_default="true"),
-        sa.Column("priority", sa.Integer(), nullable=False, server_default="100"),
+        sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.text("true")),
+        sa.Column("priority", sa.Integer(), nullable=False, server_default=sa.text("100")),
         sa.Column("trigger", sa.String(50), nullable=False),
         sa.Column(
             "conditions",
-            postgresql.JSONB(astext_type=sa.Text()),
+            sa.JSON(),
             nullable=False,
-            server_default="'[]'",
+            server_default=sa.text("'[]'::jsonb"),
         ),
         sa.Column(
             "actions",
-            postgresql.JSONB(astext_type=sa.Text()),
+            sa.JSON(),
             nullable=False,
-            server_default="'[]'",
+            server_default=sa.text("'[]'::jsonb"),
         ),
         sa.Column(
             "created_at",
