@@ -8,6 +8,8 @@ from app.database import Base
 
 if TYPE_CHECKING:
     from app.models.agent import Agent
+    from app.models.asset import Asset
+    from app.models.ticket import Ticket
 
 
 class User(Base):
@@ -32,6 +34,8 @@ class User(Base):
 
     # Один пользователь — много тикетов
     tickets: Mapped[list["Ticket"]] = relationship("Ticket", back_populates="user")
+    # Активы, которыми владеет пользователь (CMDB)
+    assets: Mapped[list["Asset"]] = relationship("Asset", back_populates="owner")
     agent_profile: Mapped[Optional["Agent"]] = relationship(
         "Agent",
         back_populates="user",

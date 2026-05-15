@@ -11,6 +11,7 @@ from app.models.agent import Agent  # noqa: F401
 from app.models.ai_fallback_event import AIFallbackEvent  # noqa: F401
 from app.models.ai_job import AIJob  # noqa: F401
 from app.models.ai_log import AILog  # noqa: F401
+from app.models.asset import Asset  # noqa: F401
 from app.models.audit_log import AuditLog  # noqa: F401
 from app.models.automation_rule import AutomationRule  # noqa: F401
 from app.models.conversation import Conversation  # noqa: F401

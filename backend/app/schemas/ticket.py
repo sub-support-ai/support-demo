@@ -3,6 +3,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
+from app.schemas.asset import AssetSummary
+
 TicketStatusLiteral = Literal[
     "new",
     "pending_user",
@@ -54,6 +56,8 @@ class TicketCreate(TicketBase):
     department: DepartmentLiteral | None = None
     office: str | None = Field(default=None, max_length=100)
     affected_item: str | None = Field(default=None, max_length=150)
+    # CMDB: ID актива из таблицы assets; дополняет affected_item, не заменяет
+    asset_id: int | None = None
     request_type: str | None = Field(default=None, max_length=60)
     request_details: str | None = Field(default=None, max_length=2000)
 
@@ -72,6 +76,7 @@ class TicketDraftUpdate(BaseModel):
     steps_tried: str | None = Field(default=None, max_length=5_000)
     office: str | None = Field(default=None, max_length=100)
     affected_item: str | None = Field(default=None, max_length=150)
+    asset_id: int | None = None
     request_type: str | None = Field(default=None, max_length=60)
     request_details: str | None = Field(default=None, max_length=2000)
 
@@ -147,6 +152,8 @@ class TicketRead(TicketBase):
     user_id: int
     agent_id: int | None = None
     conversation_id: int | None = None
+    asset_id: int | None = None
+    asset: AssetSummary | None = None
     status: str
     department: str
     ticket_source: str
@@ -194,3 +201,4 @@ class TicketSummary(BaseModel):
     is_sla_breached: bool
     reopen_count: int
     agent_id: int | None
+    asset_id: int | None = None

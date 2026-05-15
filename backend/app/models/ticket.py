@@ -1,10 +1,20 @@
 from datetime import datetime
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+
+if TYPE_CHECKING:
+    from app.models.agent import Agent
+    from app.models.ai_log import AILog
+    from app.models.asset import Asset
+    from app.models.conversation import Conversation
+    from app.models.response import Response
+    from app.models.ticket_comment import TicketComment
+    from app.models.ticket_rating import TicketRating
+    from app.models.user import User
 
 
 class Ticket(Base):
@@ -64,6 +74,12 @@ class Ticket(Base):
     # Из какого диалога создан тикет
     conversation_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # Ссылка на CMDB-объект; NULL — когда актив не внесён в базу.
+    # affected_item остаётся как free-text fallback для старых тикетов и
+    # объектов, которых ещё нет в CMDB.
+    asset_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("assets.id", ondelete="SET NULL"), nullable=True, index=True
     )
 
     title: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -127,6 +143,9 @@ class Ticket(Base):
     reopen_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     user: Mapped["User"] = relationship("User", back_populates="tickets")
+    asset: Mapped[Optional["Asset"]] = relationship(
+        "Asset", back_populates="tickets", lazy="selectin"
+    )
     agent: Mapped[Optional["Agent"]] = relationship("Agent", back_populates="tickets")
     conversation: Mapped[Optional["Conversation"]] = relationship(
         "Conversation", back_populates="tickets"

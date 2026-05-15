@@ -114,11 +114,68 @@ export interface AddMessageResponse {
   poll_hint: string;
 }
 
+export type AssetType =
+  | "laptop"
+  | "desktop"
+  | "monitor"
+  | "printer"
+  | "phone"
+  | "network_device"
+  | "server"
+  | "peripheral"
+  | "software"
+  | "service"
+  | "other";
+
+export type AssetStatus = "active" | "in_repair" | "decommissioned" | "lost";
+
+/** Краткое представление актива, вложенное в TicketRead. */
+export interface AssetSummary {
+  id: number;
+  asset_type: AssetType | string;
+  name: string;
+  serial_number?: string | null;
+  status: AssetStatus | string;
+  office?: string | null;
+}
+
+/** Полное представление актива — ответ GET /assets и POST /assets. */
+export interface Asset extends AssetSummary {
+  owner_user_id?: number | null;
+  notes?: string | null;
+  created_at: string;
+  updated_at?: string | null;
+}
+
+export interface AssetCreate {
+  asset_type: AssetType | string;
+  name: string;
+  serial_number?: string | null;
+  owner_user_id?: number | null;
+  office?: string | null;
+  status?: AssetStatus | string;
+  notes?: string | null;
+}
+
+export interface AssetUpdate {
+  asset_type?: AssetType | string;
+  name?: string;
+  serial_number?: string | null;
+  owner_user_id?: number | null;
+  office?: string | null;
+  status?: AssetStatus | string;
+  notes?: string | null;
+}
+
 export interface Ticket {
   id: number;
   user_id: number;
   agent_id?: number | null;
   conversation_id?: number | null;
+  /** CMDB: ID актива из таблицы assets. Дополняет affected_item, не заменяет его. */
+  asset_id?: number | null;
+  /** Краткая информация об активе (подгружается сервером). */
+  asset?: AssetSummary | null;
   title: string;
   body: string;
   user_priority: number;
@@ -158,6 +215,7 @@ export interface TicketDraftUpdate {
   steps_tried?: string | null;
   office?: string | null;
   affected_item?: string | null;
+  asset_id?: number | null;
   request_type?: string | null;
   request_details?: string | null;
 }

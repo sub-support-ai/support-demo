@@ -99,13 +99,18 @@ def _require_draft_context(ticket: Ticket) -> None:
         "requester_name": ticket.requester_name,
         "requester_email": ticket.requester_email,
         "office": ticket.office,
-        "affected_item": ticket.affected_item,
     }
     missing = [
         field
         for field, value in required_fields.items()
         if not isinstance(value, str) or not value.strip()
     ]
+    # affected_item засчитывается при наличии free-text ИЛИ ссылки на актив CMDB
+    has_affected_item = (
+        isinstance(ticket.affected_item, str) and ticket.affected_item.strip()
+    ) or ticket.asset_id is not None
+    if not has_affected_item:
+        missing.append("affected_item")
     if missing:
         raise HTTPException(
             status_code=422,
@@ -338,6 +343,7 @@ async def create_ticket(
         requester_email=current_user.email,
         office=payload.office.strip() if payload.office else None,
         affected_item=payload.affected_item.strip() if payload.affected_item else None,
+        asset_id=payload.asset_id,
         request_type=clean_optional_text(payload.request_type),
         request_details=mask_pii(clean_optional_text(payload.request_details)),
         ai_category=ai_result.get("category"),
@@ -692,6 +698,7 @@ async def update_ticket_draft(
         "steps_tried",
         "office",
         "affected_item",
+        "asset_id",
         "request_type",
         "request_details",
     }
@@ -730,6 +737,8 @@ async def update_ticket_draft(
         ticket.office = clean_optional_text(update_data["office"])
     if "affected_item" in update_data:
         ticket.affected_item = clean_optional_text(update_data["affected_item"])
+    if "asset_id" in update_data:
+        ticket.asset_id = update_data["asset_id"]
     if "request_type" in update_data:
         ticket.request_type = clean_optional_text(update_data["request_type"])
     if "request_details" in update_data:

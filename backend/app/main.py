@@ -16,6 +16,7 @@ from app.context import request_id_ctx
 from app.database import engine, get_db
 from app.logging_config import setup_logging
 from app.metrics import setup_metrics
+from app.routers.assets import router as assets_router
 from app.routers.audit import router as audit_router
 from app.routers.auth import router as auth_router
 from app.routers.automation_rules import router as automation_rules_router
@@ -140,6 +141,7 @@ async def request_observability_middleware(request: Request, call_next):
 
 
 app.include_router(auth_router, prefix="/api/v1")
+app.include_router(assets_router, prefix="/api/v1")
 app.include_router(users_router, prefix="/api/v1")
 app.include_router(stats_router, prefix="/api/v1")
 app.include_router(tickets_router, prefix="/api/v1")
