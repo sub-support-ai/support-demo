@@ -22,15 +22,7 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
-def _has_table(table_name: str) -> bool:
-    inspector = sa.inspect(op.get_bind())
-    return table_name in inspector.get_table_names()
-
-
 def upgrade() -> None:
-    if _has_table("automation_rules"):
-        return
-
     op.create_table(
         "automation_rules",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
@@ -114,7 +106,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    if _has_table("automation_rules"):
-        op.drop_index("ix_automation_rules_trigger", table_name="automation_rules")
-        op.drop_index("ix_automation_rules_id", table_name="automation_rules")
-        op.drop_table("automation_rules")
+    op.drop_index("ix_automation_rules_trigger", table_name="automation_rules")
+    op.drop_index("ix_automation_rules_id", table_name="automation_rules")
+    op.drop_table("automation_rules")
