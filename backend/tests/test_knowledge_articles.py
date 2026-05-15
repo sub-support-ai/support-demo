@@ -15,6 +15,20 @@ from httpx import AsyncClient
 
 from app.config import get_settings
 
+
+@pytest.fixture(autouse=True)
+def _monkeypatch_sqlite_fallback(monkeypatch: pytest.MonkeyPatch):
+    """Force SQLite FTS fallback for all tests in this file.
+
+    Tests call search_knowledge_articles through the REST API /knowledge/search endpoint.
+    Force SQLite dialect fallback to avoid search_vector dependency.
+    """
+    monkeypatch.setattr(
+        "app.services.knowledge_base._session_dialect_name",
+        lambda _db: "sqlite",
+    )
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 

@@ -19,6 +19,19 @@ from sqlalchemy import select
 from app.models.ai_fallback_event import AIFallbackEvent
 
 
+@pytest.fixture(autouse=True)
+def _monkeypatch_sqlite_fallback(monkeypatch: pytest.MonkeyPatch):
+    """Force SQLite FTS fallback for all tests in this file.
+
+    Tests call find_knowledge_answer indirectly through generate_ai_message.
+    Force SQLite dialect fallback to avoid search_vector dependency.
+    """
+    monkeypatch.setattr(
+        "app.services.knowledge_base._session_dialect_name",
+        lambda _db: "sqlite",
+    )
+
+
 async def _register(client: AsyncClient, suffix: str) -> tuple[int, str]:
     response = await client.post(
         "/api/v1/auth/register",
