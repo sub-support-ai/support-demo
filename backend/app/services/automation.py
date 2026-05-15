@@ -80,13 +80,13 @@ def _evaluate_condition(condition: dict, ticket: Ticket) -> bool:
         if op == "not_contains":
             return expected is None or str(expected).lower() not in str(actual or "").lower()
         if op == "gte":
-            return float(actual or 0) >= float(expected)
+            return float(actual or 0) >= float(expected)  # type: ignore[arg-type]
         if op == "lte":
-            return float(actual or 0) <= float(expected)
+            return float(actual or 0) <= float(expected)  # type: ignore[arg-type]
         if op == "gt":
-            return float(actual or 0) > float(expected)
+            return float(actual or 0) > float(expected)  # type: ignore[arg-type]
         if op == "lt":
-            return float(actual or 0) < float(expected)
+            return float(actual or 0) < float(expected)  # type: ignore[arg-type]
         if op == "in":
             if not isinstance(expected, list):
                 return False
@@ -124,7 +124,7 @@ async def _execute_action(action: dict, ticket: Ticket, db: AsyncSession) -> Non
         _set_priority(ticket, str(value))
 
     elif action_type == "override_sla_minutes":
-        _override_sla(ticket, int(value))
+        _override_sla(ticket, int(value))  # type: ignore[arg-type]
 
     elif action_type == "add_comment":
         await _add_system_comment(ticket, str(value), db)

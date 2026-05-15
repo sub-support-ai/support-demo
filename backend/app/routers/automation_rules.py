@@ -39,11 +39,11 @@ async def _get_rule_or_404(rule_id: int, db: AsyncSession) -> AutomationRule:
 async def list_rules(
     db: AsyncSession = Depends(get_db),
     _: None = Depends(require_role("admin")),
-):
+) -> list[AutomationRule]:
     result = await db.execute(
         select(AutomationRule).order_by(AutomationRule.priority.asc(), AutomationRule.id.asc())
     )
-    return result.scalars().all()
+    return list(result.scalars().all())
 
 
 @router.post(
@@ -56,7 +56,7 @@ async def create_rule(
     payload: AutomationRuleCreate,
     db: AsyncSession = Depends(get_db),
     _: None = Depends(require_role("admin")),
-):
+) -> AutomationRule:
     rule = AutomationRule(
         name=payload.name,
         description=payload.description,
@@ -81,7 +81,7 @@ async def get_rule(
     rule_id: int,
     db: AsyncSession = Depends(get_db),
     _: None = Depends(require_role("admin")),
-):
+) -> AutomationRule:
     return await _get_rule_or_404(rule_id, db)
 
 
@@ -95,7 +95,7 @@ async def update_rule(
     payload: AutomationRuleUpdate,
     db: AsyncSession = Depends(get_db),
     _: None = Depends(require_role("admin")),
-):
+) -> AutomationRule:
     rule = await _get_rule_or_404(rule_id, db)
 
     if payload.name is not None:
@@ -127,7 +127,7 @@ async def toggle_rule(
     rule_id: int,
     db: AsyncSession = Depends(get_db),
     _: None = Depends(require_role("admin")),
-):
+) -> AutomationRule:
     rule = await _get_rule_or_404(rule_id, db)
     rule.is_active = not rule.is_active
     await db.commit()
@@ -144,7 +144,7 @@ async def delete_rule(
     rule_id: int,
     db: AsyncSession = Depends(get_db),
     _: None = Depends(require_role("admin")),
-):
+) -> None:
     rule = await _get_rule_or_404(rule_id, db)
     await db.delete(rule)
     await db.commit()

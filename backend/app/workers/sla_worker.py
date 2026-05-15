@@ -121,15 +121,21 @@ async def _run_retention_once() -> None:
         )
         await db.commit()
 
-    deleted = (r1.rowcount or 0) + (r2.rowcount or 0) + (r3.rowcount or 0) + (r4.rowcount or 0)
+    cnt1, cnt2, cnt3, cnt4 = (
+        r1.rowcount or 0,  # type: ignore[attr-defined]
+        r2.rowcount or 0,  # type: ignore[attr-defined]
+        r3.rowcount or 0,  # type: ignore[attr-defined]
+        r4.rowcount or 0,  # type: ignore[attr-defined]
+    )
+    deleted = cnt1 + cnt2 + cnt3 + cnt4
     if deleted:
         logger.info(
             "Retention: удалено устаревших записей",
             extra={
-                "audit_logs": r1.rowcount,
-                "fallback_events": r2.rowcount,
-                "ai_jobs": r3.rowcount,
-                "embedding_jobs": r4.rowcount,
+                "audit_logs": cnt1,
+                "fallback_events": cnt2,
+                "ai_jobs": cnt3,
+                "embedding_jobs": cnt4,
                 "cutoff_days": retention_days,
             },
         )
