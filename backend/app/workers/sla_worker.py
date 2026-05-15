@@ -3,9 +3,11 @@ import logging
 import os
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
 from app.database import AsyncSessionLocal
+from app.models.ticket import Ticket
+from app.services.automation import run_automation, TRIGGER_TICKET_NO_REPLY
 from app.metrics import refresh_queue_depth_metrics
 from app.services.sla_escalation import escalate_overdue_tickets
 from app.workers.base import BaseWorker
@@ -27,6 +29,55 @@ async def run_once() -> int:
         )
         await db.commit()
         return escalated
+
+
+NO_REPLY_HOURS = int(os.getenv("NO_REPLY_AUTOMATION_HOURS", "24"))
+NO_REPLY_BATCH = int(os.getenv("NO_REPLY_AUTOMATION_BATCH", "20"))
+
+
+async def _run_no_reply_automation() -> int:
+    """
+    Ищет тикеты без ответа агента дольше NO_REPLY_HOURS часов
+    и запускает для них automation-правила с триггером ticket_no_reply.
+
+    Условие срабатывания:
+      - статус in (confirmed, in_progress)
+      - confirmed_by_user = True
+      - first_response_at IS NULL (агент ещё не ответил)
+      - created_at < now() - NO_REPLY_HOURS (тикет достаточно старый)
+      - sla_escalated_at IS NULL (не эскалировали — чтобы не дублировать)
+    """
+    cutoff = datetime.now(UTC) - timedelta(hours=NO_REPLY_HOURS)
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(Ticket)
+            .where(
+                Ticket.status.in_(("confirmed", "in_progress")),
+                Ticket.confirmed_by_user.is_(True),
+                Ticket.first_response_at.is_(None),
+                Ticket.created_at < cutoff,
+                Ticket.sla_escalated_at.is_(None),
+            )
+            .order_by(Ticket.created_at.asc())
+            .limit(NO_REPLY_BATCH)
+        )
+        tickets = result.scalars().all()
+
+        fired = 0
+        for ticket in tickets:
+            try:
+                n = await run_automation(TRIGGER_TICKET_NO_REPLY, ticket, db)
+                fired += n
+            except Exception:
+                logger.exception(
+                    "No-reply automation error", extra={"ticket_id": ticket.id}
+                )
+
+        if tickets:
+            await db.commit()
+
+    return fired
 
 
 async def _run_retention_once() -> None:
@@ -105,6 +156,13 @@ class SLAWorker(BaseWorker):
                 logger.info("SLA worker escalated overdue tickets", extra={"count": escalated})
         except Exception:
             logger.exception("SLA worker iteration failed")
+
+        try:
+            fired = await _run_no_reply_automation()
+            if fired:
+                logger.info("SLA worker: no-reply automation fired", extra={"count": fired})
+        except Exception:
+            logger.exception("SLA worker: no-reply automation error")
 
         # Retention — раз в час, независимо от SLA-тика
         now = asyncio.get_running_loop().time()

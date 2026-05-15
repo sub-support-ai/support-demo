@@ -17,6 +17,7 @@ from app.database import engine, get_db
 from app.logging_config import setup_logging
 from app.metrics import setup_metrics
 from app.routers.audit import router as audit_router
+from app.routers.automation_rules import router as automation_rules_router
 from app.routers.auth import router as auth_router
 from app.routers.conversations import router as conversations_router
 from app.routers.jobs import router as jobs_router
@@ -148,6 +149,7 @@ app.include_router(notifications_router, prefix="/api/v1")
 app.include_router(response_templates_router, prefix="/api/v1")
 app.include_router(conversations_router, prefix="/api/v1")
 app.include_router(audit_router, prefix="/api/v1")
+app.include_router(automation_rules_router, prefix="/api/v1")
 
 
 @app.get("/healthcheck", tags=["system"])

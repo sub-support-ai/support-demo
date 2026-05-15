@@ -23,3 +23,4 @@ from app.models.ticket import Ticket  # noqa: F401
 from app.models.ticket_comment import TicketComment  # noqa: F401
 from app.models.ticket_rating import TicketRating  # noqa: F401
 from app.models.user import User  # noqa: F401
+from app.models.automation_rule import AutomationRule  # noqa: F401
