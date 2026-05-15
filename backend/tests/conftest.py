@@ -2,9 +2,37 @@ import os
 
 import pytest
 import pytest_asyncio
+import sqlalchemy as sa
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
+
+# knowledge_articles.search_vector — PostgreSQL GENERATED ALWAYS AS (TSVECTOR) STORED.
+# create_all не создаёт её (нет в ORM-модели), поэтому добавляем вручную
+# после create_all только на PostgreSQL. На SQLite-fallback — пропускаем.
+_ADD_SEARCH_VECTOR_SQL = sa.text(
+    """
+    ALTER TABLE knowledge_articles
+    ADD COLUMN IF NOT EXISTS search_vector tsvector
+    GENERATED ALWAYS AS (
+        setweight(to_tsvector('russian'::regconfig,
+            coalesce(title, '') || ' ' ||
+            coalesce(keywords, '') || ' ' ||
+            coalesce(request_type, '')), 'A') ||
+        setweight(to_tsvector('simple'::regconfig,
+            coalesce(title, '') || ' ' ||
+            coalesce(keywords, '') || ' ' ||
+            coalesce(request_type, '')), 'A') ||
+        setweight(to_tsvector('russian'::regconfig,
+            coalesce(problem, '')), 'B') ||
+        setweight(to_tsvector('russian'::regconfig,
+            coalesce(body, '') || ' ' ||
+            coalesce(when_to_escalate, '')), 'C') ||
+        setweight(to_tsvector('simple'::regconfig,
+            coalesce(search_text, '')), 'D')
+    ) STORED
+    """
+)
 
 # Отдельная база для тестов — не трогает рабочие данные.
 # По умолчанию используем SQLite, чтобы тесты проходили "из коробки"
@@ -42,6 +70,8 @@ async def setup_test_db():
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
+        if "postgresql" in TEST_DATABASE_URL:
+            await conn.execute(_ADD_SEARCH_VECTOR_SQL)
     yield
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
