@@ -6,9 +6,9 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import delete, select
 
 from app.database import AsyncSessionLocal
-from app.models.ticket import Ticket
-from app.services.automation import run_automation, TRIGGER_TICKET_NO_REPLY
 from app.metrics import refresh_queue_depth_metrics
+from app.models.ticket import Ticket
+from app.services.automation import TRIGGER_TICKET_NO_REPLY, run_automation
 from app.services.sla_escalation import escalate_overdue_tickets
 from app.workers.base import BaseWorker
 
@@ -70,9 +70,7 @@ async def _run_no_reply_automation() -> int:
                 n = await run_automation(TRIGGER_TICKET_NO_REPLY, ticket, db)
                 fired += n
             except Exception:
-                logger.exception(
-                    "No-reply automation error", extra={"ticket_id": ticket.id}
-                )
+                logger.exception("No-reply automation error", extra={"ticket_id": ticket.id})
 
         if tickets:
             await db.commit()

@@ -4,11 +4,17 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 ConditionOp = Literal[
-    "eq", "neq",
-    "contains", "not_contains",
-    "gte", "lte", "gt", "lt",
+    "eq",
+    "neq",
+    "contains",
+    "not_contains",
+    "gte",
+    "lte",
+    "gt",
+    "lt",
     "in",
-    "is_empty", "is_not_empty",
+    "is_empty",
+    "is_not_empty",
 ]
 
 ActionType = Literal[

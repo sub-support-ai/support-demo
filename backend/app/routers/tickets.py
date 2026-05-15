@@ -801,7 +801,8 @@ async def confirm_ticket(
     # Автоматизация: правила, привязанные к подтверждению тикета.
     # Запускаем до финального commit — правила могут менять поля тикета
     # (приоритет, отдел, SLA), которые должны сохраниться в той же транзакции.
-    from app.services.automation import run_automation, TRIGGER_TICKET_CONFIRMED
+    from app.services.automation import TRIGGER_TICKET_CONFIRMED, run_automation
+
     await run_automation(TRIGGER_TICKET_CONFIRMED, ticket, db)
 
     await db.flush()
@@ -888,7 +889,6 @@ async def decline_ticket(
     await db.flush()
     await db.refresh(ticket)
     return ticket
-
 
 
 # ── PATCH /tickets/{id}/resolve — агент закрывает тикет ───────────────────────
@@ -1109,7 +1109,8 @@ async def submit_ticket_feedback(
 
         # Автоматизация: правила при переоткрытии тикета.
         # Например: reopen_count >= 2 → эскалация к старшему.
-        from app.services.automation import run_automation, TRIGGER_TICKET_REOPENED
+        from app.services.automation import TRIGGER_TICKET_REOPENED, run_automation
+
         await run_automation(TRIGGER_TICKET_REOPENED, ticket, db)
 
         reopened = True

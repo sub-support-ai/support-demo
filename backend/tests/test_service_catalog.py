@@ -9,23 +9,22 @@
   - прогрессивный сбор полей (_run_intake_step)
   - _build_draft_payload: резюме содержит все нужные поля
 """
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.services.service_catalog import (
-    CatalogItem,
-    detect_catalog_item,
-    get_catalog_item,
-    CATALOG,
-)
+from unittest.mock import MagicMock
+
 from app.services.conversation_ai import (
     _build_draft_payload,
     _last_user_message,
     _resolve_catalog_item,
 )
-
+from app.services.service_catalog import (
+    CATALOG,
+    detect_catalog_item,
+    get_catalog_item,
+)
 
 # ── detect_catalog_item ───────────────────────────────────────────────────────
+
 
 def _msgs(*texts: str) -> list[dict]:
     return [{"role": "user", "content": t} for t in texts]
@@ -98,6 +97,7 @@ def test_detect_empty_returns_none():
 
 # ── Изоляция: пароль 1С не должен находить security/BitLocker ────────────────
 
+
 def test_password_1c_department_is_it_not_security():
     """Каталожный элемент 'пароль 1С' направляет RAG в IT, а не security."""
     item = detect_catalog_item(_msgs("пароль от 1С не работает"))
@@ -124,6 +124,7 @@ def test_device_lost_requires_correct_fields():
 
 
 # ── CatalogItem.next_missing / all_collected ──────────────────────────────────
+
 
 def test_next_missing_returns_first_empty():
     item = get_catalog_item("vpn_connect")
@@ -158,6 +159,7 @@ def test_question_for_falls_back_to_field_questions():
 
 # ── _build_draft_payload ──────────────────────────────────────────────────────
 
+
 def test_build_draft_payload_contains_all_fields():
     item = get_catalog_item("vpn_connect")
     collected = {"username": "ivanov", "office": "Москва, кab.301", "error_code": "809"}
@@ -182,6 +184,7 @@ def test_build_draft_payload_emergency_has_warning():
 
 # ── get_catalog_item ──────────────────────────────────────────────────────────
 
+
 def test_get_catalog_item_by_code():
     assert get_catalog_item("vpn_connect") is not None
     assert get_catalog_item("nonexistent") is None
@@ -200,6 +203,7 @@ def test_all_catalog_items_have_valid_structure():
 
 # ── _last_user_message ────────────────────────────────────────────────────────
 
+
 def test_last_user_message_returns_last():
     history = [
         {"role": "user", "content": "первый"},
@@ -215,6 +219,7 @@ def test_last_user_message_none_if_no_user():
 
 
 # ── _resolve_catalog_item ──────────────────────────────────────────────────────
+
 
 def test_resolve_uses_existing_catalog_code():
     conv = MagicMock()

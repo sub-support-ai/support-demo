@@ -400,9 +400,7 @@ async def get_kb_quality(
             )
             >= _MIN_FEEDBACK_FOR_QUALITY,
         )
-        .order_by(
-            (KnowledgeArticle.not_helped_count + KnowledgeArticle.not_relevant_count).desc()
-        )
+        .order_by((KnowledgeArticle.not_helped_count + KnowledgeArticle.not_relevant_count).desc())
         .limit(20)
     )
     not_helping = [_article_quality_item(a) for a in bad_result.scalars().all()]
@@ -431,9 +429,7 @@ async def get_kb_quality(
     expiring_soon = [_article_quality_item(a) for a in expiring_result.scalars().all()]
 
     escalated_conv_ids_q = (
-        select(Conversation.id)
-        .where(Conversation.status == "escalated")
-        .scalar_subquery()
+        select(Conversation.id).where(Conversation.status == "escalated").scalar_subquery()
     )
     unansw_result = await db.execute(
         select(

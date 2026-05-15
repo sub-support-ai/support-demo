@@ -24,7 +24,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
@@ -52,12 +52,13 @@ ALL_TRIGGERS = {
 
 # ── Оценка условий ────────────────────────────────────────────────────────────
 
-def _get_field_value(ticket: "Ticket", field: str) -> Any:
+
+def _get_field_value(ticket: Ticket, field: str) -> Any:
     """Возвращает значение поля тикета. Безопасно: None если поля нет."""
     return getattr(ticket, field, None)
 
 
-def _evaluate_condition(condition: dict, ticket: "Ticket") -> bool:
+def _evaluate_condition(condition: dict, ticket: Ticket) -> bool:
     """Возвращает True если одно условие выполнено для данного тикета."""
     field = condition.get("field", "")
     op = condition.get("op", "eq")
@@ -67,7 +68,11 @@ def _evaluate_condition(condition: dict, ticket: "Ticket") -> bool:
 
     try:
         if op == "eq":
-            return str(actual).lower() == str(expected).lower() if actual is not None else expected is None
+            return (
+                str(actual).lower() == str(expected).lower()
+                if actual is not None
+                else expected is None
+            )
         if op == "neq":
             return str(actual).lower() != str(expected).lower()
         if op == "contains":
@@ -101,7 +106,7 @@ def _evaluate_condition(condition: dict, ticket: "Ticket") -> bool:
     return False
 
 
-def evaluate_conditions(conditions: list[dict], ticket: "Ticket") -> bool:
+def evaluate_conditions(conditions: list[dict], ticket: Ticket) -> bool:
     """Возвращает True если ВСЕ условия (AND) выполнены."""
     if not conditions:
         return True  # нет условий → всегда срабатывает
@@ -110,7 +115,8 @@ def evaluate_conditions(conditions: list[dict], ticket: "Ticket") -> bool:
 
 # ── Применение действий ───────────────────────────────────────────────────────
 
-async def _execute_action(action: dict, ticket: "Ticket", db: AsyncSession) -> None:
+
+async def _execute_action(action: dict, ticket: Ticket, db: AsyncSession) -> None:
     action_type = action.get("type", "")
     value = action.get("value")
 
@@ -143,7 +149,7 @@ async def _execute_action(action: dict, ticket: "Ticket", db: AsyncSession) -> N
         logger.warning("Automation: неизвестный тип действия", extra={"type": action_type})
 
 
-def _set_priority(ticket: "Ticket", priority: str) -> None:
+def _set_priority(ticket: Ticket, priority: str) -> None:
     from app.services.sla import start_ticket_sla
 
     ticket.ai_priority = priority
@@ -156,8 +162,8 @@ def _set_priority(ticket: "Ticket", priority: str) -> None:
     )
 
 
-def _override_sla(ticket: "Ticket", minutes: int) -> None:
-    now = datetime.now(timezone.utc)
+def _override_sla(ticket: Ticket, minutes: int) -> None:
+    now = datetime.now(UTC)
     ticket.sla_deadline_at = now + timedelta(minutes=minutes)
     if ticket.sla_started_at is None:
         ticket.sla_started_at = now
@@ -167,7 +173,7 @@ def _override_sla(ticket: "Ticket", minutes: int) -> None:
     )
 
 
-async def _add_system_comment(ticket: "Ticket", content: str, db: AsyncSession) -> None:
+async def _add_system_comment(ticket: Ticket, content: str, db: AsyncSession) -> None:
     from app.models.ticket_comment import TicketComment
 
     db.add(
@@ -186,7 +192,7 @@ async def _add_system_comment(ticket: "Ticket", content: str, db: AsyncSession) 
     )
 
 
-async def _reassign_department(ticket: "Ticket", department: str, db: AsyncSession) -> None:
+async def _reassign_department(ticket: Ticket, department: str, db: AsyncSession) -> None:
     from app.services.routing import assign_agent, unassign_agent
 
     old_dept = ticket.department
@@ -206,7 +212,7 @@ async def _reassign_department(ticket: "Ticket", department: str, db: AsyncSessi
     )
 
 
-async def _escalate_to_senior(ticket: "Ticket", db: AsyncSession) -> None:
+async def _escalate_to_senior(ticket: Ticket, db: AsyncSession) -> None:
     from app.services.sla_escalation import escalate_overdue_ticket
 
     escalated = await escalate_overdue_ticket(db, ticket)
@@ -219,9 +225,10 @@ async def _escalate_to_senior(ticket: "Ticket", db: AsyncSession) -> None:
 
 # ── Главная точка входа ───────────────────────────────────────────────────────
 
+
 async def run_automation(
     trigger: str,
-    ticket: "Ticket",
+    ticket: Ticket,
     db: AsyncSession,
 ) -> int:
     """

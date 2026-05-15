@@ -857,7 +857,7 @@ async def test_regular_user_cannot_add_operator_comment(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_user_cannot_see_internal_comments(
+async def test_user_cannot_see_internal_comments_via_operator(
     client: AsyncClient,
     db_session: AsyncSession,
 ):
@@ -892,15 +892,11 @@ async def test_user_cannot_see_internal_comments(
         headers=admin_headers,
     )
 
-    resp_admin = await client.get(
-        f"/api/v1/tickets/{ticket_id}/comments", headers=admin_headers
-    )
+    resp_admin = await client.get(f"/api/v1/tickets/{ticket_id}/comments", headers=admin_headers)
     assert resp_admin.status_code == 200
     assert len(resp_admin.json()) == 2
 
-    resp_user = await client.get(
-        f"/api/v1/tickets/{ticket_id}/comments", headers=user_headers
-    )
+    resp_user = await client.get(f"/api/v1/tickets/{ticket_id}/comments", headers=user_headers)
     assert resp_user.status_code == 200
     contents = [c["content"] for c in resp_user.json()]
     assert "Публичный ответ пользователю" in contents

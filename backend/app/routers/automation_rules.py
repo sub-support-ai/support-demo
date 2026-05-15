@@ -28,9 +28,7 @@ router = APIRouter(prefix="/automation-rules", tags=["automation"])
 
 
 async def _get_rule_or_404(rule_id: int, db: AsyncSession) -> AutomationRule:
-    result = await db.execute(
-        select(AutomationRule).where(AutomationRule.id == rule_id)
-    )
+    result = await db.execute(select(AutomationRule).where(AutomationRule.id == rule_id))
     rule = result.scalar_one_or_none()
     if rule is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rule not found")

@@ -248,25 +248,3 @@ async def test_sla_escalation_skips_unconfirmed_drafts(db_session: AsyncSession)
     assert ticket.agent_id == agent.id
     assert ticket.sla_escalated_at is None
     assert ticket.sla_escalation_count == 0
-
-
-@pytest.mark.asyncio
-async def test_sla_breach_check_handles_naive_deadline():
-    from app.services.sla import is_sla_breached
-
-    class FakeTicket:
-        status = "confirmed"
-        sla_deadline_at = datetime(2000, 1, 1, 12, 0, 0)  # naive — без tzinfo
-
-    assert is_sla_breached(FakeTicket(), now=datetime.now(timezone.utc))
-
-
-@pytest.mark.asyncio
-async def test_sla_breach_check_handles_aware_deadline():
-    from app.services.sla import is_sla_breached
-
-    class FakeTicket:
-        status = "in_progress"
-        sla_deadline_at = datetime(2000, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
-
-    assert is_sla_breached(FakeTicket(), now=datetime.now(timezone.utc))

@@ -1,5 +1,4 @@
 from datetime import datetime
-from typing import Optional
 
 from pydantic import BaseModel
 
@@ -64,13 +63,13 @@ class StatsResponse(BaseModel):
 class KBArticleQualityItem(BaseModel):
     id: int
     title: str
-    department: Optional[str] = None
+    department: str | None = None
     view_count: int = 0
     helped_count: int = 0
     not_helped_count: int = 0
     not_relevant_count: int = 0
-    expires_at: Optional[datetime] = None
-    helpfulness_ratio: Optional[float] = None
+    expires_at: datetime | None = None
+    helpfulness_ratio: float | None = None
 
 
 class UnansweredQuery(BaseModel):

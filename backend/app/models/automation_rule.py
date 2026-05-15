@@ -58,9 +58,7 @@ class AutomationRule(Base):
     #   op:    str       — eq | neq | contains | not_contains |
     #                      gte | lte | gt | lt | in | is_empty | is_not_empty
     #   value: any       — значение для сравнения
-    conditions: Mapped[list[dict[str, Any]]] = mapped_column(
-        JSON, nullable=False, default=list
-    )
+    conditions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
 
     # JSON-список действий. Каждое действие — dict с ключами:
     #   type:  str       — set_ai_priority | override_sla_minutes |
@@ -68,13 +66,9 @@ class AutomationRule(Base):
     #                      escalate_to_senior | set_field
     #   value: any       — аргумент действия
     #   field: str | None — для set_field — имя поля
-    actions: Mapped[list[dict[str, Any]]] = mapped_column(
-        JSON, nullable=False, default=list
-    )
+    actions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
 
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

@@ -17,8 +17,8 @@ from app.database import engine, get_db
 from app.logging_config import setup_logging
 from app.metrics import setup_metrics
 from app.routers.audit import router as audit_router
-from app.routers.automation_rules import router as automation_rules_router
 from app.routers.auth import router as auth_router
+from app.routers.automation_rules import router as automation_rules_router
 from app.routers.conversations import router as conversations_router
 from app.routers.jobs import router as jobs_router
 from app.routers.knowledge_articles import router as knowledge_articles_router

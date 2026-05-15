@@ -5,24 +5,22 @@ Revises: 2eff2e137a7e
 Create Date: 2026-05-01
 
 """
-from typing import Sequence, Union
+
+from collections.abc import Sequence
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy import inspect
 
+from alembic import op
 
 revision: str = "f7a8b9c0d1e2"
-down_revision: Union[str, Sequence[str], None] = "2eff2e137a7e"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = "2eff2e137a7e"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def _has_column(table: str, column: str) -> bool:
-    return any(
-        c["name"] == column
-        for c in inspect(op.get_bind()).get_columns(table)
-    )
+    return any(c["name"] == column for c in inspect(op.get_bind()).get_columns(table))
 
 
 def upgrade() -> None:

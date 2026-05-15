@@ -10,7 +10,6 @@ from app.models.ai_log import AILog
 from app.models.conversation import Conversation
 from app.models.knowledge_article import KnowledgeArticle, KnowledgeArticleFeedback
 from app.models.message import Message
-from app.models.user import User
 from app.services.ai_fallback import (
     FALLBACK_REASON_PAYLOAD_KEY,
     record_ai_fallback,
@@ -18,9 +17,7 @@ from app.services.ai_fallback import (
 from app.services.ai_service_client import ai_service_headers
 from app.services.conversation_intent import (
     ConversationAction,
-    build_intake_answer,
     detect_conversation_policy,
-    should_offer_support_draft,
 )
 from app.services.knowledge_base import (
     LATENCY_PAYLOAD_KEY,
@@ -490,7 +487,6 @@ async def generate_ai_message(db: AsyncSession, conversation_id: int) -> Message
     return ai_message
 
 
-
 def _resolve_catalog_item(
     conversation: Conversation,
     history: list[dict[str, str]],
@@ -526,7 +522,9 @@ async def _run_intake_step(
 
     if first_detection:
         # Попробовать KB с фильтром по отделу каталога
-        kb_filters = KnowledgeSearchFilters(department=item.kb_department) if item.kb_department else None
+        kb_filters = (
+            KnowledgeSearchFilters(department=item.kb_department) if item.kb_department else None
+        )
         kb_payload = await find_knowledge_answer(db, history, filters=kb_filters)
         if kb_payload and kb_payload.get("knowledge_decision") != "escalate":
             # KB нашёл хороший ответ — возвращаем его, intake не нужен
@@ -624,5 +622,3 @@ def _build_draft_payload(item: CatalogItem, collected: dict[str, str]) -> dict[s
         "model_version": "intake-rules-v1",
         "catalog_code": item.code,
     }
-
-

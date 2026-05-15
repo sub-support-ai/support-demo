@@ -106,7 +106,8 @@ async def escalate_overdue_ticket(
     # (например: добавить тег, уведомить отдел, изменить приоритет).
     # Вызываем после flush, чтобы правила видели обновлённое состояние тикета.
     try:
-        from app.services.automation import run_automation, TRIGGER_TICKET_ESCALATED
+        from app.services.automation import TRIGGER_TICKET_ESCALATED, run_automation
+
         await run_automation(TRIGGER_TICKET_ESCALATED, ticket, db)
     except Exception:
         pass  # не блокируем основную эскалацию
