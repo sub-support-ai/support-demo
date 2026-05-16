@@ -27,7 +27,6 @@ from app.models.ticket import Ticket
 from app.models.user import User
 from app.security import hash_password
 
-
 # ── Хелперы ──────────────────────────────────────────────────────────────────
 
 
@@ -69,9 +68,7 @@ async def _register_admin(client: AsyncClient, suffix: str) -> tuple[int, str]:
     return me.json()["id"], token
 
 
-async def _make_agent_user(
-    client: AsyncClient, db: AsyncSession, suffix: str
-) -> tuple[int, str]:
+async def _make_agent_user(client: AsyncClient, db: AsyncSession, suffix: str) -> tuple[int, str]:
     """Регистрирует пользователя и повышает его до agent."""
     user_id, token = await _register(client, f"a{suffix}")
     user = await db.get(User, user_id)
@@ -133,9 +130,7 @@ async def test_bulk_forbidden_for_regular_user(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_bulk_force_forbidden_for_agent(
-    client: AsyncClient, db_session: AsyncSession
-):
+async def test_bulk_force_forbidden_for_agent(client: AsyncClient, db_session: AsyncSession):
     """Agent не может использовать force=True — иначе защита обходится в один клик."""
     _, token = await _make_agent_user(client, db_session, "fa1")
     r = await client.post(
@@ -150,9 +145,7 @@ async def test_bulk_force_forbidden_for_agent(
 
 
 @pytest.mark.asyncio
-async def test_bulk_close_clean_tickets_all_applied(
-    client: AsyncClient, db_session: AsyncSession
-):
+async def test_bulk_close_clean_tickets_all_applied(client: AsyncClient, db_session: AsyncSession):
     """Чистые тикеты (без переоткрытий, без unread) — все закрываются."""
     user_id, _ = await _register(client, "owner1")
     _, agent_token = await _make_agent_user(client, db_session, "ok1")
@@ -182,9 +175,7 @@ async def test_bulk_close_clean_tickets_all_applied(
 
 
 @pytest.mark.asyncio
-async def test_bulk_rejects_reopened_tickets(
-    client: AsyncClient, db_session: AsyncSession
-):
+async def test_bulk_rejects_reopened_tickets(client: AsyncClient, db_session: AsyncSession):
     """Тикет с reopen_count > 0 — rejected с кодом has_reopens."""
     user_id, _ = await _register(client, "owner2")
     _, agent_token = await _make_agent_user(client, db_session, "ok2")
@@ -223,9 +214,7 @@ async def test_bulk_rejects_tickets_with_unread_user_message(
     db_session.add(Message(conversation_id=conv.id, role="ai", content="hi"))
     db_session.add(Message(conversation_id=conv.id, role="user", content="не помогло"))
 
-    ticket_with_unread = _make_ticket(
-        user_id, status="in_progress", conversation_id=conv.id
-    )
+    ticket_with_unread = _make_ticket(user_id, status="in_progress", conversation_id=conv.id)
     clean = _make_ticket(user_id, status="in_progress")
     db_session.add_all([ticket_with_unread, clean])
     await db_session.flush()
@@ -243,9 +232,7 @@ async def test_bulk_rejects_tickets_with_unread_user_message(
 
 
 @pytest.mark.asyncio
-async def test_bulk_rejects_pending_user_drafts(
-    client: AsyncClient, db_session: AsyncSession
-):
+async def test_bulk_rejects_pending_user_drafts(client: AsyncClient, db_session: AsyncSession):
     """pending_user (черновики) — rejected с wrong_status."""
     user_id, _ = await _register(client, "owner4")
     _, agent_token = await _make_agent_user(client, db_session, "ok4")
@@ -265,9 +252,7 @@ async def test_bulk_rejects_pending_user_drafts(
 
 
 @pytest.mark.asyncio
-async def test_bulk_handles_missing_ids(
-    client: AsyncClient, db_session: AsyncSession
-):
+async def test_bulk_handles_missing_ids(client: AsyncClient, db_session: AsyncSession):
     """Несуществующие ID — rejected с not_found, остальные применяются."""
     user_id, _ = await _register(client, "owner5")
     _, agent_token = await _make_agent_user(client, db_session, "ok5")
@@ -316,9 +301,7 @@ async def test_bulk_force_admin_bypasses_reopen_check(
 
 
 @pytest.mark.asyncio
-async def test_bulk_max_100_tickets(
-    client: AsyncClient, db_session: AsyncSession
-):
+async def test_bulk_max_100_tickets(client: AsyncClient, db_session: AsyncSession):
     """Запрос с 101+ ticket_ids → 422."""
     _, agent_token = await _make_agent_user(client, db_session, "v1")
     r = await client.post(
@@ -330,9 +313,7 @@ async def test_bulk_max_100_tickets(
 
 
 @pytest.mark.asyncio
-async def test_bulk_empty_ticket_ids_rejected(
-    client: AsyncClient, db_session: AsyncSession
-):
+async def test_bulk_empty_ticket_ids_rejected(client: AsyncClient, db_session: AsyncSession):
     _, agent_token = await _make_agent_user(client, db_session, "v2")
     r = await client.post(
         "/api/v1/tickets/bulk",
@@ -346,9 +327,7 @@ async def test_bulk_empty_ticket_ids_rejected(
 
 
 @pytest.mark.asyncio
-async def test_bulk_logs_audit_event(
-    client: AsyncClient, db_session: AsyncSession
-):
+async def test_bulk_logs_audit_event(client: AsyncClient, db_session: AsyncSession):
     user_id, _ = await _register(client, "owner7")
     _, agent_token = await _make_agent_user(client, db_session, "au1")
 
@@ -365,9 +344,7 @@ async def test_bulk_logs_audit_event(
 
     import json
 
-    audit_rows = await db_session.execute(
-        select(AuditLog).where(AuditLog.action == "ticket.bulk")
-    )
+    audit_rows = await db_session.execute(select(AuditLog).where(AuditLog.action == "ticket.bulk"))
     audits = list(audit_rows.scalars().all())
     assert len(audits) >= 1
     latest = audits[-1]

@@ -307,9 +307,7 @@ async def test_stats_trends_validation(client: AsyncClient, invalid: int):
 
 
 @pytest.mark.asyncio
-async def test_stats_trends_counts_user_tickets(
-    client: AsyncClient, db_session: AsyncSession
-):
+async def test_stats_trends_counts_user_tickets(client: AsyncClient, db_session: AsyncSession):
     """Тикеты пользователя попадают в нужный день created, resolved учитывается отдельно."""
     user_id, token = await _register(client, "tr4")
     now = datetime.now(UTC)
@@ -357,9 +355,7 @@ async def test_stats_trends_counts_user_tickets(
 
 
 @pytest.mark.asyncio
-async def test_stats_trends_isolates_users(
-    client: AsyncClient, db_session: AsyncSession
-):
+async def test_stats_trends_isolates_users(client: AsyncClient, db_session: AsyncSession):
     """User не видит чужие тикеты в трендах."""
     # Пользователь A создаёт тикет
     user_a_id, _ = await _register(client, "tr5a")

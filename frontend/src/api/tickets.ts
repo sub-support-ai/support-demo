@@ -5,6 +5,8 @@ import type {
   ResolveTicketPayload,
   Ticket,
   TicketAiAssist,
+  TicketBulkRequest,
+  TicketBulkResponse,
   TicketComment,
   TicketCommentCreate,
   TicketDraftUpdate,
@@ -267,6 +269,20 @@ export function useSubmitTicketFeedback() {
     },
     onSuccess: (ticket) => {
       updateTicketInCache(queryClient, ticket);
+      queryClient.invalidateQueries({ queryKey: ["tickets"] });
+      queryClient.invalidateQueries({ queryKey: ["stats"] });
+    },
+  });
+}
+
+export function useBulkUpdateTickets() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: TicketBulkRequest) => {
+      const { data } = await api.post<TicketBulkResponse>("/tickets/bulk", payload);
+      return data;
+    },
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["tickets"] });
       queryClient.invalidateQueries({ queryKey: ["stats"] });
     },

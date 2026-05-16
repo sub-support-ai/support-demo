@@ -406,15 +406,21 @@ async def generate_ai_message(db: AsyncSession, conversation_id: int) -> Message
 
     history = await load_history_for_ai(db, conversation_id)
 
-    # ── Catalog-driven intake flow ────────────────────────────────────────────
-    catalog_item = _resolve_catalog_item(conversation, history)
-    if catalog_item is not None:
-        ai_payload = await _run_intake_step(db, conversation, catalog_item, history)
+    # ── Policy check FIRST — escalation rules take priority over catalog ──────
+    # Catalog detection scans all user messages in history, so a keyword from
+    # an earlier message (e.g. "монитор") can trigger a catalog intake flow
+    # even when the user has just rejected the KB answer and expects escalation.
+    # By checking detect_conversation_policy first we ensure that
+    # should_escalate_failed_kb_followup (and other escalation rules) fire
+    # correctly before catalog detection gets a chance to intercept.
+    policy = detect_conversation_policy(history)
+    if policy.action == ConversationAction.ESCALATE:
+        ai_payload = policy.to_ai_payload()
     else:
-        # ── Policy-based fallback (escalation rules, KB repeat avoidance) ────
-        policy = detect_conversation_policy(history)
-        if policy.action == ConversationAction.ESCALATE:
-            ai_payload = policy.to_ai_payload()
+        # ── Catalog-driven intake flow ────────────────────────────────────────
+        catalog_item = _resolve_catalog_item(conversation, history)
+        if catalog_item is not None:
+            ai_payload = await _run_intake_step(db, conversation, catalog_item, history)
         else:
             # ПСЕВДО-СТРИМИНГ: ищем ответ в базе знаний.
             await _set_ai_stage(conversation_id, "searching")
@@ -478,6 +484,17 @@ async def generate_ai_message(db: AsyncSession, conversation_id: int) -> Message
     db.add(ai_message)
     if conversation.status == "ai_processing":
         conversation.status = "active"
+
+    # Обновляем intake_state по итогам текущего обмена: извлекаем офис,
+    # тип затронутого объекта и другие поля из всех сообщений пользователя.
+    # Это позволяет фронту отображать прогресс заполнения формы запроса
+    # без отдельного API-вызова.
+    from app.services.intake_requirements import build_intake_state
+
+    conversation.intake_state = build_intake_state(
+        conversation.intake_state,
+        history,
+    )
 
     await db.flush()
 

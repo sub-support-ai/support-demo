@@ -144,24 +144,27 @@ export function useRequeueKnowledgeEmbeddingJob() {
 }
 
 export function useStatsTrends({
-  periodDays,
+  since,
+  until,
   enabled,
 }: {
-  periodDays: number;
+  /** ISO-дата начала периода, например "2026-05-01" */
+  since: string;
+  /** ISO-дата конца периода включительно, например "2026-05-31" */
+  until: string;
   enabled: boolean;
 }) {
   return useQuery({
-    queryKey: ["stats", "trends", periodDays],
+    queryKey: ["stats", "trends", since, until],
     enabled,
     queryFn: async () => {
       const { data } = await api.get<TrendsResponse>("/stats/trends", {
-        params: { period_days: periodDays },
+        params: { since, until },
       });
       return data;
     },
-    // Тренды — историческая статистика. Обновлять каждую минуту достаточно:
-    // данные изменяются медленно (тикеты создаются десятками в день, не сотнями),
-    // а лишний request × N открытых вкладок — нагрузка на БД.
+    // Текущий месяц обновляем каждую минуту; прошлые месяцы — статика,
+    // но React Query всё равно кэширует ответ до следующего монтирования.
     refetchInterval: enabled ? 60_000 : false,
     refetchIntervalInBackground: false,
   });

@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel
-from sqlalchemy import case, or_, select
+from sqlalchemy import case, func, literal_column, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -29,6 +29,9 @@ from app.rate_limit import rate_limit
 from app.schemas.ticket import (
     SimilarTicket,
     TicketAiAssist,
+    TicketBulkRejection,
+    TicketBulkRequest,
+    TicketBulkResponse,
     TicketCommentCreate,
     TicketCommentRead,
     TicketCreate,
@@ -38,9 +41,6 @@ from app.schemas.ticket import (
     TicketRatingCreate,
     TicketRatingRead,
     TicketRead,
-    TicketBulkRejection,
-    TicketBulkRequest,
-    TicketBulkResponse,
     TicketReroutePayload,
     TicketStatusLiteral,
     TicketStatusUpdate,
@@ -510,20 +510,36 @@ async def list_tickets(
         query = query.where(Ticket.status.in_(("resolved", "closed", "declined")))
 
     if search:
-        pattern = f"%{search.strip()}%"
-        if pattern != "%%":
-            query = query.where(
-                or_(
-                    Ticket.title.ilike(pattern),
-                    Ticket.body.ilike(pattern),
-                    Ticket.requester_name.ilike(pattern),
-                    Ticket.requester_email.ilike(pattern),
-                    Ticket.office.ilike(pattern),
-                    Ticket.affected_item.ilike(pattern),
-                    Ticket.request_type.ilike(pattern),
-                    Ticket.request_details.ilike(pattern),
+        term = search.strip()
+        if term:
+            _dialect = db.get_bind().dialect.name
+            if _dialect == "postgresql":
+                # PostgreSQL: use tsvector GIN index for fast full-text search.
+                # websearch_to_tsquery handles multi-word / quoted / minus syntax.
+                # We combine 'russian' and 'simple' to match uninflected proper
+                # nouns (e.g. "VPN", "Outlook") as well as Russian morphology.
+                sv = literal_column("tickets.search_vector")
+                # Pass term as a Python value — SQLAlchemy automatically
+                # creates a bind parameter, safe from SQL injection.
+                fts_q = func.websearch_to_tsquery(literal_column("'russian'::regconfig"), term).op(
+                    "||"
+                )(func.websearch_to_tsquery(literal_column("'simple'::regconfig"), term))
+                query = query.where(sv.op("@@")(fts_q))
+            else:
+                # SQLite / other: plain ILIKE across key columns.
+                pattern = f"%{term}%"
+                query = query.where(
+                    or_(
+                        Ticket.title.ilike(pattern),
+                        Ticket.body.ilike(pattern),
+                        Ticket.requester_name.ilike(pattern),
+                        Ticket.requester_email.ilike(pattern),
+                        Ticket.office.ilike(pattern),
+                        Ticket.affected_item.ilike(pattern),
+                        Ticket.request_type.ilike(pattern),
+                        Ticket.request_details.ilike(pattern),
+                    )
                 )
-            )
 
     now_for_sort = datetime.now(UTC)
     overdue_rank = case(
@@ -1539,9 +1555,7 @@ def _evaluate_bulk_risk(ticket: Ticket) -> TicketBulkRejection | None:
     return None
 
 
-async def _bulk_check_user_unread(
-    db: AsyncSession, ticket_ids: list[int]
-) -> set[int]:
+async def _bulk_check_user_unread(db: AsyncSession, ticket_ids: list[int]) -> set[int]:
     """Возвращает ticket_id, у которых последнее сообщение в связанном
     диалоге — от пользователя (роль 'user').
 
@@ -1562,7 +1576,9 @@ async def _bulk_check_user_unread(
     if not ticket_to_conv:
         return set()
 
-    from sqlalchemy import func as sql_func  # локальный импорт — sql_func не нужен в большинстве хендлеров файла
+    from sqlalchemy import (
+        func as sql_func,  # локальный импорт — sql_func не нужен в большинстве хендлеров файла
+    )
 
     from app.models.message import Message
 
@@ -1577,16 +1593,12 @@ async def _bulk_check_user_unread(
         .subquery()
     )
     last_msgs = await db.execute(
-        select(Message.conversation_id, Message.role).join(
-            subq, Message.id == subq.c.last_id
-        )
+        select(Message.conversation_id, Message.role).join(subq, Message.id == subq.c.last_id)
     )
     convs_with_user_last: set[int] = {
         row.conversation_id for row in last_msgs if row.role == "user"
     }
-    return {
-        tid for tid, cid in ticket_to_conv.items() if cid in convs_with_user_last
-    }
+    return {tid for tid, cid in ticket_to_conv.items() if cid in convs_with_user_last}
 
 
 @router.post(

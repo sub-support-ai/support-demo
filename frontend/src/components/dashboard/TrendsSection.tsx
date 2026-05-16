@@ -1,39 +1,30 @@
 /**
- * Тренды по тикетам — линейный график создано/решено за период.
+ * Тренды по тикетам — линейный график создано/решено за календарный месяц.
  *
- * Архитектурно — smart-компонент (сам ходит за данными), а не презентация.
- * Причина: данные нужны только этому виджету, поднимать загрузку выше = размывать
- * ответственность. Если потребуются эти же данные где-то ещё, React Query
- * автоматически переиспользует cache по ключу `["stats", "trends", periodDays]`.
+ * Навигация: кнопки «‹» / «›» листают месяцы. Текущий месяц — максимум
+ * (кнопка «›» задизейблена). Назад — до 24 месяцев.
  *
- * Период — `Select` 7/14/30/90 дней. По умолчанию 30 — это окно «месяца», по
- * которому обычно строят отчёты для менеджмента; короче 30 — оперативный
- * мониторинг, 90 — квартальный взгляд.
+ * Данные: GET /stats/trends?since=YYYY-MM-DD&until=YYYY-MM-DD.
+ * React Query кэширует каждый месяц от��ельно (ключ включает since+until).
  */
 
 import { LineChart } from "@mantine/charts";
 import {
+  ActionIcon,
   Alert,
   Badge,
   Group,
   Loader,
   Paper,
-  Select,
   Stack,
   Text,
   Title,
 } from "@mantine/core";
+import { IconChevronLeft, IconChevronRight } from "@tabler/icons-react";
 import { useMemo, useState } from "react";
 
 import { getApiError } from "../../api/client";
 import { useStatsTrends } from "../../api/stats";
-
-const PERIOD_OPTIONS = [
-  { value: "7", label: "7 дней" },
-  { value: "14", label: "14 дней" },
-  { value: "30", label: "30 дней" },
-  { value: "90", label: "90 дней" },
-];
 
 /** Сжимаем `2026-05-15` до `15.05` для оси X — длинные даты не помещаются. */
 function shortDate(iso: string): string {
@@ -47,8 +38,6 @@ function buildChartData(
   created: ReadonlyArray<{ date: string; count: number }>,
   resolved: ReadonlyArray<{ date: string; count: number }>,
 ): Array<{ date: string; created: number; resolved: number }> {
-  // Делаем индекс по дате — бэкенд гарантирует, что в обеих сериях
-  // одинаковый набор дат, но строим map для устойчивости к расхождениям.
   const resolvedMap = new Map(resolved.map((p) => [p.date, p.count]));
   return created.map((p) => ({
     date: shortDate(p.date),
@@ -57,22 +46,75 @@ function buildChartData(
   }));
 }
 
-export function TrendsSection() {
-  const [period, setPeriod] = useState<string>("30");
-  const periodDays = Number(period);
+/** «Май 2026» — заголовок месяца с заглавной буквы. */
+function formatMonthTitle(year: number, month: number): string {
+  const s = new Date(year, month - 1, 1).toLocaleDateString("ru-RU", {
+    month: "long",
+    year: "numeric",
+  });
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
 
-  const query = useStatsTrends({ periodDays, enabled: true });
+/** «1 мая — 31 мая 2026» — подпись диапазона под навигатором. */
+function formatMonthRange(year: number, month: number): string {
+  const first = new Date(year, month - 1, 1);
+  const last = new Date(year, month, 0);
+  const from = first.toLocaleDateString("ru-RU", { day: "numeric", month: "long" });
+  const to = last.toLocaleDateString("ru-RU", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+  return `${from} — ${to}`;
+}
+
+export function TrendsSection() {
+  const today = new Date();
+
+  const [year, setYear] = useState(today.getFullYear());
+  const [month, setMonth] = useState(today.getMonth() + 1); // 1–12
+
+  const isCurrentMonth =
+    year === today.getFullYear() && month === today.getMonth() + 1;
+
+  // Ограничение: не дальше 24 месяцев назад
+  const minYear = today.getFullYear() - 2;
+  const minMonth = today.getMonth() + 1; // тот же месяц, 2 года назад
+  const isMinMonth =
+    year < minYear || (year === minYear && month <= minMonth);
+
+  function prevMonth() {
+    if (isMinMonth) return;
+    if (month === 1) {
+      setYear((y) => y - 1);
+      setMonth(12);
+    } else {
+      setMonth((m) => m - 1);
+    }
+  }
+
+  function nextMonth() {
+    if (isCurrentMonth) return;
+    if (month === 12) {
+      setYear((y) => y + 1);
+      setMonth(1);
+    } else {
+      setMonth((m) => m + 1);
+    }
+  }
+
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const since = `${year}-${String(month).padStart(2, "0")}-01`;
+  const until = `${year}-${String(month).padStart(2, "0")}-${String(daysInMonth).padStart(2, "0")}`;
+
+  const query = useStatsTrends({ since, until, enabled: true });
   const data = query.data;
 
-  // Чарт-данные пересчитываем только при изменении ответа,
-  // не на каждом ре-рендере родителя.
   const chartData = useMemo(
     () => (data ? buildChartData(data.tickets_created, data.tickets_resolved) : []),
     [data],
   );
 
-  // Сводка под графиком — даёт быстрый ответ «а сколько вообще?»,
-  // без необходимости считать столбики глазами.
   const totals = useMemo(() => {
     if (!data) return null;
     const created = data.tickets_created.reduce((sum, p) => sum + p.count, 0);
@@ -85,21 +127,44 @@ export function TrendsSection() {
 
   return (
     <Paper className="quiet-panel dashboard-section" withBorder p="md">
-      <Group justify="space-between" mb="sm" align="flex-end" wrap="wrap" gap="sm">
+      <Group justify="space-between" mb="sm" align="flex-start" wrap="wrap" gap="sm">
         <div>
           <Title order={4}>Тренды по тикетам</Title>
           <Text size="sm" c="dimmed">
             Создание и решение запросов в динамике.
           </Text>
         </div>
-        <Select
-          data={PERIOD_OPTIONS}
-          value={period}
-          onChange={(value) => value && setPeriod(value)}
-          allowDeselect={false}
-          w={140}
-          aria-label="Период тренда"
-        />
+
+        <Stack gap={4} align="flex-end">
+          <Group gap={4} align="center">
+            <ActionIcon
+              variant="subtle"
+              color="gray"
+              size="sm"
+              onClick={prevMonth}
+              disabled={isMinMonth}
+              aria-label="Предыдущий месяц"
+            >
+              <IconChevronLeft size={14} stroke={1.5} />
+            </ActionIcon>
+            <Text fw={600} w={130} ta="center">
+              {formatMonthTitle(year, month)}
+            </Text>
+            <ActionIcon
+              variant="subtle"
+              color="gray"
+              size="sm"
+              onClick={nextMonth}
+              disabled={isCurrentMonth}
+              aria-label="Следующий месяц"
+            >
+              <IconChevronRight size={14} stroke={1.5} />
+            </ActionIcon>
+          </Group>
+          <Text size="xs" c="dimmed">
+            {formatMonthRange(year, month)}
+          </Text>
+        </Stack>
       </Group>
 
       {query.error && (

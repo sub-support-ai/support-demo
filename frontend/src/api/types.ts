@@ -237,6 +237,39 @@ export interface TicketReroutePayload {
   reason: string;
 }
 
+// ── Bulk-операции ──────────────────────────────────────────────────────────
+
+/** Действие массового обновления. На бэке только эти переходы поддерживаются. */
+export type TicketBulkAction = "in_progress" | "resolved" | "closed";
+
+/** Машинные коды отказа bulk-операции — для группировки в UI. */
+export type TicketBulkRejectionCode =
+  | "has_reopens"
+  | "has_unread_user_msg"
+  | "wrong_status"
+  | "not_found"
+  | "invalid_transition";
+
+export interface TicketBulkRequest {
+  ticket_ids: number[];
+  action: TicketBulkAction;
+  /** Только admin: обходит защиту от риска. Agent передавать не должен — backend 403. */
+  force?: boolean;
+}
+
+export interface TicketBulkRejection {
+  ticket_id: number;
+  code: TicketBulkRejectionCode | string;
+  reason: string;
+}
+
+export interface TicketBulkResponse {
+  requested_count: number;
+  applied_count: number;
+  applied_ticket_ids: number[];
+  rejected: TicketBulkRejection[];
+}
+
 export interface ResolveTicketPayload {
   agent_accepted_ai_response: boolean;
   routing_was_correct?: boolean;

@@ -97,7 +97,7 @@ def _decay_weight(age_days: float, half_life: float = FEEDBACK_DECAY_HALF_LIFE_D
     Используем 2** вместо math.exp() ради читаемости: half-life явно ровно
     FEEDBACK_DECAY_HALF_LIFE_DAYS, а не λ из e^(-λt).
     """
-    return 2.0 ** (-max(0.0, age_days) / half_life)
+    return float(2.0 ** (-max(0.0, age_days) / half_life))
 
 
 # ── Вычисление grade ────────────────────────────────────────────────────────

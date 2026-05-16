@@ -97,10 +97,16 @@ export function TicketCard({
   ticket,
   currentUserRole,
   role,
+  selectable,
+  selected,
+  onSelect,
 }: {
   ticket: Ticket;
   currentUserRole?: UserRole;
   role?: UserRole;
+  selectable?: boolean;
+  selected?: boolean;
+  onSelect?: (id: number) => void;
 }) {
   const viewerRole = currentUserRole ?? role ?? "user";
   const [commentsOpen, setCommentsOpen] = useState(false);
@@ -209,16 +215,27 @@ export function TicketCard({
   return (
     <Paper className="ticket-card" withBorder>
       <Stack gap="xs">
-        <Group justify="space-between" align="start">
-          <div>
-            <Title order={4}>{ticket.title}</Title>
-            {createdAt && (
-              <Text size="xs" c="dimmed">
-                Создан {createdAt}
-              </Text>
+        <Group justify="space-between" align="start" wrap="nowrap">
+          <Group gap="sm" align="flex-start" style={{ flex: 1, minWidth: 0 }}>
+            {selectable && (
+              <Checkbox
+                checked={selected ?? false}
+                mt={4}
+                style={{ flexShrink: 0 }}
+                onChange={() => onSelect?.(ticket.id)}
+                aria-label={`Выбрать тикет #${ticket.id}`}
+              />
             )}
-          </div>
-          <Badge>{getStatusLabel(ticket.status)}</Badge>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <Title order={4}>{ticket.title}</Title>
+              {createdAt && (
+                <Text size="xs" c="dimmed">
+                  Создан {createdAt}
+                </Text>
+              )}
+            </div>
+          </Group>
+          <Badge style={{ flexShrink: 0 }}>{getStatusLabel(ticket.status)}</Badge>
         </Group>
 
         <Text size="sm" lineClamp={3}>

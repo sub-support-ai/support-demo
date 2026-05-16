@@ -13,7 +13,6 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
-import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.conversation import Conversation
@@ -21,7 +20,6 @@ from app.models.knowledge_article import KnowledgeArticle, KnowledgeArticleFeedb
 from app.models.ticket import Ticket
 from app.models.user import User
 from app.services.quality_signals import (
-    BAD_NEGATIVE_RATIO,
     MIN_FEEDBACK_FOR_BAD,
     MIN_FEEDBACK_FOR_GRADE,
     QUALITY_GRADE_WINDOW_DAYS,
@@ -31,7 +29,6 @@ from app.services.quality_signals import (
     refresh_all_article_quality_grades,
     refresh_article_quality_grade,
 )
-
 
 # ── Хелперы для фабрик ───────────────────────────────────────────────────────
 
@@ -152,9 +149,7 @@ async def test_grade_all_helped_is_good(db_session: AsyncSession):
     article = await _make_article(db_session)
 
     for _ in range(5):
-        await _add_feedback(
-            db_session, article=article, user=user, conv=conv, feedback="helped"
-        )
+        await _add_feedback(db_session, article=article, user=user, conv=conv, feedback="helped")
 
     result = await compute_quality_grade(article.id, db_session)
     assert result.grade == "good"
@@ -168,9 +163,7 @@ async def test_grade_50_50_is_risky(db_session: AsyncSession):
     article = await _make_article(db_session)
 
     for _ in range(3):
-        await _add_feedback(
-            db_session, article=article, user=user, conv=conv, feedback="helped"
-        )
+        await _add_feedback(db_session, article=article, user=user, conv=conv, feedback="helped")
     for _ in range(3):
         await _add_feedback(
             db_session, article=article, user=user, conv=conv, feedback="not_helped"
@@ -188,9 +181,7 @@ async def test_grade_mostly_negative_with_enough_signals_is_bad(db_session: Asyn
     article = await _make_article(db_session)
 
     # 1 helped + 6 not_helped = ratio 0.86 (>= 0.7), count=7 (>= 5)
-    await _add_feedback(
-        db_session, article=article, user=user, conv=conv, feedback="helped"
-    )
+    await _add_feedback(db_session, article=article, user=user, conv=conv, feedback="helped")
     for _ in range(6):
         await _add_feedback(
             db_session, article=article, user=user, conv=conv, feedback="not_helped"
@@ -241,9 +232,7 @@ async def test_grade_decay_old_negative_doesnt_dominate(db_session: AsyncSession
         )
     # 5 helped сегодня (вес 1.0 каждый = 5.0 total)
     for _ in range(5):
-        await _add_feedback(
-            db_session, article=article, user=user, conv=conv, feedback="helped"
-        )
+        await _add_feedback(db_session, article=article, user=user, conv=conv, feedback="helped")
 
     result = await compute_quality_grade(article.id, db_session)
     # weighted_neg ≈ 1.25, weighted_pos ≈ 5.0 → ratio ≈ 0.2 < RISKY (0.4)
@@ -310,9 +299,7 @@ async def test_refresh_preserves_suppressed_manual_flag(db_session: AsyncSession
     conv = await _make_conversation(db_session, user.id)
     # 10 helped — статья отлично работает, НО админ её подавил
     for _ in range(10):
-        await _add_feedback(
-            db_session, article=article, user=user, conv=conv, feedback="helped"
-        )
+        await _add_feedback(db_session, article=article, user=user, conv=conv, feedback="helped")
 
     grade = await refresh_article_quality_grade(article.id, db_session)
 
@@ -332,7 +319,7 @@ async def test_refresh_all_processes_only_stale(db_session: AsyncSession):
     fresh = await _make_article(db_session, "fresh")
     fresh.quality_grade_updated_at = datetime.now(UTC) - timedelta(seconds=10)
 
-    never = await _make_article(db_session, "never")  # quality_grade_updated_at = None
+    await _make_article(db_session, "never")  # quality_grade_updated_at = None
     await db_session.flush()
 
     count = await refresh_all_article_quality_grades(db_session, stale_after_seconds=300)
@@ -669,9 +656,7 @@ async def test_weighted_feedback_score_overrides_legacy_formula(db_session: Asyn
 
 
 @pytest.mark.asyncio
-async def test_e2e_high_rating_does_not_trigger_propagation(
-    client, db_session: AsyncSession
-):
+async def test_e2e_high_rating_does_not_trigger_propagation(client, db_session: AsyncSession):
     """POST /tickets/{id}/rate с rating=5 → unrated KB feedback остаётся unrated."""
     user_id, token = await _register_user(client, "e2e_high")
 

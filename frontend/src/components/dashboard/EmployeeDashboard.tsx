@@ -1,4 +1,5 @@
 import {
+  ActionIcon,
   Alert,
   Badge,
   Button,
@@ -16,13 +17,15 @@ import {
   IconAlertCircle,
   IconArrowRight,
   IconCheck,
+  IconChevronLeft,
+  IconChevronRight,
   IconFileText,
   IconMessageCircle,
   IconPlus,
   IconRobot,
   IconSparkles,
 } from "@tabler/icons-react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { useConversations } from "../../api/conversations";
@@ -51,6 +54,27 @@ function withinDays(value: string | null | undefined, days: number): boolean {
   if (Number.isNaN(ts)) return false;
   const diffDays = (Date.now() - ts) / (1000 * 3600 * 24);
   return diffDays >= 0 && diffDays <= days;
+}
+
+/** Попадает ли дата в указанный календарный месяц (год + месяц 1–12). */
+function withinMonth(
+  value: string | null | undefined,
+  year: number,
+  month: number,
+): boolean {
+  if (!value) return false;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return false;
+  return d.getFullYear() === year && d.getMonth() + 1 === month;
+}
+
+/** «Май 2026» с заглавной буквы. */
+function formatMonthTitle(year: number, month: number): string {
+  const s = new Date(year, month - 1, 1).toLocaleDateString("ru-RU", {
+    month: "long",
+    year: "numeric",
+  });
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 function relativeTime(value: string | null | undefined): string {
@@ -212,6 +236,33 @@ export function EmployeeDashboard({ me }: { me: UserMe }) {
   const allTickets: Ticket[] = tickets.data ?? [];
   const allConversations: Conversation[] = conversations.data ?? [];
 
+  // ── Навигация по месяцам для «Ваш месяц» ───────────────────────────────
+  const today = new Date();
+  const [monthYear, setMonthYear] = useState(() => ({
+    year: today.getFullYear(),
+    month: today.getMonth() + 1,
+  }));
+  const { year: selYear, month: selMonth } = monthYear;
+  const isCurrentMonth =
+    selYear === today.getFullYear() && selMonth === today.getMonth() + 1;
+  const minYear = today.getFullYear() - 2;
+  const minMonth = today.getMonth() + 1;
+  const isMinMonth =
+    selYear < minYear || (selYear === minYear && selMonth <= minMonth);
+
+  function prevMonth() {
+    if (isMinMonth) return;
+    setMonthYear(({ year, month }) =>
+      month === 1 ? { year: year - 1, month: 12 } : { year, month: month - 1 },
+    );
+  }
+  function nextMonth() {
+    if (isCurrentMonth) return;
+    setMonthYear(({ year, month }) =>
+      month === 12 ? { year: year + 1, month: 1 } : { year, month: month + 1 },
+    );
+  }
+
   // ── Категоризация тикетов ───────────────────────────────────────────────
   const draftTickets = useMemo(
     () =>
@@ -231,14 +282,14 @@ export function EmployeeDashboard({ me }: { me: UserMe }) {
       allTickets.filter(
         (t) =>
           RESOLVED_STATUSES.includes(t.status) &&
-          withinDays(t.resolved_at ?? t.updated_at, 30),
+          withinMonth(t.resolved_at ?? t.updated_at, selYear, selMonth),
       ),
-    [allTickets],
+    [allTickets, selYear, selMonth],
   );
 
   const createdRecent = useMemo(
-    () => allTickets.filter((t) => withinDays(t.created_at, 30)),
-    [allTickets],
+    () => allTickets.filter((t) => withinMonth(t.created_at, selYear, selMonth)),
+    [allTickets, selYear, selMonth],
   );
 
   // ── Прогресс за месяц ───────────────────────────────────────────────────
@@ -313,11 +364,9 @@ export function EmployeeDashboard({ me }: { me: UserMe }) {
                 {timeGreeting()}, {me.username}!
               </Title>
               <Text size="sm" c="dimmed">
-                {totalAttention > 0
-                  ? `${totalAttention} ${totalAttention === 1 ? "обращение требует" : "обращений требуют"} вашего внимания.`
-                  : activeTickets.length > 0
-                    ? `У вас ${activeTickets.length} ${activeTickets.length === 1 ? "активное обращение" : "активных обращений"} в работе.`
-                    : "Сейчас активных обращений нет."}
+                {activeTickets.length > 0
+                  ? `У вас ${activeTickets.length} ${activeTickets.length === 1 ? "активное обращение" : "активных обращений"} в работе.`
+                  : "Сейчас активных обращений нет."}
               </Text>
             </Stack>
             <Group gap="xs">
@@ -425,27 +474,58 @@ export function EmployeeDashboard({ me }: { me: UserMe }) {
         )}
 
         {/* ─── Прогресс за месяц ────────────────────────────────────── */}
-        {monthlyTotal > 0 && (
-          <Paper className="quiet-panel dashboard-section" withBorder p="md">
-            <Group justify="space-between" align="flex-end" mb="sm">
-              <div>
-                <Title order={4}>Ваш месяц</Title>
-                <Text size="sm" c="dimmed">
-                  Закрыто {monthlyResolved} из {monthlyTotal} обращений
-                </Text>
-              </div>
-              <Text fz={28} fw={700} c={progressPct >= 70 ? "teal" : "blue"}>
-                {progressPct}%
+        <Paper className="quiet-panel dashboard-section" withBorder p="md">
+          <Group justify="space-between" align="flex-start" mb="sm">
+            <div>
+              <Title order={4}>Ваш месяц</Title>
+              <Text size="sm" c="dimmed">
+                {monthlyTotal > 0
+                  ? `Закрыто ${monthlyResolved} из ${monthlyTotal} обращений`
+                  : "Обращений в этом месяце нет"}
               </Text>
-            </Group>
+            </div>
+            <Stack gap={4} align="flex-end">
+              <Group gap={4} align="center">
+                <ActionIcon
+                  variant="subtle"
+                  color="gray"
+                  size="sm"
+                  onClick={prevMonth}
+                  disabled={isMinMonth}
+                  aria-label="Предыдущий месяц"
+                >
+                  <IconChevronLeft size={14} stroke={1.5} />
+                </ActionIcon>
+                <Text fw={600} w={110} ta="center" size="sm">
+                  {formatMonthTitle(selYear, selMonth)}
+                </Text>
+                <ActionIcon
+                  variant="subtle"
+                  color="gray"
+                  size="sm"
+                  onClick={nextMonth}
+                  disabled={isCurrentMonth}
+                  aria-label="Следующий месяц"
+                >
+                  <IconChevronRight size={14} stroke={1.5} />
+                </ActionIcon>
+              </Group>
+              {monthlyTotal > 0 && (
+                <Text fz={28} fw={700} c={progressPct >= 70 ? "teal" : "blue"}>
+                  {progressPct}%
+                </Text>
+              )}
+            </Stack>
+          </Group>
+          {monthlyTotal > 0 && (
             <Progress
               value={progressPct}
               size="lg"
               radius="sm"
               color={progressPct >= 70 ? "teal" : "blue"}
             />
-          </Paper>
-        )}
+          )}
+        </Paper>
 
         {/* ─── Активные обращения ──────────────────────────────────── */}
         {activeSorted.length > 0 && (

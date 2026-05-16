@@ -41,7 +41,7 @@ export function LoginPage() {
 
   useEffect(() => {
     if (token) {
-      navigate("/chat", { replace: true });
+      navigate("/dashboard", { replace: true });
     }
   }, [navigate, token]);
 
@@ -68,7 +68,7 @@ export function LoginPage() {
               password,
             });
       setToken(result.access_token);
-      navigate("/chat", { replace: true });
+      navigate("/dashboard", { replace: true });
     } catch (requestError) {
       const message = getApiError(requestError);
       if (mode === "register" && message.includes("Email")) {
