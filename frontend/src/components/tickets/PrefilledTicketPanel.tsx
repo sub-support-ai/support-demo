@@ -10,16 +10,23 @@ import {
   TextInput,
   Title,
 } from "@mantine/core";
-import { IconCheck, IconEdit, IconFileText, IconX } from "@tabler/icons-react";
-import { useEffect, useState } from "react";
+import {
+  IconAlertTriangle,
+  IconCheck,
+  IconEdit,
+  IconFileText,
+  IconX,
+} from "@tabler/icons-react";
+import { useEffect, useMemo, useState } from "react";
 
-import type { Ticket, TicketDraftUpdate } from "../../api/types";
+import type { IntakeState, Ticket, TicketDraftUpdate } from "../../api/types";
 import {
   getDepartmentLabel,
   getStatusLabel,
   getTicketPriorityLabel,
 } from "../../lib/ticketLabels";
 import { validateEmail } from "../../lib/validation";
+import { type DraftField, DraftFieldChecklist } from "./DraftFieldChecklist";
 
 const DEPARTMENT_OPTIONS = [
   { value: "IT", label: "ИТ" },
@@ -53,8 +60,34 @@ function normalizePriority(value?: string | null) {
     : "средний";
 }
 
+/**
+ * Предупреждение для поля — возвращает строку если значение вызывает сомнение.
+ * Вызывать только если поле не пустое.
+ */
+function getFieldWarning(field: string, value: string): string | null {
+  if (!value.trim()) return null;
+  if (field === "requester_email") return validateEmail(value) ?? null;
+  return null;
+}
+
+/**
+ * Вернуть значение поля из тикета если заполнено,
+ * иначе — из intake_state.fields (фоллбэк пока тикет ещё не обновлён сервером).
+ */
+function intakeValue(
+  field: string,
+  ticketVal: string | null | undefined,
+  intakeFields?: Record<string, string | null | undefined> | null,
+): string {
+  const v = (ticketVal ?? "").trim();
+  if (v) return v;
+  return ((intakeFields ?? {})[field] ?? "").trim();
+}
+
 export function PrefilledTicketPanel({
   ticket,
+  intakeState,
+  potentialDuplicates,
   confirmLoading,
   declineLoading,
   saveLoading,
@@ -63,6 +96,12 @@ export function PrefilledTicketPanel({
   onSave,
 }: {
   ticket: Ticket;
+  /** Состояние intake — для предзаполнения пустых полей и расширенной валидации. */
+  intakeState?: IntakeState | null;
+  /** Уже открытые тикеты пользователя, похожие на текущий черновик.
+   *  Если массив непустой и тикет ещё редактируемый — покажем предупреждение
+   *  с предложением проверить, не плодит ли пользователь дубликат. */
+  potentialDuplicates?: Ticket[];
   confirmLoading?: boolean;
   declineLoading?: boolean;
   saveLoading?: boolean;
@@ -70,15 +109,25 @@ export function PrefilledTicketPanel({
   onDecline: () => void;
   onSave: (payload: TicketDraftUpdate) => Promise<void>;
 }) {
+  const intakeFields = intakeState?.fields ?? null;
+
   const [isEditing, setIsEditing] = useState(false);
   const [title, setTitle] = useState(ticket.title);
   const [body, setBody] = useState(ticket.body);
   const [department, setDepartment] = useState(ticket.department);
   const [priority, setPriority] = useState(normalizePriority(ticket.ai_priority));
-  const [requesterName, setRequesterName] = useState(ticket.requester_name ?? "");
-  const [requesterEmail, setRequesterEmail] = useState(ticket.requester_email ?? "");
-  const [office, setOffice] = useState(ticket.office ?? "");
-  const [affectedItem, setAffectedItem] = useState(ticket.affected_item ?? "");
+  const [requesterName, setRequesterName] = useState(
+    intakeValue("requester_name", ticket.requester_name, intakeFields),
+  );
+  const [requesterEmail, setRequesterEmail] = useState(
+    intakeValue("requester_email", ticket.requester_email, intakeFields),
+  );
+  const [office, setOffice] = useState(
+    intakeValue("office", ticket.office, intakeFields),
+  );
+  const [affectedItem, setAffectedItem] = useState(
+    intakeValue("affected_item", ticket.affected_item, intakeFields),
+  );
   const [requestType, setRequestType] = useState(ticket.request_type ?? "");
   const [requestDetails, setRequestDetails] = useState(ticket.request_details ?? "");
   const [stepsTried, setStepsTried] = useState(ticket.steps_tried ?? "");
@@ -90,27 +139,89 @@ export function PrefilledTicketPanel({
     !requesterEmailError &&
     office.trim().length > 0 &&
     affectedItem.trim().length > 0;
-  const missingContext = [
-    requesterName.trim() ? null : "заявитель",
-    requesterEmail.trim() && !requesterEmailError ? null : "корректный email",
-    office.trim() ? null : "офис",
-    affectedItem.trim() ? null : "что затронуто",
-  ].filter((item): item is string => Boolean(item));
   const canSubmit =
     title.trim().length > 0 &&
     body.trim().length > 0 &&
     hasRequiredContext;
   const isCriticalPriority = priority === CRITICAL_PRIORITY_OPTION.value;
 
+  // Поля для чеклиста — пересчитываются при изменении любого значения.
+  const contextFields: DraftField[] = useMemo(
+    () => [
+      {
+        key: "requester_name",
+        label: "Заявитель",
+        value: requesterName,
+        required: true,
+        warning: getFieldWarning("requester_name", requesterName),
+      },
+      {
+        key: "requester_email",
+        label: "Email",
+        value: requesterEmail,
+        required: true,
+        warning: getFieldWarning("requester_email", requesterEmail),
+      },
+      {
+        key: "office",
+        label: "Офис",
+        value: office,
+        required: true,
+        warning: getFieldWarning("office", office),
+      },
+      {
+        key: "affected_item",
+        label: "Что затронуто",
+        value: affectedItem,
+        required: true,
+        warning: getFieldWarning("affected_item", affectedItem),
+      },
+      ...(requestType
+        ? [
+            {
+              key: "request_type",
+              label: "Тип запроса",
+              value: requestType,
+              required: false,
+              warning: null,
+            },
+          ]
+        : []),
+    ],
+    [requesterName, requesterEmail, office, affectedItem, requestType],
+  );
+
+  function handleClearField(key: string) {
+    switch (key) {
+      case "requester_name":
+        setRequesterName("");
+        break;
+      case "requester_email":
+        setRequesterEmail("");
+        break;
+      case "office":
+        setOffice("");
+        break;
+      case "affected_item":
+        setAffectedItem("");
+        break;
+      case "request_type":
+        setRequestType("");
+        break;
+    }
+  }
+
+  // При смене тикета или обновлении intake_state — пересинхронизировать локальный стейт.
   useEffect(() => {
+    const fields = intakeState?.fields ?? null;
     setTitle(ticket.title);
     setBody(ticket.body);
     setDepartment(ticket.department);
     setPriority(normalizePriority(ticket.ai_priority));
-    setRequesterName(ticket.requester_name ?? "");
-    setRequesterEmail(ticket.requester_email ?? "");
-    setOffice(ticket.office ?? "");
-    setAffectedItem(ticket.affected_item ?? "");
+    setRequesterName(intakeValue("requester_name", ticket.requester_name, fields));
+    setRequesterEmail(intakeValue("requester_email", ticket.requester_email, fields));
+    setOffice(intakeValue("office", ticket.office, fields));
+    setAffectedItem(intakeValue("affected_item", ticket.affected_item, fields));
     setRequestType(ticket.request_type ?? "");
     setRequestDetails(ticket.request_details ?? "");
     setStepsTried(ticket.steps_tried ?? "");
@@ -128,6 +239,8 @@ export function PrefilledTicketPanel({
     ticket.request_type,
     ticket.request_details,
     ticket.steps_tried,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    intakeState?.fields,
   ]);
 
   async function handleSave() {
@@ -288,68 +401,74 @@ export function PrefilledTicketPanel({
           </Stack>
         ) : (
           <Stack gap="sm">
-            {!hasRequiredContext && canEdit && (
-              <Alert color="yellow" variant="light">
-                Нужно уточнить перед отправкой: {missingContext.join(", ")}.
-              </Alert>
-            )}
+            {/* Чеклист контактных / контекстных полей */}
+            <DraftFieldChecklist
+              fields={contextFields}
+              onClear={canEdit ? handleClearField : undefined}
+            />
+
             <div>
               <Text size="xs" c="dimmed" fw={600}>
                 Тема
               </Text>
-              <Text size="sm">{ticket.title}</Text>
+              <Text size="sm">{title}</Text>
             </div>
-            <div>
-              <Text size="xs" c="dimmed" fw={600}>
-                Контекст
-              </Text>
-              <Text size="sm">
-                {ticket.requester_name || ticket.requester_email || "Автор не указан"}
-                {ticket.office ? ` · ${ticket.office}` : ""}
-                {ticket.affected_item ? ` · ${ticket.affected_item}` : ""}
-              </Text>
-            </div>
-            <div>
-              <Text size="xs" c="dimmed" fw={600}>
-                Отдел поддержки
-              </Text>
-              <Text size="sm">{getDepartmentLabel(ticket.department)}</Text>
-            </div>
-            <div>
-              <Text size="xs" c="dimmed" fw={600}>
-                Приоритет
-              </Text>
-              <Text size="sm">{getTicketPriorityLabel(ticket)}</Text>
-            </div>
-            {(ticket.request_type || ticket.request_details) && (
-              <div>
-                <Text size="xs" c="dimmed" fw={600}>
-                  Форма запроса
-                </Text>
-                <Text size="sm">
-                  {[ticket.request_type, ticket.request_details]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </Text>
-              </div>
-            )}
             <div>
               <Text size="xs" c="dimmed" fw={600}>
                 Описание для агента
               </Text>
               <Text size="sm" className="draft-ticket-body">
-                {ticket.body}
+                {body}
               </Text>
             </div>
-            {ticket.steps_tried && (
+            {requestDetails && (
+              <div>
+                <Text size="xs" c="dimmed" fw={600}>
+                  Форма запроса
+                </Text>
+                <Text size="sm">{requestDetails}</Text>
+              </div>
+            )}
+            {stepsTried && (
               <div>
                 <Text size="xs" c="dimmed" fw={600}>
                   Что уже пробовали
                 </Text>
-                <Text size="sm">{ticket.steps_tried}</Text>
+                <Text size="sm">{stepsTried}</Text>
               </div>
             )}
           </Stack>
+        )}
+
+        {/* Предупреждение о потенциальных дубликатах — только пока тикет
+            ещё редактируемый. После подтверждения тикета смысла показывать нет. */}
+        {canEdit && potentialDuplicates && potentialDuplicates.length > 0 && (
+          <Alert
+            color="yellow"
+            variant="light"
+            icon={<IconAlertTriangle size={16} />}
+            title={
+              potentialDuplicates.length === 1
+                ? "Похожий запрос уже открыт"
+                : `Похожих запросов открыто: ${potentialDuplicates.length}`
+            }
+          >
+            <Stack gap={4}>
+              {potentialDuplicates.slice(0, 3).map((dup) => (
+                <Text key={dup.id} size="xs">
+                  #{dup.id} «{dup.title}» — {getStatusLabel(dup.status)}
+                </Text>
+              ))}
+              {potentialDuplicates.length > 3 && (
+                <Text size="xs" c="dimmed">
+                  и ещё {potentialDuplicates.length - 3}…
+                </Text>
+              )}
+            </Stack>
+            <Text size="xs" c="dimmed" mt={6}>
+              Можно отменить черновик или всё равно отправить.
+            </Text>
+          </Alert>
         )}
 
         {canEdit && (

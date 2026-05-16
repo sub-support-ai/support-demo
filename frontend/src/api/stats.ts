@@ -11,6 +11,7 @@ import type {
   KBQualityStats,
   KnowledgeEmbeddingJob,
   StatsResponse,
+  TrendsResponse,
 } from "./types";
 
 export function useStats() {
@@ -139,6 +140,30 @@ export function useRequeueKnowledgeEmbeddingJob() {
       queryClient.invalidateQueries({ queryKey: ["stats"] });
       queryClient.invalidateQueries({ queryKey: ["knowledge", "articles"] });
     },
+  });
+}
+
+export function useStatsTrends({
+  periodDays,
+  enabled,
+}: {
+  periodDays: number;
+  enabled: boolean;
+}) {
+  return useQuery({
+    queryKey: ["stats", "trends", periodDays],
+    enabled,
+    queryFn: async () => {
+      const { data } = await api.get<TrendsResponse>("/stats/trends", {
+        params: { period_days: periodDays },
+      });
+      return data;
+    },
+    // Тренды — историческая статистика. Обновлять каждую минуту достаточно:
+    // данные изменяются медленно (тикеты создаются десятками в день, не сотнями),
+    // а лишний request × N открытых вкладок — нагрузка на БД.
+    refetchInterval: enabled ? 60_000 : false,
+    refetchIntervalInBackground: false,
   });
 }
 

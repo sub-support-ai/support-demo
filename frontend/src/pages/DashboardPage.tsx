@@ -22,6 +22,9 @@ import {
 } from "../api/stats";
 import { useMe } from "../api/auth";
 import type { AIJob, KnowledgeEmbeddingJob } from "../api/types";
+import { AgentDashboard } from "../components/dashboard/AgentDashboard";
+import { EmployeeDashboard } from "../components/dashboard/EmployeeDashboard";
+import { TrendsSection } from "../components/dashboard/TrendsSection";
 import { getStatusLabel } from "../lib/ticketLabels";
 import { useAuth } from "../stores/auth";
 
@@ -186,6 +189,17 @@ export function DashboardPage() {
   const aiFallbacks = useAIFallbacksStats(isAdmin);
   const retryAIJob = useRetryAIJob();
   const retryKnowledgeJob = useRetryKnowledgeEmbeddingJob();
+
+  // Сотрудник видит свой персональный дашборд — без операторских метрик.
+  if (me && me.role === "user") {
+    return <EmployeeDashboard me={me} />;
+  }
+
+  // Агент видит операционный дашборд: очередь, SLA, свои тикеты, метрики.
+  // Без системных деталей (job queues, AI fallbacks) — это только для admin.
+  if (me && me.role === "agent") {
+    return <AgentDashboard me={me} />;
+  }
   const activeRequests =
     (data?.tickets.by_status.confirmed ?? 0) +
     (data?.tickets.by_status.in_progress ?? 0) +
@@ -297,6 +311,12 @@ export function DashboardPage() {
                 </>
               )}
             </SimpleGrid>
+
+            {/* Тренды по тикетам — линейный график создано/решено за период.
+                Здесь видны только админу (user/agent имеют свои дашборды через
+                early return выше). Глобальная картина — нагрузка системы во
+                времени, позволяет заметить сезонные пики и spike'и. */}
+            <TrendsSection />
 
             {isAdmin && (
               <Paper className="quiet-panel dashboard-section" withBorder>

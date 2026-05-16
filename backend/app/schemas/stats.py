@@ -101,6 +101,29 @@ class KnowledgeScoreDistribution(BaseModel):
     current_thresholds: dict[str, float]
 
 
+class TrendPoint(BaseModel):
+    """Одна точка тренда — дата (ISO YYYY-MM-DD) и значение."""
+
+    date: str  # ISO-дата YYYY-MM-DD
+    count: int
+
+
+class TrendsResponse(BaseModel):
+    """Тренды по тикетам за период — для линейных/столбчатых графиков.
+
+    Каждая серия `tickets_created`/`tickets_resolved` содержит ровно
+    `period_days + 1` точек (включая сегодняшнюю): дни без активности
+    отдаются с count=0, чтобы фронт мог отрисовать непрерывный график
+    без gap-логики на своей стороне.
+    """
+
+    period_days: int  # запрошенное окно (повтор из параметра)
+    from_date: str  # начало окна, ISO-дата
+    to_date: str  # конец окна (сегодня), ISO-дата
+    tickets_created: list[TrendPoint]
+    tickets_resolved: list[TrendPoint]
+
+
 class AIFallbacksStats(BaseModel):
     """Агрегат fallback-событий за окно времени.
 

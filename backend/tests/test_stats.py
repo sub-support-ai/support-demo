@@ -5,8 +5,11 @@
   - GET /stats/ai/fallbacks доступен только admin (403 для остальных).
   - GET /stats/knowledge доступен только admin (403 для остальных).
   - GET /stats/knowledge/score-distribution доступен только admin (403 для остальных).
+  - GET /stats/trends — структура и фильтрация по периоду/пользователю.
   - На пустой БД все поля имеют валидные zero-значения, нет 500.
 """
+
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import AsyncClient
@@ -14,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.models.agent import Agent
+from app.models.ticket import Ticket
 from app.models.user import User
 from app.security import hash_password
 
@@ -246,3 +250,139 @@ async def test_stats_score_distribution_custom_days(client: AsyncClient):
     )
     assert r.status_code == 200
     assert r.json()["period_days"] == 7
+
+
+# ── GET /stats/trends ────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_stats_trends_requires_auth(client: AsyncClient):
+    """GET /stats/trends без токена → 401."""
+    r = await client.get("/api/v1/stats/trends")
+    assert r.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_stats_trends_empty_db_default_period(client: AsyncClient):
+    """Пустая БД: ровно period_days+1 нулевых точек в каждой серии."""
+    _, token = await _register(client, "tr1")
+    r = await client.get(
+        "/api/v1/stats/trends",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["period_days"] == 30
+    # Включаем оба граничных дня (since и today) → 31 точка
+    assert len(data["tickets_created"]) == 31
+    assert len(data["tickets_resolved"]) == 31
+    assert all(point["count"] == 0 for point in data["tickets_created"])
+    assert all(point["count"] == 0 for point in data["tickets_resolved"])
+
+
+@pytest.mark.asyncio
+async def test_stats_trends_custom_period(client: AsyncClient):
+    """Кастомный period_days возвращает соответствующее число точек."""
+    _, token = await _register(client, "tr2")
+    r = await client.get(
+        "/api/v1/stats/trends?period_days=7",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["period_days"] == 7
+    assert len(data["tickets_created"]) == 8  # 7 дней + сегодня
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid", [0, 6, 181, 365])
+async def test_stats_trends_validation(client: AsyncClient, invalid: int):
+    """period_days вне диапазона [7, 180] возвращает 422."""
+    _, token = await _register(client, f"tr3_{invalid}")
+    r = await client.get(
+        f"/api/v1/stats/trends?period_days={invalid}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_stats_trends_counts_user_tickets(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """Тикеты пользователя попадают в нужный день created, resolved учитывается отдельно."""
+    user_id, token = await _register(client, "tr4")
+    now = datetime.now(UTC)
+
+    # Тикет создан сегодня, не решён
+    t_open = Ticket(
+        user_id=user_id,
+        title="Открытый тикет",
+        body="Тело",
+        user_priority=3,
+        department="IT",
+        status="confirmed",
+        confirmed_by_user=True,
+        created_at=now,
+    )
+    # Тикет создан 3 дня назад, решён вчера
+    t_resolved = Ticket(
+        user_id=user_id,
+        title="Решённый тикет",
+        body="Тело",
+        user_priority=3,
+        department="IT",
+        status="resolved",
+        confirmed_by_user=True,
+        created_at=now - timedelta(days=3),
+        resolved_at=now - timedelta(days=1),
+    )
+    db_session.add_all([t_open, t_resolved])
+    await db_session.commit()
+
+    r = await client.get(
+        "/api/v1/stats/trends?period_days=30",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 200
+    data = r.json()
+
+    # Сумма created = 2 (оба попали в окно)
+    total_created = sum(p["count"] for p in data["tickets_created"])
+    assert total_created == 2
+
+    # Сумма resolved = 1 (только t_resolved)
+    total_resolved = sum(p["count"] for p in data["tickets_resolved"])
+    assert total_resolved == 1
+
+
+@pytest.mark.asyncio
+async def test_stats_trends_isolates_users(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """User не видит чужие тикеты в трендах."""
+    # Пользователь A создаёт тикет
+    user_a_id, _ = await _register(client, "tr5a")
+    db_session.add(
+        Ticket(
+            user_id=user_a_id,
+            title="Чужой тикет",
+            body="...",
+            user_priority=3,
+            department="IT",
+            status="confirmed",
+            confirmed_by_user=True,
+            created_at=datetime.now(UTC),
+        )
+    )
+    await db_session.commit()
+
+    # Пользователь B запрашивает свои тренды — должен увидеть нули
+    _, token_b = await _register(client, "tr5b")
+    r = await client.get(
+        "/api/v1/stats/trends?period_days=30",
+        headers={"Authorization": f"Bearer {token_b}"},
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert sum(p["count"] for p in data["tickets_created"]) == 0

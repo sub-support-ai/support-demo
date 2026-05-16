@@ -148,6 +148,67 @@ body {
   background: #fffafa;
 }
 
+/* ── Дашборд сотрудника (role=user) ──────────────────────────────────────
+   Отдельная стилистика от операторского обзора: воздуха больше,
+   акценты мягче, hero-карточка сверху создаёт «персональный» тон.
+   ВАЖНО: цвета держим в палитре Mantine (синий/teal/violet) —
+   умышленно не используем оранжевый+тёмный, чтобы визуально не
+   пересекаться с шаблонами вроде "Вектор". */
+.employee-dashboard {
+  max-width: 980px;
+  margin: 0 auto;
+}
+
+.agent-dashboard {
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.agent-hero {
+  /* Нейтральный серо-белый градиент — строгий рабочий тон,
+     без голубого (сотрудник) и без зелёного (системный обзор). */
+  background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 70%);
+  border-radius: 12px;
+}
+
+.employee-hero {
+  /* Тёплый светло-голубой градиент — спокойный, не кричащий.
+     Контрастирует с белыми карточками ниже, выделяя приветствие
+     как единственный «hero» блок страницы. */
+  background: linear-gradient(135deg, #f4f8ff 0%, #ffffff 70%);
+  border-radius: 12px;
+}
+
+.employee-stat-card {
+  min-height: 96px;
+  background: #ffffff;
+  border-radius: 10px;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.employee-stat-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.attention-card {
+  /* Лёгкий оранжевый фон, чтобы карточки «нужно действие» сразу
+     цеплялись глазом, но без агрессии — это не ошибка, а напоминание. */
+  background: #fff8f0;
+  border-color: #ffd9a8;
+  border-radius: 10px;
+}
+
+.employee-ticket-row {
+  background: #ffffff;
+  border-radius: 8px;
+  transition: background 0.12s ease;
+}
+
+.employee-ticket-row:hover {
+  background: #f9fafb;
+}
+
 .job-failure-body {
   min-width: 0;
   flex: 1;

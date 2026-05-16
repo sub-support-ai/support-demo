@@ -460,6 +460,24 @@ export interface JobsStats {
   knowledge_embeddings: JobQueueStats;
 }
 
+export interface TrendPoint {
+  /** ISO-дата YYYY-MM-DD. */
+  date: string;
+  count: number;
+}
+
+export interface TrendsResponse {
+  period_days: number;
+  /** ISO-дата YYYY-MM-DD — начало окна. */
+  from_date: string;
+  /** ISO-дата YYYY-MM-DD — конец окна (сегодня). */
+  to_date: string;
+  /** Тикеты, созданные в эту дату. Заполнено для каждого дня периода. */
+  tickets_created: TrendPoint[];
+  /** Тикеты, решённые в эту дату. Заполнено для каждого дня периода. */
+  tickets_resolved: TrendPoint[];
+}
+
 export interface AIFallbacksStats {
   // ISO8601 — окно начинается отсюда, эхом от запроса
   since: string;

@@ -2,6 +2,7 @@ import "@fontsource/inter/400.css";
 import "@fontsource/inter/500.css";
 import "@fontsource/inter/600.css";
 import "@mantine/core/styles.css";
+import "@mantine/charts/styles.css";
 import "./styles.css";
 
 import React from "react";

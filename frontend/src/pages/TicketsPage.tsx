@@ -1,6 +1,7 @@
 import {
   Alert,
   Badge,
+  Button,
   Group,
   LoadingOverlay,
   Paper,
@@ -11,12 +12,14 @@ import {
   TextInput,
   Title,
 } from "@mantine/core";
+import { IconDownload } from "@tabler/icons-react";
 import { useMemo, useState } from "react";
 
 import { useMe } from "../api/auth";
 import { getApiError } from "../api/client";
 import { useTickets } from "../api/tickets";
 import { TicketCard } from "../components/tickets/TicketCard";
+import { downloadTicketsCsv } from "../lib/csv";
 import { getStatusLabel } from "../lib/ticketLabels";
 import { useAuth } from "../stores/auth";
 
@@ -290,12 +293,31 @@ export function TicketsPage() {
     <div className="content-page">
       <Paper className="tickets-panel" withBorder>
         <LoadingOverlay visible={tickets.isLoading || me.isLoading} />
-        <Title order={2} mb="xs">
-          {title}
-        </Title>
-        <Text size="sm" c="dimmed" mb="md">
-          {description}
-        </Text>
+        <Group justify="space-between" align="flex-start" mb="md" wrap="nowrap" gap="md">
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <Title order={2} mb="xs">
+              {title}
+            </Title>
+            <Text size="sm" c="dimmed">
+              {description}
+            </Text>
+          </div>
+          <Button
+            variant="light"
+            size="sm"
+            leftSection={<IconDownload size={16} />}
+            disabled={!visibleTickets || visibleTickets.length === 0}
+            onClick={() => {
+              if (!visibleTickets?.length) return;
+              const today = new Date().toISOString().slice(0, 10);
+              // Имя файла включает текущую очередь — чтобы при экспорте
+              // нескольких срезов файлы не перетирали друг друга в Downloads.
+              downloadTicketsCsv(visibleTickets, `tickets-${activeQueue}-${today}.csv`);
+            }}
+          >
+            Экспорт CSV
+          </Button>
+        </Group>
 
         {isOperator && (
           <SimpleGrid

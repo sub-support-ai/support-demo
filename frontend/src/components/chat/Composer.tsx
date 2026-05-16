@@ -6,12 +6,27 @@ export function Composer({
   disabled,
   loading,
   onSend,
+  value: controlledValue,
+  onChange: onControlledChange,
 }: {
   disabled?: boolean;
   loading?: boolean;
   onSend: (content: string) => Promise<void> | void;
+  /** Controlled value — если передан, компонент работает в controlled-режиме. */
+  value?: string;
+  onChange?: (value: string) => void;
 }) {
-  const [value, setValue] = useState("");
+  const [internalValue, setInternalValue] = useState("");
+  const isControlled = controlledValue !== undefined;
+  const value = isControlled ? controlledValue : internalValue;
+
+  function setValue(v: string) {
+    if (isControlled) {
+      onControlledChange?.(v);
+    } else {
+      setInternalValue(v);
+    }
+  }
 
   async function submit(event?: FormEvent) {
     event?.preventDefault();

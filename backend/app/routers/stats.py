@@ -12,7 +12,7 @@
 """
 
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import case, func, or_, select
@@ -42,6 +42,8 @@ from app.schemas.stats import (
     KnowledgeScoreDistribution,
     StatsResponse,
     TicketStats,
+    TrendPoint,
+    TrendsResponse,
     UnansweredQuery,
 )
 from app.services.agents import get_active_agent_for_user
@@ -294,6 +296,122 @@ async def get_stats(
     )
 
     return StatsResponse(tickets=ticket_stats, ai=ai_stats, jobs=jobs_stats)
+
+
+# ── Тренды по тикетам за период ─────────────────────────────────────────────
+
+
+def _coerce_date(value: object) -> date:
+    """Унифицирует представление даты из func.date().
+
+    PostgreSQL возвращает Python `date`, SQLite — строку 'YYYY-MM-DD'.
+    Чтобы остальной код был портируемым между двумя движками, приводим
+    оба варианта к единому `date`.
+    """
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, str):
+        return date.fromisoformat(value)
+    raise TypeError(f"Не умею превратить {value!r} ({type(value).__name__}) в date")
+
+
+# Окно ограничено сверху, чтобы запрос «всё за полгода» не сканировал слишком
+# много строк на больших объёмах. Снизу — 7 дней (меньше уже неинтересно для
+# трендов: 1-3 точки графиком не назовёшь).
+MIN_TREND_PERIOD_DAYS = 7
+MAX_TREND_PERIOD_DAYS = 180
+
+
+@router.get(
+    "/trends",
+    response_model=TrendsResponse,
+    summary="Тренды по тикетам за период (created/resolved по дням)",
+    description=(
+        "Возвращает временные ряды для построения линейных/столбчатых графиков: "
+        "сколько тикетов создано и решено в каждый день периода. Пропущенные дни "
+        "заполнены нулями — фронт рисует непрерывный график без gap-логики. "
+        "Видимость данных — по той же логике, что и /stats/: user видит свои, "
+        "agent — назначенные, admin — все."
+    ),
+)
+async def get_stats_trends(
+    period_days: int = Query(
+        default=30,
+        ge=MIN_TREND_PERIOD_DAYS,
+        le=MAX_TREND_PERIOD_DAYS,
+        description=f"Окно в днях ({MIN_TREND_PERIOD_DAYS}-{MAX_TREND_PERIOD_DAYS}).",
+    ),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TrendsResponse:
+    ticket_filters = await _ticket_scope_filters(db, current_user)
+
+    now = datetime.now(UTC)
+    since_dt = now - timedelta(days=period_days)
+    since_date = since_dt.date()
+    today_date = now.date()
+
+    # Created: группировка по дате создания.
+    created_result = await db.execute(
+        select(
+            func.date(Ticket.created_at).label("day"),
+            func.count().label("cnt"),
+        )
+        .where(*ticket_filters, Ticket.created_at >= since_dt)
+        .group_by(func.date(Ticket.created_at))
+    )
+    created_map: dict[date, int] = {
+        _coerce_date(row.day): int(row.cnt) for row in created_result if row.day is not None
+    }
+
+    # Resolved: только тикеты с непустым resolved_at, попавшие в окно.
+    resolved_result = await db.execute(
+        select(
+            func.date(Ticket.resolved_at).label("day"),
+            func.count().label("cnt"),
+        )
+        .where(
+            *ticket_filters,
+            Ticket.resolved_at.is_not(None),
+            Ticket.resolved_at >= since_dt,
+        )
+        .group_by(func.date(Ticket.resolved_at))
+    )
+    resolved_map: dict[date, int] = {
+        _coerce_date(row.day): int(row.cnt) for row in resolved_result if row.day is not None
+    }
+
+    # Полный список дней — включая нулевые, чтобы у фронта была непрерывная
+    # X-ось. Не используем list comprehension с range(): timedelta делает
+    # намерение явнее, чем `today - i days`.
+    days: list[date] = []
+    cursor = since_date
+    while cursor <= today_date:
+        days.append(cursor)
+        cursor += timedelta(days=1)
+
+    logger.info(
+        "Тренды собраны",
+        extra={
+            "period_days": period_days,
+            "created_total": sum(created_map.values()),
+            "resolved_total": sum(resolved_map.values()),
+        },
+    )
+
+    return TrendsResponse(
+        period_days=period_days,
+        from_date=since_date.isoformat(),
+        to_date=today_date.isoformat(),
+        tickets_created=[
+            TrendPoint(date=day.isoformat(), count=created_map.get(day, 0)) for day in days
+        ],
+        tickets_resolved=[
+            TrendPoint(date=day.isoformat(), count=resolved_map.get(day, 0)) for day in days
+        ],
+    )
 
 
 # ── Fallback-события AI ─────────────────────────────────────────────────────

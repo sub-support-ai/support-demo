@@ -39,7 +39,9 @@ import type {
 import { Composer } from "../components/chat/Composer";
 import { MessageBubble } from "../components/chat/MessageBubble";
 import { PrefilledTicketPanel } from "../components/tickets/PrefilledTicketPanel";
+import { findPotentialDuplicates } from "../lib/duplicates";
 import { getDepartmentLabel, getStatusLabel } from "../lib/ticketLabels";
+import { validateEmail } from "../lib/validation";
 import { useAuth } from "../stores/auth";
 
 function formatConversationDate(value?: string | null) {
@@ -103,13 +105,18 @@ const INTAKE_FIELD_LABELS: Record<string, string> = {
   time_detected: "Когда обнаружили",
 };
 
+/** Предупреждение для поля intake — только для заполненных значений. */
+function getFieldWarning(field: string, value: string): string | null {
+  if (!value.trim()) return null;
+  if (field === "requester_email") return validateEmail(value) ?? null;
+  return null;
+}
+
 function IntakeStatePanel({ state }: { state: IntakeState }) {
   const fields = state.fields ?? {};
   const requiredFields = state.required_fields ?? [];
   const missingFields = state.missing_fields ?? [];
-  const visibleFields = requiredFields.length
-    ? requiredFields
-    : Object.keys(fields);
+  const visibleFields = requiredFields.length ? requiredFields : Object.keys(fields);
 
   return (
     <Paper withBorder p="md" className="quiet-panel">
@@ -135,13 +142,24 @@ function IntakeStatePanel({ state }: { state: IntakeState }) {
 
         <Stack gap={6}>
           {visibleFields.map((field) => {
-            const value = fields[field];
-            const filled = typeof value === "string" && value.trim().length > 0;
+            const rawValue = fields[field];
+            const value = typeof rawValue === "string" ? rawValue : "";
+            const filled = value.trim().length > 0;
+            const warning = filled ? getFieldWarning(field, value) : null;
+            const icon = !filled ? "❌" : warning ? "⚠️" : "✅";
+            const color = !filled ? "dimmed" : warning ? "orange" : "teal";
             return (
               <Group key={field} justify="space-between" gap="xs" wrap="nowrap">
-                <Text size="sm" c={filled ? undefined : "dimmed"}>
-                  {filled ? "✓" : "!"} {INTAKE_FIELD_LABELS[field] ?? field}
-                </Text>
+                <Stack gap={0} style={{ flex: 1, minWidth: 0 }}>
+                  <Text size="sm" c={color}>
+                    {icon} {INTAKE_FIELD_LABELS[field] ?? field}
+                  </Text>
+                  {warning && (
+                    <Text size="xs" c="orange" pl={22}>
+                      {warning}
+                    </Text>
+                  )}
+                </Stack>
                 <Text size="sm" ta="right" lineClamp={2} c={filled ? undefined : "dimmed"}>
                   {filled ? value : "не заполнено"}
                 </Text>
@@ -176,6 +194,7 @@ export function ChatPage() {
   const [awaitingAiConversationId, setAwaitingAiConversationId] =
     useState<number>();
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const [composerText, setComposerText] = useState("");
 
   const activeConversation = useMemo(() => {
     return conversations.data?.find((item) => item.id === activeConversationId);
@@ -201,10 +220,15 @@ export function ChatPage() {
     draftTicket?.conversation_id === activeConversationId
       ? draftTicket
       : restoredTicket;
-  const hasPendingDraft =
-    activeTicket !== null &&
-    activeTicket.status === "pending_user" &&
-    !activeTicket.confirmed_by_user;
+
+  // Потенциальные дубликаты — открытые тикеты пользователя с тем же
+  // affected_item или (department + request_type). Считаем здесь, чтобы
+  // не загружать тикеты повторно внутри PrefilledTicketPanel и не плодить
+  // зависимости от React Query в презентационном компоненте.
+  const potentialDuplicates = useMemo(() => {
+    if (!activeTicket || !tickets.data) return [];
+    return findPotentialDuplicates(activeTicket, tickets.data);
+  }, [activeTicket, tickets.data]);
   const isAiProcessing = activeConversation?.status === "ai_processing";
   const isAwaitingAiResponse =
     awaitingAiConversationId !== undefined &&
@@ -223,10 +247,13 @@ export function ChatPage() {
         ? (AI_STAGE_LABELS[activeConversation.ai_stage] ?? "Обрабатываю запрос...")
         : "Обрабатываю запрос...")
     : "";
+  // Блокируем ввод только когда AI обрабатывает запрос, или тикет уже подтверждён и отправлен.
+  // Наличие непоедтверждённого черновика НЕ блокирует чат — пользователь может уточнять.
   const composerDisabled =
     activeConversation?.status === "escalated" ||
-    hasPendingDraft ||
+    (activeTicket?.confirmed_by_user === true) ||
     shouldPollMessages;
+  const missingFields = activeConversation?.intake_state?.missing_fields ?? [];
 
   useEffect(() => {
     if (!activeConversationId && conversations.data?.length) {
@@ -437,9 +464,35 @@ export function ChatPage() {
               <div ref={bottomRef} />
             </Stack>
           </ScrollArea>
+          {/* Последний вопрос AI — подсказка прямо над полем ввода */}
+          {activeConversation?.intake_state?.last_question && !shouldPollMessages && (
+            <Alert color="blue" variant="light" p="xs" mx="md" mb="xs">
+              <Text size="sm">{activeConversation.intake_state.last_question}</Text>
+            </Alert>
+          )}
+          {/* Быстрые подсказки по незаполненным полям */}
+          {missingFields.length > 0 && !composerDisabled && (
+            <Group gap="xs" px="md" pb="xs" wrap="wrap">
+              {missingFields.slice(0, 4).map((field) => (
+                <Button
+                  key={field}
+                  size="compact-xs"
+                  variant="light"
+                  color="blue"
+                  onClick={() =>
+                    setComposerText(`${INTAKE_FIELD_LABELS[field] ?? field}: `)
+                  }
+                >
+                  {INTAKE_FIELD_LABELS[field] ?? field}
+                </Button>
+              ))}
+            </Group>
+          )}
           <Composer
             loading={sendMessage.isPending || createConversation.isPending}
             disabled={composerDisabled}
+            value={composerText}
+            onChange={setComposerText}
             onSend={handleSend}
           />
         </div>
@@ -486,9 +539,15 @@ export function ChatPage() {
           </Stack>
         </Paper>
 
+        {/* Панель сбора данных — показывается параллельно с черновиком пока intake активен */}
+        {activeConversation?.intake_state?.mode && (
+          <IntakeStatePanel state={activeConversation.intake_state} />
+        )}
         {activeTicket ? (
           <PrefilledTicketPanel
             ticket={activeTicket}
+            intakeState={activeConversation?.intake_state}
+            potentialDuplicates={potentialDuplicates}
             confirmLoading={confirmTicket.isPending}
             declineLoading={declineTicket.isPending}
             saveLoading={updateTicketDraft.isPending}
@@ -496,16 +555,14 @@ export function ChatPage() {
             onDecline={handleDecline}
             onSave={handleSaveDraft}
           />
-        ) : activeConversation?.intake_state?.mode ? (
-          <IntakeStatePanel state={activeConversation.intake_state} />
-        ) : (
+        ) : !activeConversation?.intake_state?.mode ? (
           <Paper withBorder p="md" className="quiet-panel">
             <Title order={4}>Черновик запроса</Title>
             <Text size="sm" c="dimmed">
               Появится после эскалации диалога.
             </Text>
           </Paper>
-        )}
+        ) : null}
       </div>
     </div>
   );
