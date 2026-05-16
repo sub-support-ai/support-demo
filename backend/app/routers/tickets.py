@@ -38,6 +38,9 @@ from app.schemas.ticket import (
     TicketRatingCreate,
     TicketRatingRead,
     TicketRead,
+    TicketBulkRejection,
+    TicketBulkRequest,
+    TicketBulkResponse,
     TicketReroutePayload,
     TicketStatusLiteral,
     TicketStatusUpdate,
@@ -56,6 +59,7 @@ from app.services.notifications import (
     notify_ticket_user,
 )
 from app.services.pii import mask_pii
+from app.services.quality_signals import propagate_negative_feedback_for_ticket
 from app.services.routing import assign_agent, unassign_agent
 from app.services.sla import OPEN_STATUSES, start_ticket_sla
 from app.services.ticket_body import clean_optional_text, replace_context_block_if_present
@@ -1131,6 +1135,18 @@ async def submit_ticket_feedback(
     await db.flush()
     await db.refresh(ticket)
 
+    # Обучение: если пользователь явно сказал «не помогло» — это сильный
+    # негативный сигнал для KB-статей, использованных AI при формировании
+    # этого тикета. Помечаем связанные feedback'и как not_helped и сразу
+    # пересчитываем quality_grade — статья может потерять видимость уже на
+    # следующий запрос. См. services/quality_signals.py.
+    if payload.feedback == "not_helped":
+        await propagate_negative_feedback_for_ticket(
+            ticket.id,
+            db,
+            reason="user_feedback_not_helped" if not reopened else "user_feedback_and_reopen",
+        )
+
     await log_event(
         db,
         action="ticket.feedback",
@@ -1311,6 +1327,18 @@ async def rate_ticket(
     await db.flush()
     await db.refresh(rating_obj)
 
+    # Обучение: низкий CSAT (1-2 звезды) — явный негативный сигнал.
+    # Помечаем связанные KB-feedback'и как not_helped, пересчитываем grade.
+    # Высокий CSAT (3-5) тоже мог бы давать положительный сигнал, но
+    # консервативно: «отлично» != «эта KB-статья помогла», часто это
+    # благодарность агенту. Pos-сигналы оставляем явному feedback на статью.
+    if payload.rating <= 2:
+        await propagate_negative_feedback_for_ticket(
+            ticket.id,
+            db,
+            reason=f"csat_low_{payload.rating}",
+        )
+
     await log_event(
         db,
         action="ticket.rated",
@@ -1476,4 +1504,234 @@ async def get_ticket_ai_assist(
         summary=_build_ticket_summary(ticket),
         ai_response_draft=draft,
         similar_tickets=[SimilarTicket.model_validate(t) for t in similar_tickets],
+    )
+
+
+# ── POST /tickets/bulk — массовое изменение статуса с защитой ───────────────
+
+
+def _evaluate_bulk_risk(ticket: Ticket) -> TicketBulkRejection | None:
+    """Проверка рисков перед массовым применением.
+
+    Цель: не допустить, чтобы оператор случайно закрыл пакетом тикеты,
+    которые на самом деле требуют ручного разбора. Любой возвращённый
+    TicketBulkRejection означает «пропустить, агент должен открыть индивидуально».
+
+    Возвращает None если тикет безопасен для bulk; rejection если нет.
+
+    Текущие правила (расширяемо):
+      - reopen_count > 0 — переоткрывался, возможно проблема не решена.
+        force=True у admin позволяет обойти.
+
+    NB: проверка «последнее сообщение от пользователя» сделана отдельно
+    в _bulk_check_user_unread — её эффективнее делать батчем для всех
+    тикетов сразу (избегаем N+1 SELECT по messages).
+    """
+    if (ticket.reopen_count or 0) > 0:
+        return TicketBulkRejection(
+            ticket_id=ticket.id,
+            code="has_reopens",
+            reason=(
+                f"Тикет переоткрывался {ticket.reopen_count} раз — "
+                "разберитесь индивидуально перед закрытием"
+            ),
+        )
+    return None
+
+
+async def _bulk_check_user_unread(
+    db: AsyncSession, ticket_ids: list[int]
+) -> set[int]:
+    """Возвращает ticket_id, у которых последнее сообщение в связанном
+    диалоге — от пользователя (роль 'user').
+
+    Это значит «есть unread от пользователя» — закрывать пакетом нельзя:
+    агент мог не успеть прочитать. Считаем за один батч, не N+1.
+    """
+    if not ticket_ids:
+        return set()
+
+    # Берём conversation_id для всех тикетов
+    conv_rows = await db.execute(
+        select(Ticket.id, Ticket.conversation_id).where(
+            Ticket.id.in_(ticket_ids),
+            Ticket.conversation_id.is_not(None),
+        )
+    )
+    ticket_to_conv: dict[int, int] = {row.id: row.conversation_id for row in conv_rows}
+    if not ticket_to_conv:
+        return set()
+
+    from sqlalchemy import func as sql_func  # локальный импорт — sql_func не нужен в большинстве хендлеров файла
+
+    from app.models.message import Message
+
+    # Подзапрос: max(message.id) для каждого conv → это и есть «последнее сообщение»
+    subq = (
+        select(
+            Message.conversation_id.label("cid"),
+            sql_func.max(Message.id).label("last_id"),
+        )
+        .where(Message.conversation_id.in_(ticket_to_conv.values()))
+        .group_by(Message.conversation_id)
+        .subquery()
+    )
+    last_msgs = await db.execute(
+        select(Message.conversation_id, Message.role).join(
+            subq, Message.id == subq.c.last_id
+        )
+    )
+    convs_with_user_last: set[int] = {
+        row.conversation_id for row in last_msgs if row.role == "user"
+    }
+    return {
+        tid for tid, cid in ticket_to_conv.items() if cid in convs_with_user_last
+    }
+
+
+@router.post(
+    "/bulk",
+    response_model=TicketBulkResponse,
+    summary="Массовое изменение статуса тикетов с защитой от риска",
+    description=(
+        "Принимает список ticket_ids и единое действие (in_progress / resolved / closed). "
+        "Применяет действие к каждому тикету, у которого нет признаков риска. "
+        "Тикеты с признаками риска (reopen_count > 0, unread от пользователя, "
+        "недопустимый статус) пропускаются и возвращаются в `rejected` с указанием причины. "
+        "Доступно только operator (agent/admin). force=True — для admin, чтобы "
+        "обойти защиту в осознанных случаях."
+    ),
+)
+async def bulk_update_tickets(
+    payload: TicketBulkRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TicketBulkResponse:
+    # 1. Авторизация: только operator
+    if current_user.role not in ("agent", "admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Bulk-операции доступны только операторам (agent/admin)",
+        )
+
+    # 2. force=True — только admin (агент не должен обходить защиту в один клик)
+    if payload.force and current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="force=True доступно только admin",
+        )
+
+    requested_count = len(payload.ticket_ids)
+    # dedup ids на случай если фронт прислал дубли — иначе двойной audit
+    unique_ids = list(dict.fromkeys(payload.ticket_ids))
+    rejected: list[TicketBulkRejection] = []
+
+    # 3. Загружаем все тикеты одним SQL'ом
+    tickets_result = await db.execute(select(Ticket).where(Ticket.id.in_(unique_ids)))
+    tickets: dict[int, Ticket] = {t.id: t for t in tickets_result.scalars().all()}
+
+    # 4. not_found — для ID, которых нет в БД
+    for tid in unique_ids:
+        if tid not in tickets:
+            rejected.append(
+                TicketBulkRejection(
+                    ticket_id=tid,
+                    code="not_found",
+                    reason="Тикет не найден",
+                )
+            )
+
+    # 5. Батчевая проверка «есть unread от пользователя»
+    user_unread_ids: set[int] = set()
+    if not payload.force:
+        user_unread_ids = await _bulk_check_user_unread(db, list(tickets.keys()))
+
+    # 6. Применение
+    applied_ticket_ids: list[int] = []
+    closing_statuses = {"resolved", "closed"}
+    for tid, ticket in tickets.items():
+        # 6a. Только confirmed-тикеты доступны оператору. pending_user
+        # (черновики) — отдельное user-действие; new — ещё не вошёл в работу.
+        if not ticket.confirmed_by_user or ticket.status == "pending_user":
+            rejected.append(
+                TicketBulkRejection(
+                    ticket_id=tid,
+                    code="wrong_status",
+                    reason=(
+                        f"Тикет в статусе '{ticket.status}' и не подтверждён "
+                        "пользователем — недоступен для массового действия"
+                    ),
+                )
+            )
+            continue
+
+        # 6b. Risk-проверки (можно обойти force=True для admin)
+        if not payload.force:
+            risk = _evaluate_bulk_risk(ticket)
+            if risk is not None:
+                rejected.append(risk)
+                continue
+            if tid in user_unread_ids:
+                rejected.append(
+                    TicketBulkRejection(
+                        ticket_id=tid,
+                        code="has_unread_user_msg",
+                        reason=(
+                            "Последнее сообщение от пользователя — "
+                            "ответьте или прочтите перед закрытием"
+                        ),
+                    )
+                )
+                continue
+
+        # 6c. Применяем переход через state-machine. ValueError/HTTPException
+        # ловим — несовместимые переходы (например, closed → in_progress)
+        # отдаются как rejected, а не валят весь bulk.
+        try:
+            old_status = transition_via_operator(ticket, payload.action)
+        except HTTPException as exc:
+            rejected.append(
+                TicketBulkRejection(
+                    ticket_id=tid,
+                    code="invalid_transition",
+                    reason=str(exc.detail),
+                )
+            )
+            continue
+
+        # 6d. Side-effects, как в одиночном /tickets/{id} PATCH
+        if payload.action in OPEN_STATUSES and ticket.sla_started_at is None:
+            start_ticket_sla(ticket)
+        if payload.action in closing_statuses and old_status not in closing_statuses:
+            await unassign_agent(db, ticket)
+            ticket.resolved_at = datetime.now(UTC)
+
+        applied_ticket_ids.append(tid)
+
+    await db.flush()
+
+    # 7. Audit одним событием на весь bulk — для трассировки массовых
+    # действий админа (compliance, разбор инцидентов).
+    await log_event(
+        db,
+        action="ticket.bulk",
+        user_id=current_user.id,
+        target_type="ticket",
+        target_id=None,
+        request=request,
+        details={
+            "action": payload.action,
+            "force": payload.force,
+            "requested": requested_count,
+            "applied": len(applied_ticket_ids),
+            "rejected_codes": [r.code for r in rejected],
+        },
+    )
+
+    return TicketBulkResponse(
+        requested_count=requested_count,
+        applied_count=len(applied_ticket_ids),
+        applied_ticket_ids=applied_ticket_ids,
+        rejected=rejected,
     )

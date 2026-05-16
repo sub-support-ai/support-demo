@@ -69,6 +69,47 @@ class TicketStatusUpdate(BaseModel):
     status: OperatorStatusLiteral
 
 
+# ── Bulk-операции ────────────────────────────────────────────────────────────
+
+
+# Допустимые действия в bulk-операции. Сейчас только переходы статуса —
+# самое частое массовое действие у оператора («закрыть все вчерашние
+# resolved», «взять в работу всю новую очередь»).
+BulkActionLiteral = Literal["in_progress", "resolved", "closed"]
+
+
+class TicketBulkRequest(BaseModel):
+    """Массовое изменение статуса тикетов с защитой от рискованных операций."""
+
+    ticket_ids: list[int] = Field(min_length=1, max_length=100)
+    action: BulkActionLiteral
+    # force=True позволяет admin'у обойти защиту (например, явно закрыть
+    # переоткрытые тикеты пакетом). Agent'у недоступно — иначе защита
+    # обходится случайным кликом.
+    force: bool = False
+
+
+class TicketBulkRejection(BaseModel):
+    """Один отклонённый тикет — почему bulk не применился к нему."""
+
+    ticket_id: int
+    code: str  # машинный: has_reopens, low_csat, has_unread_user_msg, wrong_status, not_found, not_authorized
+    reason: str  # человекочитаемый
+
+
+class TicketBulkResponse(BaseModel):
+    """Результат bulk-операции.
+
+    Дизайн: partial-success. Применяем что можем, остальное возвращаем
+    с указанием причины — UI показывает «Закрыто X · ⚠ Y требуют проверки».
+    """
+
+    requested_count: int
+    applied_count: int
+    applied_ticket_ids: list[int]
+    rejected: list[TicketBulkRejection]
+
+
 class TicketDraftUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=255)
     body: str | None = Field(default=None, min_length=1, max_length=10_000)

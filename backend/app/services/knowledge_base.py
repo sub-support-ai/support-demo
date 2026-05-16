@@ -247,12 +247,48 @@ async def sync_knowledge_article_index(
 
 
 def _feedback_score(article: KnowledgeArticle) -> float:
+    """Feedback-вклад в общий ranking-score статьи.
+
+    Используется materialized weighted_feedback_score (с exponential decay,
+    обновляется в quality_signals.refresh_article_quality_grade).
+    Если оно ещё 0.0 (статья ни разу не получала feedback или не прошла
+    job пересчёта) — fallback на старую формулу по счётчикам, чтобы старые
+    данные не терялись до первого refresh-цикла.
+
+    Диапазон: [-2.0, +2.0].
+    """
+    weighted = getattr(article, "weighted_feedback_score", 0.0) or 0.0
+    if weighted != 0.0:
+        return max(-2.0, min(2.0, float(weighted)))
+
+    # Fallback: legacy формула по счётчикам (без decay).
+    # Срабатывает в transition-период, пока фоновая job не обновит все статьи.
     helped = article.helped_count or 0
     negative = (article.not_helped_count or 0) + (article.not_relevant_count or 0)
     total = helped + negative
     if total == 0:
         return 0.0
     return max(-2.0, min(2.0, (helped - negative) / total * 2))
+
+
+# Штраф, который получает статья со статусом 'risky' в RAG-ranking.
+# -3.0 выбран так чтобы её score гарантированно ушёл ниже
+# RAG_SCORE_HIGH_THRESHOLD (8.0): из 'answer'-кандидата → 'clarify'/'escalate'.
+# Это soft suppression: статья всё ещё кандидат, но LLM не получит её как
+# источник «точного ответа» — только как уточняющий контекст.
+RISKY_GRADE_PENALTY = -3.0
+
+
+def _quality_grade_penalty(article: KnowledgeArticle) -> float:
+    """Штраф к score на основе quality_grade.
+
+    bad/suppressed сюда не попадают — они отфильтровываются на уровне SQL
+    в _apply_common_filters. Здесь обрабатывается только 'risky'.
+    """
+    grade = getattr(article, "quality_grade", "good")
+    if grade == "risky":
+        return RISKY_GRADE_PENALTY
+    return 0.0
 
 
 def _freshness_score(article: KnowledgeArticle, now: datetime) -> float:
@@ -383,6 +419,7 @@ def _score_article(
         + _context_score(article, filters)
         + _freshness_score(article, now)
         + _feedback_score(article)
+        + _quality_grade_penalty(article)
     )
 
 
@@ -412,6 +449,23 @@ def _apply_common_filters(statement, filters: KnowledgeSearchFilters):
         or_(
             KnowledgeArticle.expires_at.is_(None),
             KnowledgeArticle.expires_at > func.now(),
+        )
+    )
+
+    # Quality gate: 'bad' и 'suppressed' исключаются из RAG-выдачи полностью.
+    # 'bad' — автоматически отмечена системой по накопленному negative feedback'у
+    # с decay (см. quality_signals.compute_quality_grade).
+    # 'suppressed' — ручное вмешательство админа.
+    # Эти статьи остаются в БД и доступны через прямой /knowledge/articles
+    # endpoint (для review админом), но AI их в ответ пользователю не подберёт.
+    #
+    # Null-safe: NULL quality_grade трактуется как 'good' — для совместимости
+    # со статьями, созданными до миграции (или в тестах через create_all,
+    # где server_default может не примениться к существующим строкам).
+    statement = statement.where(
+        or_(
+            KnowledgeArticle.quality_grade.is_(None),
+            KnowledgeArticle.quality_grade.notin_(("bad", "suppressed")),
         )
     )
     return statement

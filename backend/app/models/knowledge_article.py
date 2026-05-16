@@ -40,6 +40,24 @@ class KnowledgeArticle(Base):
     helped_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     not_helped_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     not_relevant_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Quality grade: 'good' | 'risky' | 'bad' | 'suppressed'.
+    # Пересчитывается фоновой job'ой на основе свежего feedback с decay.
+    # 'bad' / 'suppressed' исключаются из RAG-выдачи, 'risky' штрафуется.
+    # См. app/services/quality_signals.py для логики вычисления.
+    quality_grade: Mapped[str] = mapped_column(
+        String(20), default="good", nullable=False, index=True
+    )
+    quality_grade_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Decay-взвешенный feedback-score в диапазоне [-2.0, +2.0].
+    # Используется в RAG-ranking как замена старой формулы (helped-neg)/total.
+    # Свежий feedback весит больше старого (half-life 30 дней) — статья получает
+    # шанс «реабилитироваться» если её исправили. Пересчитывается в
+    # refresh_article_quality_grade одновременно с quality_grade.
+    weighted_feedback_score: Mapped[float] = mapped_column(
+        Float, default=0.0, nullable=False
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

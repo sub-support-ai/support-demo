@@ -231,6 +231,29 @@ async def recent_kb_article_ids_for_conversation(
     return {int(article_id) for article_id in result.scalars().all()}
 
 
+async def negative_kb_article_ids_for_conversation(
+    db: AsyncSession,
+    conversation_id: int,
+) -> set[int]:
+    """Статьи, которые пользователь явно отметил как not_helped или not_relevant
+    в текущем диалоге. Эти статьи НИКОГДА не должны быть предложены повторно
+    в том же диалоге — раздражающий шаблон «AI 3 раза предложил то же самое».
+
+    В отличие от recent_kb_article_ids (которая исключает последние 3 без
+    учёта оценки) — здесь мы исключаем по явному negative-сигналу за всю
+    историю диалога.
+    """
+    result = await db.execute(
+        select(KnowledgeArticleFeedback.article_id)
+        .where(
+            KnowledgeArticleFeedback.conversation_id == conversation_id,
+            KnowledgeArticleFeedback.feedback.in_(("not_helped", "not_relevant")),
+        )
+        .distinct()
+    )
+    return {int(article_id) for article_id in result.scalars().all()}
+
+
 async def get_ai_answer(
     conversation_id: int,
     messages: list[dict[str, str]],
@@ -395,13 +418,23 @@ async def generate_ai_message(db: AsyncSession, conversation_id: int) -> Message
         else:
             # ПСЕВДО-СТРИМИНГ: ищем ответ в базе знаний.
             await _set_ai_stage(conversation_id, "searching")
-            exclude_article_ids: set[int] | None = None
+            # Сначала собираем явный negative-список — статьи, которые
+            # пользователь в этом же диалоге отметил «не помогло». Это
+            # безусловное исключение, не зависит от policy.avoid_repeating_kb:
+            # если человек сказал «не помогло» — не пихаем то же снова.
+            exclude_article_ids: set[int] = await negative_kb_article_ids_for_conversation(
+                db, conversation_id
+            )
             if policy.avoid_repeating_kb:
-                exclude_article_ids = await recent_kb_article_ids_for_conversation(
+                # Дополнительно — исключаем недавно показанные (без явного
+                # negative-сигнала), чтобы не зацикливаться на одной статье.
+                exclude_article_ids |= await recent_kb_article_ids_for_conversation(
                     db, conversation_id
                 )
             ai_payload = await find_knowledge_answer(
-                db, history, exclude_article_ids=exclude_article_ids
+                db,
+                history,
+                exclude_article_ids=exclude_article_ids if exclude_article_ids else None,
             )
             if ai_payload is None:
                 # ПСЕВДО-СТРИМИНГ: KB не нашла подходящий ответ — идём в LLM.
