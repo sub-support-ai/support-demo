@@ -102,7 +102,7 @@ export function useEscalateConversation() {
       queryClient.setQueriesData<Ticket[]>(
         { queryKey: ["tickets"] },
         (current) => {
-          if (!current) {
+          if (!Array.isArray(current)) {
             return current;
           }
           const exists = current.some((ticket) => ticket.id === data.ticket.id);

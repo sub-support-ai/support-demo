@@ -1,4 +1,4 @@
-/**
+﻿/**
  * TicketCard component tests.
  *
  * Регрессионное покрытие:
@@ -63,7 +63,7 @@ describe("TicketCard — department badge", () => {
     ["finance", "Финансы"],
     ["procurement", "Закупки"],
     ["security", "Безопасность"],
-    ["facilities", "АХО"],
+    ["facilities", "Офис и помещения"],
     ["documents", "Документооборот"],
   ] as const)(
     "department='%s' рендерится как '%s'",

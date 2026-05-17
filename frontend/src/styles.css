@@ -63,7 +63,7 @@ body {
 
 .page-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 8px minmax(280px, var(--chat-side-width, 340px));
+  grid-template-columns: minmax(0, 1fr) 8px minmax(360px, var(--chat-side-width, 480px));
   align-items: stretch;
   gap: 10px;
   padding: 16px;
@@ -73,7 +73,7 @@ body {
 }
 
 .page-grid.draft-mode {
-  grid-template-columns: minmax(340px, 1fr) 8px minmax(280px, var(--chat-side-width, 340px));
+  grid-template-columns: minmax(340px, 1fr) 8px minmax(360px, var(--chat-side-width, 480px));
 }
 
 .content-page {
@@ -262,10 +262,10 @@ body {
 }
 
 .chat-surface {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
-  grid-template-rows: minmax(0, 1fr) auto;
   border: 1px solid #dce5e2;
   border-radius: 8px;
   overflow: hidden;
@@ -273,7 +273,7 @@ body {
 }
 
 .messages-scroll {
-  height: 100%;
+  flex: 1 1 0;
   min-height: 0;
 }
 
@@ -301,16 +301,6 @@ body {
 
 .message-bubble.ai {
   background: #ffffff;
-}
-
-.escalation-stack {
-  display: grid;
-  gap: 10px;
-  width: min(720px, 90%);
-}
-
-.escalation-stack .message-bubble {
-  max-width: 100%;
 }
 
 .message-text {
@@ -361,8 +351,11 @@ body {
 }
 
 .escalation-card {
+  width: 100%;
   max-width: 100%;
   border-radius: 8px;
+  border-left: 4px solid var(--mantine-color-red-5);
+  background: #fffafa;
 }
 
 .sources {
@@ -458,7 +451,7 @@ body {
 }
 
 .page-grid.draft-mode .side-panel {
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(96px, 140px) minmax(0, 1fr);
 }
 
 .conversation-list {
@@ -535,9 +528,9 @@ body {
 }
 
 .page-grid.draft-mode .draft-panel {
-  height: 100%;
   min-height: 0;
   overflow-y: auto;
+  align-self: stretch;
 }
 
 /* Title — большой, выглядит как заголовок, но кликается и редактируется. */
@@ -583,6 +576,69 @@ body {
 .draft-body-readonly {
   white-space: pre-wrap;
   line-height: 1.55;
+}
+
+.wizard-host {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 32px 16px;
+}
+
+.wizard-shell {
+  background: #ffffff;
+  max-width: 720px;
+  width: 100%;
+}
+
+.wizard-frame {
+  padding: 32px 36px;
+}
+
+.wizard-step {
+  padding-top: 8px;
+  min-height: 220px;
+}
+
+.wizard-question {
+  font-size: 26px !important;
+  font-weight: 600 !important;
+  line-height: 1.25 !important;
+  color: #142826;
+}
+
+.wizard-input-large {
+  font-size: 18px !important;
+  padding: 14px 16px !important;
+  min-height: 52px !important;
+  line-height: 1.4 !important;
+  border-radius: 10px !important;
+}
+
+.wizard-input-large:focus {
+  border-color: var(--mantine-color-teal-5) !important;
+}
+
+.wizard-loading {
+  padding: 40px 0;
+}
+
+.wizard-review .mantine-TextInput-input,
+.wizard-review .mantine-Textarea-input {
+  font-size: 14px;
+}
+
+/* Подсветка пустых обязательных полей — мягкая, чтобы не давить. */
+.draft-field-required .mantine-TextInput-input {
+  border-color: #f0a070;
+  background-color: #fffaf6;
+}
+.draft-field-required .mantine-TextInput-input:focus {
+  border-color: #e88a4d;
+  background-color: #ffffff;
 }
 
 .empty-state {

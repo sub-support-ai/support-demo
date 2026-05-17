@@ -6,7 +6,7 @@ const DEPARTMENT_LABELS: Record<string, string> = {
   finance: "Финансы",
   procurement: "Закупки",
   security: "Безопасность",
-  facilities: "АХО",
+  facilities: "Офис и помещения",
   documents: "Документооборот",
 };
 

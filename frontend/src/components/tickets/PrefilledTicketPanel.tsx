@@ -1,4 +1,4 @@
-import {
+﻿import {
   Alert,
   Badge,
   Button,
@@ -23,7 +23,7 @@ import {
 } from "@tabler/icons-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import type { IntakeState, Ticket, TicketDraftUpdate } from "../../api/types";
+import type { IntakeState, Ticket, TicketDraftUpdate, UserMe } from "../../api/types";
 import {
   getDepartmentLabel,
   getStatusLabel,
@@ -37,7 +37,7 @@ const DEPARTMENT_OPTIONS = [
   { value: "finance", label: "Финансы" },
   { value: "procurement", label: "Закупки" },
   { value: "security", label: "Безопасность" },
-  { value: "facilities", label: "АХО" },
+  { value: "facilities", label: "Офис и помещения" },
   { value: "documents", label: "Документооборот" },
 ];
 
@@ -117,6 +117,7 @@ function SaveIndicator({ status }: { status: SaveStatus }) {
 export function PrefilledTicketPanel({
   ticket,
   intakeState,
+  me,
   potentialDuplicates,
   confirmLoading,
   declineLoading,
@@ -127,6 +128,7 @@ export function PrefilledTicketPanel({
 }: {
   ticket: Ticket;
   intakeState?: IntakeState | null;
+  me?: UserMe | null;
   potentialDuplicates?: Ticket[];
   confirmLoading?: boolean;
   declineLoading?: boolean;
@@ -137,16 +139,23 @@ export function PrefilledTicketPanel({
 }) {
   const intakeFields = intakeState?.fields ?? null;
 
+  function profileName() {
+    return me?.request_context?.requester_name || me?.username || "";
+  }
+  function profileEmail() {
+    return me?.request_context?.requester_email || me?.email || "";
+  }
+
   // Состояние полей — всегда редактируемое, отдельные «view»-режимы нет.
   const [title, setTitle] = useState(ticket.title);
   const [body, setBody] = useState(ticket.body);
   const [department, setDepartment] = useState(ticket.department);
   const [priority, setPriority] = useState(normalizePriority(ticket.ai_priority));
   const [requesterName, setRequesterName] = useState(
-    intakeValue("requester_name", ticket.requester_name, intakeFields),
+    intakeValue("requester_name", ticket.requester_name, intakeFields) || profileName(),
   );
   const [requesterEmail, setRequesterEmail] = useState(
-    intakeValue("requester_email", ticket.requester_email, intakeFields),
+    intakeValue("requester_email", ticket.requester_email, intakeFields) || profileEmail(),
   );
   const [office, setOffice] = useState(
     intakeValue("office", ticket.office, intakeFields),
@@ -166,13 +175,19 @@ export function PrefilledTicketPanel({
   // Статус последнего auto-save — для индикатора в шапке.
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
 
+  // Refs на обязательные контактные поля — для auto-focus на первое пустое.
+  const officeRef = useRef<HTMLInputElement>(null);
+  const affectedItemRef = useRef<HTMLInputElement>(null);
+
   const canEdit = !ticket.confirmed_by_user && ticket.status === "pending_user";
   const requesterEmailError = validateEmail(requesterEmail);
-  const hasRequiredContext =
-    requesterName.trim().length > 0 &&
-    !requesterEmailError &&
-    office.trim().length > 0 &&
-    affectedItem.trim().length > 0;
+  const missingRequiredLabels: string[] = [];
+  if (!office.trim()) missingRequiredLabels.push("офис");
+  if (!affectedItem.trim()) missingRequiredLabels.push("что затронуто");
+  // Имя и email берём из профиля пользователя — не требуем ручного ввода.
+  if (!requesterName.trim()) missingRequiredLabels.push("заявитель");
+  if (!requesterEmail.trim() || requesterEmailError) missingRequiredLabels.push("email");
+  const hasRequiredContext = missingRequiredLabels.length === 0;
   const canSubmit =
     title.trim().length > 0 && body.trim().length > 0 && hasRequiredContext;
   const isCriticalPriority = priority === CRITICAL_PRIORITY_OPTION.value;
@@ -203,42 +218,43 @@ export function PrefilledTicketPanel({
   //   2) auto-save успешно завершается
   const lastSavedRef = useRef<string>("");
 
-  // При смене тикета (новый id или поля изменены сервером) — сброс локального стейта.
+  // Сброс полей только при смене тикета (новый id). При обновлении пропа из-за
+  // нашего же auto-save сбрасывать нельзя — пользователь продолжает печатать,
+  // и сброс выкидывает его незавершённый ввод.
+  const prevTicketIdRef = useRef(ticket.id);
   useEffect(() => {
+    if (prevTicketIdRef.current === ticket.id) return;
+    prevTicketIdRef.current = ticket.id;
     const fields = intakeState?.fields ?? null;
     setTitle(ticket.title);
     setBody(ticket.body);
     setDepartment(ticket.department);
     setPriority(normalizePriority(ticket.ai_priority));
-    setRequesterName(intakeValue("requester_name", ticket.requester_name, fields));
-    setRequesterEmail(intakeValue("requester_email", ticket.requester_email, fields));
+    setRequesterName(intakeValue("requester_name", ticket.requester_name, fields) || profileName());
+    setRequesterEmail(intakeValue("requester_email", ticket.requester_email, fields) || profileEmail());
     setOffice(intakeValue("office", ticket.office, fields));
     setAffectedItem(intakeValue("affected_item", ticket.affected_item, fields));
     setRequestType(ticket.request_type ?? "");
     setRequestDetails(ticket.request_details ?? "");
     setStepsTried(ticket.steps_tried ?? "");
     setSaveStatus("idle");
-    // Сбрасываем baseline → следующий auto-save useEffect возьмёт current snapshot
-    // как новую отправную точку и НЕ отправит save (это просто свежие данные с сервера).
-    // Без этого после успешного save сервер мог вернуть нормализованный ticket,
-    // что вызвало бы новое расхождение и бесконечный цикл сохранения.
     lastSavedRef.current = "";
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    ticket.id,
-    ticket.title,
-    ticket.body,
-    ticket.department,
-    ticket.ai_priority,
-    ticket.requester_name,
-    ticket.requester_email,
-    ticket.office,
-    ticket.affected_item,
-    ticket.request_type,
-    ticket.request_details,
-    ticket.steps_tried,
-    intakeState?.fields,
-  ]);
+  }, [ticket.id]);
+
+  // Auto-focus на первое пустое обязательное поле при открытии черновика.
+  useEffect(() => {
+    if (!canEdit) return;
+    const targets = [
+      { value: office, ref: officeRef },
+      { value: affectedItem, ref: affectedItemRef },
+    ];
+    const firstEmpty = targets.find((t) => !t.value.trim());
+    if (firstEmpty?.ref.current) {
+      firstEmpty.ref.current.focus();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ticket.id]);
 
   // Auto-save с debounce. Срабатывает только если:
   //   - редактирование разрешено (canEdit)
@@ -424,43 +440,41 @@ export function PrefilledTicketPanel({
           )}
         </Group>
 
-        {/* ── Контактные данные (compact 2x2) ── */}
+        {/* ── Контактные данные ── */}
         <div>
           <Text size="xs" c="dimmed" fw={600} mb={6}>
             КОНТАКТНЫЕ ДАННЫЕ
           </Text>
           {canEdit ? (
             <Stack gap="xs">
-              <Group grow align="start">
-                <TextInput
-                  size="xs"
-                  placeholder="Заявитель *"
-                  value={requesterName}
-                  maxLength={100}
-                  onChange={(event) => setRequesterName(event.currentTarget.value)}
-                />
-                <TextInput
-                  size="xs"
-                  placeholder="Email *"
-                  value={requesterEmail}
-                  maxLength={255}
-                  error={requesterEmail ? requesterEmailError : undefined}
-                  onChange={(event) => setRequesterEmail(event.currentTarget.value)}
-                />
+              {/* Имя и email из профиля — показываем как инфо, не просим вводить */}
+              <Group gap={6} align="center">
+                <Text size="xs" c="dimmed" style={{ minWidth: 0 }}>
+                  {requesterName || "—"}
+                </Text>
+                {requesterEmail && (
+                  <Text size="xs" c="dimmed">
+                    · {requesterEmail}
+                  </Text>
+                )}
               </Group>
               <Group grow align="start">
                 <TextInput
+                  ref={officeRef}
                   size="xs"
                   placeholder="Офис *"
                   value={office}
                   maxLength={100}
+                  className={!office.trim() ? "draft-field-required" : undefined}
                   onChange={(event) => setOffice(event.currentTarget.value)}
                 />
                 <TextInput
+                  ref={affectedItemRef}
                   size="xs"
                   placeholder="Что затронуто *"
                   value={affectedItem}
                   maxLength={150}
+                  className={!affectedItem.trim() ? "draft-field-required" : undefined}
                   onChange={(event) => setAffectedItem(event.currentTarget.value)}
                 />
               </Group>
@@ -565,7 +579,7 @@ export function PrefilledTicketPanel({
           <Stack gap="xs">
             {!hasRequiredContext && (
               <Text size="xs" c="orange" ta="center">
-                Заполните контактные данные, чтобы отправить
+                Заполните: {missingRequiredLabels.join(", ")}
               </Text>
             )}
             <Button

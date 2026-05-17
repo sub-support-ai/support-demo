@@ -7,13 +7,7 @@ import {
 import { useState } from "react";
 
 import { useSubmitKnowledgeFeedback } from "../../api/knowledge";
-import type {
-  EscalationContext,
-  IntakeState,
-  Message,
-  RequestContextDefaults,
-} from "../../api/types";
-import { EscalationCard } from "./EscalationCard";
+import type { Message } from "../../api/types";
 import { Sources } from "./Sources";
 
 /** Визуальный индикатор уверенности модели.
@@ -132,61 +126,12 @@ function KnowledgeFeedbackActions({ message }: { message: Message }) {
 
 export function MessageBubble({
   message,
-  escalationDisabled,
-  escalationLoading,
-  contextDefaults,
-  intakeState,
   showAiConfidence = false,
-  showEscalationCard = true,
-  onEscalate,
 }: {
   message: Message;
-  escalationDisabled?: boolean;
-  escalationLoading?: boolean;
-  contextDefaults?: RequestContextDefaults | null;
-  intakeState?: IntakeState | null;
   showAiConfidence?: boolean;
-  showEscalationCard?: boolean;
-  onEscalate: (conversationId: number, context: EscalationContext) => void;
 }) {
   const isUser = message.role === "user";
-
-  if (!isUser && message.requires_escalation) {
-    return (
-      <div className="message-row ai">
-        <div className="escalation-stack">
-          {message.content && (
-            <Paper className="message-bubble ai" withBorder>
-              <Group gap="xs" mb={4} align="center">
-                <Text size="xs" fw={600} c="dimmed">
-                  AI
-                </Text>
-                {showAiConfidence && (
-                  <ConfidenceBadge confidence={message.ai_confidence} />
-                )}
-              </Group>
-              <Text size="sm" className="message-text">
-                {message.content}
-              </Text>
-              <Sources sources={message.sources} />
-              <KnowledgeFeedbackActions message={message} />
-            </Paper>
-          )}
-          {showEscalationCard && (
-            <EscalationCard
-              contextDefaults={contextDefaults}
-              intakeState={intakeState}
-              disabled={escalationDisabled}
-              loading={escalationLoading}
-              onEscalate={(context) =>
-                onEscalate(message.conversation_id, context)
-              }
-            />
-          )}
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className={`message-row ${isUser ? "user" : "ai"}`}>

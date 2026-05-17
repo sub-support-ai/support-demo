@@ -1,4 +1,4 @@
-import {
+﻿import {
   Alert,
   Badge,
   Button,
@@ -48,7 +48,7 @@ const DEPARTMENT_OPTIONS = [
   { value: "finance", label: "Финансы" },
   { value: "procurement", label: "Закупки" },
   { value: "security", label: "Безопасность" },
-  { value: "facilities", label: "АХО" },
+  { value: "facilities", label: "Офис и помещения" },
   { value: "documents", label: "Документооборот" },
 ];
 
@@ -266,12 +266,14 @@ export function TicketCard({
         )}
 
         <Group gap="xs">
-          <Badge variant="filled" color={getTicketKindColor(ticket.ticket_kind)} size="xs">
-            {getTicketKindLabel(ticket.ticket_kind)}
-          </Badge>
+          {isOperator && (
+            <Badge variant="filled" color={getTicketKindColor(ticket.ticket_kind)} size="xs">
+              {getTicketKindLabel(ticket.ticket_kind)}
+            </Badge>
+          )}
           <Badge variant="light">{getDepartmentLabel(ticket.department)}</Badge>
           <Badge variant="light">{getTicketPriorityLabel(ticket)}</Badge>
-          {slaDeadline && (
+          {isOperator && slaDeadline && (
             <Badge color={ticket.is_sla_breached ? "red" : "yellow"} variant="light">
               SLA {ticket.is_sla_breached ? "просрочен" : "до"} {slaDeadline}
             </Badge>
@@ -281,7 +283,7 @@ export function TicketCard({
               Повторно открыт: {ticket.reopen_count}
             </Badge>
           )}
-          {ticket.sla_escalated_at && (
+          {isOperator && ticket.sla_escalated_at && (
             <Badge color="orange" variant="light">
               SLA эскалирован {formatDateTime(ticket.sla_escalated_at)}
             </Badge>

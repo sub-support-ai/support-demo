@@ -3,8 +3,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-INTAKE_MODEL_VERSION = "intake-state-v1"
-INTAKE_CONFIDENCE = 0.55
 
 COMMON_REQUIRED_FIELDS = [
     "requester_name",
@@ -209,17 +207,6 @@ def build_intake_state(
     if not missing_fields:
         state["mode"] = "draft_ready"
     return state
-
-
-def build_intake_ai_payload(state: dict[str, Any], *, reason: str | None = None) -> dict[str, Any]:
-    answer = build_intake_answer(state, reason=reason)
-    return {
-        "answer": answer,
-        "confidence": INTAKE_CONFIDENCE,
-        "escalate": True,
-        "sources": [],
-        "model_version": INTAKE_MODEL_VERSION,
-    }
 
 
 def build_intake_answer(state: dict[str, Any], *, reason: str | None = None) -> str:

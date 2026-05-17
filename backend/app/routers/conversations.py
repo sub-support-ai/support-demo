@@ -291,17 +291,10 @@ async def add_message(
 ) -> AddMessageResponse:
     conversation = await _get_conversation_for_user(conversation_id, db, current_user)
 
-    if conversation.status == "escalated":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                "Диалог уже эскалирован в тикет. Подтвердите черновик или начните новый диалог."
-            ),
-        )
     if conversation.status == "ai_processing":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Дождитесь ответа перед созданием черновика.",
+            detail="Дождитесь ответа перед отправкой следующего сообщения.",
         )
 
     # PII-маскировка контента до сохранения: содержимое сообщений живёт долго

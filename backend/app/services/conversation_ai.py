@@ -400,9 +400,6 @@ async def generate_ai_message(db: AsyncSession, conversation_id: int) -> Message
     if conversation is None:
         await _set_ai_stage(conversation_id, None)
         raise ValueError(f"Conversation {conversation_id} not found")
-    if conversation.status == "escalated":
-        await _set_ai_stage(conversation_id, None)
-        raise ValueError(f"Conversation {conversation_id} is already escalated")
 
     history = await load_history_for_ai(db, conversation_id)
 
@@ -482,7 +479,7 @@ async def generate_ai_message(db: AsyncSession, conversation_id: int) -> Message
         requires_escalation=requires_escalation,
     )
     db.add(ai_message)
-    if conversation.status == "ai_processing":
+    if conversation.status in {"ai_processing", "escalated"}:
         conversation.status = "active"
 
     # Обновляем intake_state по итогам текущего обмена: извлекаем офис,

@@ -139,6 +139,7 @@ def test_dialog_policy_routes_direct_hardware_handoff_before_rag():
     from app.services.conversation_intent import (
         ConversationAction,
         ConversationIntent,
+        ConversationTriageClass,
         detect_conversation_policy,
     )
 
@@ -151,7 +152,74 @@ def test_dialog_policy_routes_direct_hardware_handoff_before_rag():
     assert policy.intent == ConversationIntent.DIRECT_HANDOFF
     assert policy.action == ConversationAction.ESCALATE
     assert policy.requires_draft is True
+    assert policy.triage_class == ConversationTriageClass.SPECIALIST_REQUIRED
     assert "нужна проверка или замена оборудования" in (policy.answer_override or "")
+
+
+def test_dialog_policy_keeps_self_service_candidates_in_knowledge_search():
+    from app.services.conversation_intent import (
+        ConversationAction,
+        ConversationIntent,
+        ConversationTriageClass,
+        detect_conversation_policy,
+    )
+
+    policy = detect_conversation_policy(
+        [
+            {"role": "user", "content": "VPN не подключается, ошибка 809"},
+        ]
+    )
+
+    assert policy.intent == ConversationIntent.ANSWER
+    assert policy.action == ConversationAction.SEARCH_KB
+    assert policy.requires_draft is False
+    assert policy.triage_class == ConversationTriageClass.SELF_SERVICE
+
+
+def test_dialog_policy_routes_physical_damage_to_specialist_without_kb():
+    from app.services.conversation_intent import (
+        ConversationAction,
+        ConversationIntent,
+        ConversationTriageClass,
+        detect_conversation_policy,
+        should_offer_support_draft,
+    )
+
+    history = [
+        {"role": "user", "content": "Порвался провод у рабочего места"},
+    ]
+
+    policy = detect_conversation_policy(history)
+
+    assert policy.intent == ConversationIntent.DIRECT_HANDOFF
+    assert policy.action == ConversationAction.ESCALATE
+    assert policy.requires_draft is True
+    assert policy.triage_class == ConversationTriageClass.SPECIALIST_REQUIRED
+    assert should_offer_support_draft(history)
+
+
+def test_dialog_policy_routes_security_incident_to_critical_handoff():
+    from app.services.conversation_intent import (
+        ConversationAction,
+        ConversationIntent,
+        ConversationTriageClass,
+        detect_conversation_policy,
+    )
+
+    policy = detect_conversation_policy(
+        [
+            {
+                "role": "user",
+                "content": "Открыл подозрительное письмо и ввел пароль, что делать?",
+            },
+        ]
+    )
+
+    assert policy.intent == ConversationIntent.EMERGENCY
+    assert policy.action == ConversationAction.ESCALATE
+    assert policy.requires_draft is True
+    assert policy.triage_class == ConversationTriageClass.CRITICAL_SECURITY
+    assert "Не переходите по ссылкам" in (policy.answer_override or "")
 
 
 def test_dialog_policy_keeps_collecting_context_after_handoff_prompt():
@@ -847,7 +915,7 @@ async def test_escalate_uses_user_asset_context(client: AsyncClient, db_session)
 
 
 @pytest.mark.asyncio
-async def test_post_message_to_escalated_conversation_returns_409(
+async def test_post_message_to_escalated_conversation_keeps_chat_alive(
     client: AsyncClient,
     db_session,
 ):
@@ -875,7 +943,14 @@ async def test_post_message_to_escalated_conversation_returns_409(
         headers=headers,
     )
 
-    assert message_resp.status_code == 409
+    assert message_resp.status_code == 201
+    assert message_resp.json()["conversation_status"] == "ai_processing"
+
+    await process_next_ai_job(db_session)
+
+    conv_resp = await client.get("/api/v1/conversations/", headers=headers)
+    convs = {c["id"]: c for c in conv_resp.json()}
+    assert convs[conv_id]["status"] == "active"
 
 
 @pytest.mark.asyncio

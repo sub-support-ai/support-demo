@@ -1,4 +1,4 @@
-/**
+﻿/**
  * PrefilledTicketPanel component tests.
  *
  * Покрывает:
@@ -47,7 +47,7 @@ describe("PrefilledTicketPanel — department badge", () => {
     expect(screen.getAllByText("ИТ").length).toBeGreaterThan(0);
   });
 
-  it("показывает 'АХО' для department='facilities'", () => {
+  it("показывает 'Офис и помещения' для department='facilities'", () => {
     renderWithProviders(
       <PrefilledTicketPanel
         ticket={makeDraftTicket({ department: "facilities" })}
@@ -56,7 +56,7 @@ describe("PrefilledTicketPanel — department badge", () => {
         onSave={vi.fn()}
       />,
     );
-    expect(screen.getAllByText("АХО").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Офис и помещения").length).toBeGreaterThan(0);
   });
 });
 

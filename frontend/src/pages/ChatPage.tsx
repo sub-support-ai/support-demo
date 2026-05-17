@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Alert,
   Badge,
   Button,
@@ -9,13 +8,12 @@ import {
   ScrollArea,
   Stack,
   Text,
-  TextInput,
   Title,
 } from "@mantine/core";
 import {
+  IconClipboardList,
   IconMessageCircle,
   IconPlus,
-  IconSend,
 } from "@tabler/icons-react";
 import {
   type CSSProperties,
@@ -50,8 +48,10 @@ import type {
   TicketDraftUpdate,
 } from "../api/types";
 import { Composer } from "../components/chat/Composer";
+import { EscalationCard } from "../components/chat/EscalationCard";
 import { MessageBubble } from "../components/chat/MessageBubble";
 import { PrefilledTicketPanel } from "../components/tickets/PrefilledTicketPanel";
+import { TicketWizard } from "../components/tickets/TicketWizard";
 import { findPotentialDuplicates } from "../lib/duplicates";
 import { getDepartmentLabel, getStatusLabel } from "../lib/ticketLabels";
 import { validateEmail } from "../lib/validation";
@@ -118,9 +118,9 @@ const INTAKE_FIELD_LABELS: Record<string, string> = {
   time_detected: "Когда обнаружили",
 };
 
-const DEFAULT_SIDE_PANEL_WIDTH = 340;
-const MIN_SIDE_PANEL_WIDTH = 280;
-const MAX_SIDE_PANEL_WIDTH = 760;
+const DEFAULT_SIDE_PANEL_WIDTH = 480;
+const MIN_SIDE_PANEL_WIDTH = 360;
+const MAX_SIDE_PANEL_WIDTH = 900;
 
 function clampSidePanelWidth(width: number) {
   return Math.min(MAX_SIDE_PANEL_WIDTH, Math.max(MIN_SIDE_PANEL_WIDTH, width));
@@ -181,7 +181,7 @@ function IntakeStatePanel({ state }: { state: IntakeState }) {
                     </Text>
                   )}
                 </Stack>
-                <Text size="sm" ta="right" lineClamp={2} c={filled ? undefined : "dimmed"}>
+                <Text size="sm" ta="right" lineClamp={2} c={filled ? undefined : "dimmed"} style={{ minWidth: 0, maxWidth: "55%" }}>
                   {filled ? value : "не заполнено"}
                 </Text>
               </Group>
@@ -196,84 +196,6 @@ function IntakeStatePanel({ state }: { state: IntakeState }) {
         )}
       </Stack>
     </Paper>
-  );
-}
-
-/** Мини-инпуты для незаполненных полей intake.
- *
- * Вместо подсказок-кнопок, которые префиксят composer, — отдельный input
- * на каждое поле с send-action. Пользователь печатает значение, жмёт Enter —
- * AI получает сообщение "FieldLabel: value" и извлекает из него ответ.
- */
-function MissingFieldsInputs({
-  fields,
-  labels,
-  onSend,
-  disabled,
-}: {
-  fields: string[];
-  labels: Record<string, string>;
-  onSend: (text: string) => void | Promise<void>;
-  disabled?: boolean;
-}) {
-  const [values, setValues] = useState<Record<string, string>>({});
-
-  function submit(field: string) {
-    const value = (values[field] ?? "").trim();
-    if (!value || disabled) return;
-    const label = labels[field] ?? field;
-    onSend(`${label}: ${value}`);
-    setValues((prev) => ({ ...prev, [field]: "" }));
-  }
-
-  if (fields.length === 0) return null;
-
-  return (
-    <Stack gap={6} px="md" pb="xs">
-      <Text size="xs" c="dimmed" fw={600}>
-        Заполнить быстро:
-      </Text>
-      {fields.slice(0, 3).map((field) => {
-        const label = labels[field] ?? field;
-        const value = values[field] ?? "";
-        return (
-          <Group key={field} gap={6} wrap="nowrap">
-            <Text size="xs" c="dimmed" style={{ minWidth: 110, flexShrink: 0 }}>
-              {label}
-            </Text>
-            <TextInput
-              size="xs"
-              placeholder={`Введите ${label.toLowerCase()}`}
-              value={value}
-              disabled={disabled}
-              style={{ flex: 1 }}
-              onChange={(event) =>
-                setValues((prev) => ({
-                  ...prev,
-                  [field]: event.currentTarget.value,
-                }))
-              }
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  submit(field);
-                }
-              }}
-            />
-            <ActionIcon
-              size="md"
-              color="teal"
-              variant="light"
-              aria-label={`Отправить ${label}`}
-              disabled={!value.trim() || disabled}
-              onClick={() => submit(field)}
-            >
-              <IconSend size={14} stroke={1.5} />
-            </ActionIcon>
-          </Group>
-        );
-      })}
-    </Stack>
   );
 }
 
@@ -300,6 +222,7 @@ export function ChatPage() {
   const [composerText, setComposerText] = useState("");
   const [dialogHistoryExpanded, setDialogHistoryExpanded] = useState(false);
   const [sidePanelWidth, setSidePanelWidth] = useState(DEFAULT_SIDE_PANEL_WIDTH);
+  const [wizardActiveFor, setWizardActiveFor] = useState<Set<number>>(new Set());
 
   const activeConversation = useMemo(() => {
     return conversations.data?.find((item) => item.id === activeConversationId);
@@ -339,11 +262,6 @@ export function ChatPage() {
   // draftTickets[activeConversationId] всегда привязан к нужному диалогу
   const activeTicket = draftTicket ?? restoredTicket;
   const isDraftMode = Boolean(activeTicket);
-  const dialogHistoryCollapsed = isDraftMode && !dialogHistoryExpanded;
-
-  useEffect(() => {
-    setDialogHistoryExpanded(false);
-  }, [activeTicket?.id]);
 
   // Потенциальные дубликаты — открытые тикеты пользователя с тем же
   // affected_item или (department + request_type). Считаем здесь, чтобы
@@ -371,14 +289,10 @@ export function ChatPage() {
         ? (AI_STAGE_LABELS[activeConversation.ai_stage] ?? "Обрабатываю запрос...")
         : "Обрабатываю запрос...")
     : "";
-  // Блокируем ввод только когда AI обрабатывает запрос, или тикет уже подтверждён и отправлен.
-  // Наличие непоедтверждённого черновика НЕ блокирует чат — пользователь может уточнять.
-  const composerDisabled =
-    activeConversation?.status === "escalated" ||
-    (activeTicket?.confirmed_by_user === true) ||
-    shouldPollMessages;
-  const missingFields = activeConversation?.intake_state?.missing_fields ?? [];
-
+  // Блокируем ввод только пока AI обрабатывает текущий ответ. Даже после
+  // отправки запроса чат остаётся живым: пользователь может вернуться позже
+  // и продолжить решать проблему или добавить контекст.
+  const composerDisabled = shouldPollMessages;
   useEffect(() => {
     if (!activeConversationId && sortedConversations.length) {
       setActiveConversationId(sortedConversations[0].id);
@@ -393,6 +307,15 @@ export function ChatPage() {
       ) ?? [];
     return escalationMessages[escalationMessages.length - 1]?.id;
   }, [messages.data]);
+  const hasPendingEscalationPrompt = Boolean(
+    latestEscalationMessageId && activeConversation && !activeTicket,
+  );
+  const isRequestPanelMode = isDraftMode || hasPendingEscalationPrompt;
+  const dialogHistoryCollapsed = isRequestPanelMode && !dialogHistoryExpanded;
+
+  useEffect(() => {
+    setDialogHistoryExpanded(false);
+  }, [activeTicket?.id, hasPendingEscalationPrompt]);
 
   useEffect(() => {
     if (!isAwaitingAiResponse) {
@@ -464,6 +387,42 @@ export function ChatPage() {
     } catch {
       // Ошибка уже хранится в mutation state и показывается в Alert.
     }
+  }
+
+  async function handleStartTicketWizard() {
+    try {
+      const conversationId = activeTicket
+        ? (await createConversation.mutateAsync()).id
+        : await ensureConversation();
+      setActiveConversationId(conversationId);
+      setWizardActiveFor((prev) => {
+        const next = new Set(prev);
+        next.add(conversationId);
+        return next;
+      });
+    } catch {
+      // Ошибка уже хранится в mutation state и показывается в Alert.
+    }
+  }
+
+  function handleWizardCancel(conversationId: number) {
+    setWizardActiveFor((prev) => {
+      const next = new Set(prev);
+      next.delete(conversationId);
+      return next;
+    });
+  }
+
+  function handleWizardTicketCreated(conversationId: number, ticket: Ticket) {
+    setDraftTickets((prev) => ({ ...prev, [conversationId]: ticket }));
+    setActiveConversationId(conversationId);
+    setAwaitingAiConversationId(undefined);
+    setSendingConvId(undefined);
+    setWizardActiveFor((prev) => {
+      const next = new Set(prev);
+      next.delete(conversationId);
+      return next;
+    });
   }
 
   async function handleEscalate(conversationId: number, context: EscalationContext) {
@@ -568,6 +527,10 @@ export function ChatPage() {
   const requestContext = me.data?.request_context ?? null;
   const showAiConfidence =
     me.data?.role === "agent" || me.data?.role === "admin";
+  const wizardActive =
+    activeConversation != null &&
+    !activeTicket &&
+    wizardActiveFor.has(activeConversation.id);
   const pageGridStyle = {
     "--chat-side-width": `${sidePanelWidth}px`,
   } as CSSProperties;
@@ -575,7 +538,7 @@ export function ChatPage() {
   return (
     <div
       ref={pageGridRef}
-      className={`page-grid${isDraftMode ? " draft-mode" : ""}`}
+      className={`page-grid${isRequestPanelMode ? " draft-mode" : ""}`}
       style={pageGridStyle}
     >
       <Paper className="chat-panel" withBorder>
@@ -588,14 +551,25 @@ export function ChatPage() {
                 : "Новый диалог"}
             </Text>
           </div>
-          <Button
-            variant="light"
-            leftSection={<IconPlus size={16} />}
-            loading={createConversation.isPending}
-            onClick={handleNewConversation}
-          >
-            Новый
-          </Button>
+          <Group gap="xs">
+            <Button
+              variant="subtle"
+              leftSection={<IconClipboardList size={16} />}
+              loading={createConversation.isPending}
+              disabled={Boolean(activeTicket?.confirmed_by_user)}
+              onClick={handleStartTicketWizard}
+            >
+              Оформить запрос
+            </Button>
+            <Button
+              variant="light"
+              leftSection={<IconPlus size={16} />}
+              loading={createConversation.isPending}
+              onClick={handleNewConversation}
+            >
+              Новый
+            </Button>
+          </Group>
         </Group>
 
         {error && (
@@ -605,78 +579,75 @@ export function ChatPage() {
         )}
 
         <div className="chat-surface">
-          <LoadingOverlay visible={messages.isFetching && !messages.data} />
-          <ScrollArea className="messages-scroll" type="auto">
-            <Stack gap="sm" p="md">
-              {!messages.data?.length && (
-                <div className="empty-state">
-                  <IconMessageCircle size={34} />
-                  <Text fw={600}>Нет сообщений</Text>
-                </div>
+          {wizardActive && activeConversation ? (
+            <div className="wizard-host">
+              <TicketWizard
+                conversation={activeConversation}
+                isAiProcessing={shouldPollMessages}
+                me={me.data}
+                onCancel={() => handleWizardCancel(activeConversation.id)}
+                onTicketCreated={(ticket) =>
+                  handleWizardTicketCreated(activeConversation.id, ticket)
+                }
+              />
+            </div>
+          ) : (
+            <>
+              <LoadingOverlay visible={messages.isFetching && !messages.data} />
+              <ScrollArea className="messages-scroll" type="auto">
+                <Stack gap="sm" p="md">
+                  {!messages.data?.length && (
+                    <div className="empty-state">
+                      <IconMessageCircle size={34} />
+                      <Text fw={600}>Нет сообщений</Text>
+                    </div>
+                  )}
+                  {messages.data?.map((message) => (
+                    <MessageBubble
+                      key={message.id}
+                      message={message}
+                      showAiConfidence={showAiConfidence}
+                    />
+                  ))}
+                  {shouldPollMessages && (
+                    <div className="message-row ai">
+                      <Paper className="message-bubble ai thinking-bubble" withBorder>
+                        <Group gap="xs" mb={4} align="center">
+                          <Text size="xs" fw={600} c="dimmed">
+                            AI
+                          </Text>
+                        </Group>
+                        <Group gap={8} align="center">
+                          <span className="thinking-dots" aria-hidden>
+                            <span /> <span /> <span />
+                          </span>
+                          <Text size="sm" c="dimmed">
+                            {aiStageLabel}
+                          </Text>
+                        </Group>
+                      </Paper>
+                    </div>
+                  )}
+                  <div ref={bottomRef} />
+                </Stack>
+              </ScrollArea>
+              {activeConversation?.intake_state?.last_question && !shouldPollMessages && (
+                <Alert color="blue" variant="light" p="xs" mx="md" mb="xs">
+                  <Text size="sm">{activeConversation.intake_state.last_question}</Text>
+                </Alert>
               )}
-              {messages.data?.map((message) => (
-                <MessageBubble
-                  key={message.id}
-                  message={message}
-                  escalationDisabled={composerDisabled}
-                  escalationLoading={escalate.isPending}
-                  contextDefaults={requestContext}
-                  intakeState={activeConversation?.intake_state}
-                  showAiConfidence={showAiConfidence}
-                  showEscalationCard={
-                    message.id === latestEscalationMessageId && !activeTicket
-                  }
-                  onEscalate={handleEscalate}
-                />
-              ))}
-              {shouldPollMessages && (
-                <div className="message-row ai">
-                  <Paper className="message-bubble ai thinking-bubble" withBorder>
-                    <Group gap="xs" mb={4} align="center">
-                      <Text size="xs" fw={600} c="dimmed">
-                        AI
-                      </Text>
-                    </Group>
-                    <Group gap={8} align="center">
-                      <span className="thinking-dots" aria-hidden>
-                        <span /> <span /> <span />
-                      </span>
-                      <Text size="sm" c="dimmed">
-                        {aiStageLabel}
-                      </Text>
-                    </Group>
-                  </Paper>
-                </div>
-              )}
-              <div ref={bottomRef} />
-            </Stack>
-          </ScrollArea>
-          {/* Последний вопрос AI — подсказка прямо над полем ввода */}
-          {activeConversation?.intake_state?.last_question && !shouldPollMessages && (
-            <Alert color="blue" variant="light" p="xs" mx="md" mb="xs">
-              <Text size="sm">{activeConversation.intake_state.last_question}</Text>
-            </Alert>
+              <Composer
+                loading={
+                  (sendMessage.isPending && sendingConvId === activeConversationId) ||
+                  createConversation.isPending
+                }
+                disabled={composerDisabled}
+                value={composerText}
+                onChange={setComposerText}
+                onSend={handleSend}
+              />
+            </>
           )}
-          {/* Inline-инпуты для незаполненных полей — пишешь значение и сразу send,
-              не нужно переключаться в composer и руками вводить "Email: ...". */}
-          {missingFields.length > 0 && !composerDisabled && (
-            <MissingFieldsInputs
-              fields={missingFields}
-              labels={INTAKE_FIELD_LABELS}
-              disabled={sendMessage.isPending}
-              onSend={handleSend}
-            />
-          )}
-          <Composer
-            loading={
-              (sendMessage.isPending && sendingConvId === activeConversationId) ||
-              createConversation.isPending
-            }
-            disabled={composerDisabled}
-            value={composerText}
-            onChange={setComposerText}
-            onSend={handleSend}
-          />
         </div>
       </Paper>
 
@@ -702,7 +673,7 @@ export function ChatPage() {
             <Title order={4}>Диалоги</Title>
             <Group gap="xs">
               <Badge variant="light">{conversations.data?.length ?? 0}</Badge>
-              {isDraftMode && (
+              {isRequestPanelMode && (
                 <Button
                   size="xs"
                   variant="subtle"
@@ -769,15 +740,11 @@ export function ChatPage() {
           )}
         </Paper>
 
-        {/* IntakeStatePanel показываем только пока нет черновика — после эскалации
-            те же данные уже видны в PrefilledTicketPanel и дублировать смысла нет. */}
-        {activeConversation?.intake_state?.mode && !activeTicket && (
-          <IntakeStatePanel state={activeConversation.intake_state} />
-        )}
         {activeTicket ? (
           <PrefilledTicketPanel
             ticket={activeTicket}
             intakeState={activeConversation?.intake_state}
+            me={me.data}
             potentialDuplicates={potentialDuplicates}
             confirmLoading={confirmTicket.isPending}
             declineLoading={declineTicket.isPending}
@@ -786,14 +753,34 @@ export function ChatPage() {
             onDecline={handleDecline}
             onSave={handleSaveDraft}
           />
-        ) : !activeConversation?.intake_state?.mode ? (
+        ) : hasPendingEscalationPrompt && activeConversation ? (
+          <Paper withBorder p="md" className="quiet-panel draft-escalation-panel">
+            <Stack gap="sm">
+              <div>
+                <Title order={4}>Черновик запроса</Title>
+                <Text size="sm" c="dimmed">
+                  Заполните данные здесь. Описание из чата попадёт в черновик.
+                </Text>
+              </div>
+              <EscalationCard
+                contextDefaults={requestContext}
+                intakeState={activeConversation.intake_state}
+                disabled={composerDisabled}
+                loading={escalate.isPending}
+                onEscalate={(context) =>
+                  handleEscalate(activeConversation.id, context)
+                }
+              />
+            </Stack>
+          </Paper>
+        ) : (
           <Paper withBorder p="md" className="quiet-panel">
             <Title order={4}>Черновик запроса</Title>
             <Text size="sm" c="dimmed">
               Появится после эскалации диалога.
             </Text>
           </Paper>
-        ) : null}
+        )}
       </div>
     </div>
   );

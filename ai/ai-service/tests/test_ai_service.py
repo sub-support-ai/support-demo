@@ -192,6 +192,37 @@ def test_answerer_low_confidence_forces_escalate(monkeypatch):
     assert result["escalate"] is True
 
 
+def test_answerer_uses_deterministic_security_response(monkeypatch):
+    """Security-сценарии не отдаём на свободную генерацию модели.
+
+    Модель может выдумать неизвестный термин. Для подозрительных писем,
+    ссылок и компрометации учётной записи нужен стандартный безопасный текст.
+    """
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("Security answer must not call Ollama")
+
+    monkeypatch.setattr(answerer.requests, "post", fail_if_called)
+
+    result = answerer.generate_answer(
+        conversation_id=1,
+        messages=[
+            SimpleNamespace(
+                role="user",
+                content="Мне пришло подозрительное письмо со ссылкой, просят пароль",
+            )
+        ],
+    )
+
+    assert result["escalate"] is True
+    assert result["confidence"] == 0.95
+    assert "фишинг" in result["answer"]
+    assert "подозрительное письмо" in result["answer"]
+    assert "вредоносной ссылке" in result["answer"]
+    assert "компрометация учётной записи" in result["answer"]
+    assert "шкерб" not in result["answer"].lower()
+
+
 def test_answerer_strips_markdown_code_fence(monkeypatch):
     """Mistral любит обернуть JSON в ```json ... ``` — answerer должен это снять.
 

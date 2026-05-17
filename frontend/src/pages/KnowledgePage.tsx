@@ -1,4 +1,4 @@
-import {
+﻿import {
   Alert,
   Badge,
   Button,
@@ -47,7 +47,7 @@ const departmentOptions = [
   { value: "finance", label: "Финансы" },
   { value: "procurement", label: "Закупки" },
   { value: "security", label: "Безопасность" },
-  { value: "facilities", label: "АХО" },
+  { value: "facilities", label: "Офис и помещения" },
   { value: "documents", label: "Документооборот" },
 ];
 

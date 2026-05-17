@@ -7,7 +7,10 @@ import {
   Text,
   TextInput,
 } from "@mantine/core";
-import { IconAlertTriangle, IconArrowRight } from "@tabler/icons-react";
+import {
+  IconAlertTriangle,
+  IconArrowRight,
+} from "@tabler/icons-react";
 import { useEffect, useMemo, useState } from "react";
 
 import type {
@@ -215,6 +218,8 @@ export function EscalationCard({
   ]);
 
   const requesterEmailValue = context.requester_email ?? "";
+  const hasPrefilledName = Boolean(contextDefaults?.requester_name);
+  const hasPrefilledEmail = Boolean(contextDefaults?.requester_email);
   const canSubmit = Boolean(
     context.requester_name &&
       requesterEmailValue &&
@@ -230,10 +235,9 @@ export function EscalationCard({
     >
       <Stack gap="sm">
         <div>
-          <Text fw={600}>Уточните данные для черновика</Text>
+          <Text fw={600}>Заполните карточку черновика</Text>
           <Text size="sm" c="dimmed">
-            Проблема и уже описанные действия попадут в черновик запроса из истории диалога.
-            Укажите, от кого запрос, где он возник и что именно затронуто.
+            Уточните недостающие данные. Описание возьмём из диалога.
           </Text>
         </div>
 
@@ -258,27 +262,33 @@ export function EscalationCard({
           />
         </Group>
 
-        <Group grow align="start">
-          <TextInput
-            label="Заявитель"
-            value={requesterName}
-            maxLength={100}
-            required
-            onChange={(event) => setRequesterName(event.currentTarget.value)}
-          />
-          <TextInput
-            label="Email заявителя"
-            value={requesterEmail}
-            maxLength={255}
-            required
-            error={
-              requesterEmail && !EMAIL_RE.test(requesterEmail)
-                ? "Проверьте email"
-                : undefined
-            }
-            onChange={(event) => setRequesterEmail(event.currentTarget.value)}
-          />
-        </Group>
+        {(!hasPrefilledName || !hasPrefilledEmail) && (
+          <Group grow align="start">
+            {!hasPrefilledName && (
+              <TextInput
+                label="Заявитель"
+                value={requesterName}
+                maxLength={100}
+                required
+                onChange={(event) => setRequesterName(event.currentTarget.value)}
+              />
+            )}
+            {!hasPrefilledEmail && (
+              <TextInput
+                label="Email заявителя"
+                value={requesterEmail}
+                maxLength={255}
+                required
+                error={
+                  requesterEmail && !EMAIL_RE.test(requesterEmail)
+                    ? "Проверьте email"
+                    : undefined
+                }
+                onChange={(event) => setRequesterEmail(event.currentTarget.value)}
+              />
+            )}
+          </Group>
+        )}
 
         <Group grow align="start">
           <Select

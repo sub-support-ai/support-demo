@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Тесты утилит getDepartmentLabel — регрессия на все 7 отделов.
  *
  * Эти тесты важны потому что getDepartmentLabel используется в TicketCard,
@@ -16,7 +16,7 @@ describe("getDepartmentLabel", () => {
     ["finance", "Финансы"],
     ["procurement", "Закупки"],
     ["security", "Безопасность"],
-    ["facilities", "АХО"],
+    ["facilities", "Офис и помещения"],
     ["documents", "Документооборот"],
   ] as const)("department='%s' → '%s'", (input, expected) => {
     expect(getDepartmentLabel(input)).toBe(expected);
