@@ -23,6 +23,7 @@
         в status="escalated". Пользователю остаётся один клик "Отправить".
 """
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 
@@ -42,10 +43,11 @@ from app.models.message import Message
 from app.models.ticket import Ticket
 from app.models.user import User
 from app.schemas.ticket import TicketRead
-from app.services.ai_classifier import classify_ticket
-from app.services.ai_extract import extract_steps_tried
+from app.services.ai_classifier import classify_ticket, classify_ticket_heuristic
+from app.services.ai_extract import extract_steps_tried_heuristic
 from app.services.ai_jobs import enqueue_ai_response_job, notify_ai_jobs_channel
 from app.services.audit import log_event
+from app.services.request_context import build_request_context
 from app.services.routing import assign_agent
 from app.services.ticket_body import (
     build_context_block,
@@ -56,6 +58,7 @@ from app.services.ticket_body import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
+DRAFT_AI_TIMEOUT_SECONDS = 2.0
 
 # ── Схемы запросов/ответов (определены здесь чтобы не плодить файлы) ──────────
 
@@ -155,20 +158,21 @@ class AddMessageResponse(BaseModel):
 
 
 class EscalationContext(BaseModel):
-    requester_name: str = Field(min_length=1, max_length=100)
-    requester_email: EmailStr
-    office: str = Field(min_length=1, max_length=100)
-    affected_item: str = Field(min_length=1, max_length=150)
+    requester_name: str | None = Field(default=None, max_length=100)
+    requester_email: EmailStr | None = None
+    office: str | None = Field(default=None, max_length=100)
+    affected_item: str | None = Field(default=None, max_length=150)
+    asset_id: int | None = Field(default=None, gt=0)
     request_type: str | None = Field(default=None, max_length=60)
     request_details: str | None = Field(default=None, max_length=2000)
 
     @field_validator("requester_name", "office", "affected_item")
     @classmethod
-    def strip_required_text(cls, value: str) -> str:
+    def strip_nullable_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         value = value.strip()
-        if not value:
-            raise ValueError("Field must not be empty")
-        return value
+        return value or None
 
     @field_validator("requester_email", mode="before")
     @classmethod
@@ -187,7 +191,7 @@ class EscalationContext(BaseModel):
 
 
 class EscalatePayload(BaseModel):
-    context: EscalationContext
+    context: EscalationContext = Field(default_factory=EscalationContext)
 
 
 # ── POST /conversations/ — создать диалог ─────────────────────────────────────
@@ -373,6 +377,74 @@ class EscalateResponse(BaseModel):
     conversation_id: int
 
 
+def _intake_fields(conversation: Conversation) -> dict[str, object]:
+    if not isinstance(conversation.intake_state, dict):
+        return {}
+    fields = conversation.intake_state.get("fields")
+    return fields if isinstance(fields, dict) else {}
+
+
+def _context_value(*values: object) -> str | None:
+    for value in values:
+        cleaned = clean_optional_text(value)
+        if cleaned:
+            return cleaned
+    return None
+
+
+def _asset_display_name(asset: object) -> str:
+    name = clean_optional_text(getattr(asset, "name", None))
+    serial_number = clean_optional_text(getattr(asset, "serial_number", None))
+    if name and serial_number:
+        return f"{name} ({serial_number})"
+    return name or ""
+
+
+def _context_assets(context_defaults: dict[str, object]) -> list[object]:
+    assets = context_defaults.get("assets")
+    return assets if isinstance(assets, list) else []
+
+
+def _find_context_asset(
+    context: EscalationContext,
+    context_defaults: dict[str, object],
+    intake_fields: dict[str, object],
+) -> object | None:
+    assets = _context_assets(context_defaults)
+    if not assets:
+        return None
+
+    if context.asset_id is not None:
+        for asset in assets:
+            if getattr(asset, "id", None) == context.asset_id:
+                return asset
+
+    affected_item = _context_value(context.affected_item, intake_fields.get("affected_item"))
+    if affected_item:
+        normalized = affected_item.casefold()
+        for asset in assets:
+            if normalized in {
+                _asset_display_name(asset).casefold(),
+                str(getattr(asset, "name", "")).casefold(),
+                str(getattr(asset, "serial_number", "")).casefold(),
+            }:
+                return asset
+        return None
+
+    primary_asset = context_defaults.get("primary_asset")
+    return primary_asset if primary_asset in assets else None
+
+
+def _intake_request_details(intake_fields: dict[str, object]) -> str | None:
+    details = [
+        _context_value(intake_fields.get("problem")),
+        _context_value(intake_fields.get("symptoms")),
+        _context_value(intake_fields.get("what_tried")),
+        _context_value(intake_fields.get("business_impact")),
+    ]
+    return "\n".join(detail for detail in details if detail) or None
+
+
 @router.post(
     "/{conversation_id}/escalate",
     response_model=EscalateResponse,
@@ -435,12 +507,23 @@ async def escalate_conversation(
         prefix = "Пользователь" if m.role == "user" else "AI"
         body_parts.append(f"{prefix}: {m.content}")
 
-    # Классифицируем
-    ai_result = await classify_ticket(
-        ticket_id=None,
-        title=title,
-        body=classify_body,
-    )
+    # Черновик должен появляться быстро. Если внешний сервис отвечает долго,
+    # используем локальную эвристику и не заставляем пользователя ждать модель.
+    try:
+        ai_result = await asyncio.wait_for(
+            classify_ticket(
+                ticket_id=None,
+                title=title,
+                body=classify_body,
+            ),
+            timeout=DRAFT_AI_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        logger.warning(
+            "Draft classification timed out, using local fallback",
+            extra={"conversation_id": conversation_id},
+        )
+        ai_result = classify_ticket_heuristic(title, classify_body)
 
     department = ai_result.get("department") or "IT"
     # AI-классификатор обучен на 7-отдельной таксономии (см.
@@ -450,23 +533,52 @@ async def escalate_conversation(
     if department not in DEPARTMENTS_SET:
         department = "IT"
 
-    # Извлекаем steps_tried из истории через LLM — `services/ai_extract.py`.
-    # При недоступности AI-сервиса автоматически fallback'нется на
-    # keyword-эвристику (то же поведение, что было раньше, но как
-    # последний рубеж — а не основной способ).
-    steps_tried = await extract_steps_tried(messages)
+    context_defaults = await build_request_context(db, current_user)
+    intake_fields = _intake_fields(conversation)
+    steps_tried = _context_value(
+        intake_fields.get("what_tried"),
+        extract_steps_tried_heuristic(messages),
+    )
+    selected_asset = _find_context_asset(payload.context, context_defaults, intake_fields)
+    selected_asset_name = _asset_display_name(selected_asset) if selected_asset else None
+
     requester_name = clean_text_with_fallback(
-        payload.context.requester_name,
+        _context_value(
+            payload.context.requester_name,
+            intake_fields.get("requester_name"),
+            context_defaults.get("requester_name"),
+        ),
         current_user.username,
     )
     requester_email = clean_text_with_fallback(
-        payload.context.requester_email,
+        _context_value(
+            payload.context.requester_email,
+            intake_fields.get("requester_email"),
+            context_defaults.get("requester_email"),
+        ),
         current_user.email,
     )
-    office = clean_optional_text(payload.context.office)
-    affected_item = clean_optional_text(payload.context.affected_item)
-    request_type = clean_optional_text(payload.context.request_type)
-    request_details = clean_optional_text(payload.context.request_details)
+    office = _context_value(
+        payload.context.office,
+        intake_fields.get("office"),
+        getattr(selected_asset, "office", None) if selected_asset else None,
+        context_defaults.get("office"),
+    )
+    affected_item = _context_value(
+        payload.context.affected_item,
+        intake_fields.get("affected_item"),
+        selected_asset_name,
+    )
+    request_type = _context_value(
+        payload.context.request_type,
+        conversation.intake_state.get("request_type")
+        if isinstance(conversation.intake_state, dict)
+        else None,
+    )
+    request_details = _context_value(
+        payload.context.request_details,
+        _intake_request_details(intake_fields),
+    )
 
     form_lines: list[str] = []
     if request_type:
@@ -496,6 +608,7 @@ async def escalate_conversation(
         requester_email=requester_email,
         office=office,
         affected_item=affected_item,
+        asset_id=getattr(selected_asset, "id", None) if selected_asset else None,
         request_type=request_type,
         request_details=request_details,
         steps_tried=steps_tried,

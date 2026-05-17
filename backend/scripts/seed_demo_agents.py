@@ -5,6 +5,7 @@ from sqlalchemy import select
 
 from app.database import AsyncSessionLocal
 from app.models.agent import Agent
+from app.models.asset import Asset
 from app.models.user import User
 from app.security import hash_password
 
@@ -68,6 +69,27 @@ DEMO_AGENTS = [
 
 DEFAULT_DEMO_PASSWORD = "DemoPass123!"
 
+DEMO_ASSETS = [
+    {
+        "owner_username": "demo_user",
+        "asset_type": "laptop",
+        "name": "ThinkPad T14 demo_user",
+        "serial_number": "DEMO-NB-4431",
+        "office": "Главный офис",
+        "status": "active",
+        "notes": "Primary demo workplace device.",
+    },
+    {
+        "owner_username": "demo_user",
+        "asset_type": "monitor",
+        "name": "Dell P2422H demo_user",
+        "serial_number": "DEMO-MON-2107",
+        "office": "Главный офис",
+        "status": "active",
+        "notes": "Demo external monitor.",
+    },
+]
+
 
 async def seed_demo_agents() -> None:
     demo_password = (
@@ -77,6 +99,8 @@ async def seed_demo_agents() -> None:
     async with AsyncSessionLocal() as db:
         agents_created = 0
         agents_updated = 0
+        assets_created = 0
+        assets_updated = 0
         users_created = 0
         users_updated = 0
         password_hash = hash_password(demo_password)
@@ -158,12 +182,42 @@ async def seed_demo_agents() -> None:
                 agent.is_active = True
                 agents_updated += 1
 
+        for item in DEMO_ASSETS:
+            owner_result = await db.execute(
+                select(User).where(User.username == item["owner_username"])
+            )
+            owner = owner_result.scalar_one_or_none()
+            if owner is None:
+                continue
+
+            asset_result = await db.execute(
+                select(Asset).where(Asset.serial_number == item["serial_number"])
+            )
+            asset = asset_result.scalar_one_or_none()
+            payload = {
+                "owner_user_id": owner.id,
+                "asset_type": item["asset_type"],
+                "name": item["name"],
+                "serial_number": item["serial_number"],
+                "office": item["office"],
+                "status": item["status"],
+                "notes": item["notes"],
+            }
+            if asset is None:
+                db.add(Asset(**payload))
+                assets_created += 1
+            else:
+                for key, value in payload.items():
+                    setattr(asset, key, value)
+                assets_updated += 1
+
         await db.commit()
 
     print(
         "Demo agents ready: "
         f"agents_created={agents_created}, agents_updated={agents_updated}, "
-        f"users_created={users_created}, users_updated={users_updated}. "
+        f"users_created={users_created}, users_updated={users_updated}, "
+        f"assets_created={assets_created}, assets_updated={assets_updated}. "
         "Password source: DEMO_PASSWORD, DEMO_AGENT_PASSWORD, or documented demo default."
     )
 

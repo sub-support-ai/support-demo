@@ -7,6 +7,7 @@ import type {
   EscalateResponse,
   EscalationContext,
   Message,
+  Ticket,
 } from "./types";
 
 export function useConversations() {
@@ -98,6 +99,21 @@ export function useEscalateConversation() {
       return data;
     },
     onSuccess: (data) => {
+      queryClient.setQueriesData<Ticket[]>(
+        { queryKey: ["tickets"] },
+        (current) => {
+          if (!current) {
+            return current;
+          }
+          const exists = current.some((ticket) => ticket.id === data.ticket.id);
+          return exists
+            ? current.map((ticket) =>
+                ticket.id === data.ticket.id ? data.ticket : ticket,
+              )
+            : [data.ticket, ...current];
+        },
+      );
+      queryClient.setQueryData(["tickets", data.ticket.id], data.ticket);
       queryClient.invalidateQueries({
         queryKey: ["conversations", data.conversation_id, "messages"],
       });

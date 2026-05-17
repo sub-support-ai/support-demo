@@ -1,4 +1,6 @@
-from pydantic import BaseModel, ConfigDict, EmailStr
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
+
+from app.schemas.asset import AssetSummary
 
 
 class TokenResponse(BaseModel):
@@ -13,6 +15,8 @@ class RequestContextDefaults(BaseModel):
     office_source: str | None = None
     office_options: list[str]
     affected_item_options: list[str]
+    primary_asset: AssetSummary | None = None
+    assets: list[AssetSummary] = Field(default_factory=list)
 
 
 class UserMe(BaseModel):

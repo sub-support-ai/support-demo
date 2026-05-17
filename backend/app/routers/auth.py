@@ -171,5 +171,5 @@ async def get_me(
         is_active=current_user.is_active,
         agent_id=agent.id if agent else None,
         agent_department=agent.department if agent else None,
-        request_context=build_request_context(current_user),
+        request_context=await build_request_context(db, current_user),
     )

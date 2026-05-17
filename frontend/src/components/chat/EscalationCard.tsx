@@ -82,6 +82,10 @@ function toSelectOptions(values: string[], otherLabel: string) {
   ];
 }
 
+function displayAsset(asset: RequestContextDefaults["assets"][number]) {
+  return asset.serial_number ? `${asset.name} (${asset.serial_number})` : asset.name;
+}
+
 export function EscalationCard({
   contextDefaults,
   intakeState,
@@ -116,6 +120,13 @@ export function EscalationCard({
     setRequesterName((current) => current || contextDefaults.requester_name);
     setRequesterEmail((current) => current || contextDefaults.requester_email);
     setOffice((current) => current || contextDefaults.office || null);
+    setAffectedItem(
+      (current) =>
+        current ||
+        (contextDefaults.primary_asset
+          ? displayAsset(contextDefaults.primary_asset)
+          : null),
+    );
   }, [contextDefaults]);
 
   useEffect(() => {
@@ -175,16 +186,25 @@ export function EscalationCard({
       affectedItem === OTHER_VALUE
         ? customAffectedItem.trim()
         : affectedItem?.trim();
+    const selectedAsset = contextDefaults?.assets?.find((asset) => {
+      return (
+        displayAsset(asset) === resolvedAffectedItem ||
+        asset.name === resolvedAffectedItem ||
+        asset.serial_number === resolvedAffectedItem
+      );
+    });
     return {
       requester_name: requesterName.trim(),
       requester_email: requesterEmail.trim(),
       office: resolvedOffice || "",
       affected_item: resolvedAffectedItem || "",
+      asset_id: selectedAsset?.id ?? null,
       request_type: selectedRequestType?.label ?? null,
       request_details: requestDetails.trim() || null,
     };
   }, [
     affectedItem,
+    contextDefaults?.assets,
     customAffectedItem,
     customOffice,
     office,
@@ -194,14 +214,11 @@ export function EscalationCard({
     selectedRequestType,
   ]);
 
+  const requesterEmailValue = context.requester_email ?? "";
   const canSubmit = Boolean(
     context.requester_name &&
-      context.requester_email &&
-      EMAIL_RE.test(context.requester_email) &&
-      context.office &&
-      context.affected_item &&
-      context.request_type &&
-      context.request_details,
+      requesterEmailValue &&
+      EMAIL_RE.test(requesterEmailValue),
   );
 
   return (
@@ -230,14 +247,12 @@ export function EscalationCard({
             value={requestType}
             placeholder="Выберите сценарий"
             allowDeselect={false}
-            required
             onChange={setRequestType}
           />
           <TextInput
             label={selectedRequestType?.detailsLabel ?? "Уточнение"}
             value={requestDetails}
             maxLength={2000}
-            required
             placeholder={selectedRequestType?.detailsPlaceholder}
             onChange={(event) => setRequestDetails(event.currentTarget.value)}
           />
@@ -272,7 +287,6 @@ export function EscalationCard({
             value={office}
             placeholder="Выберите офис"
             allowDeselect={false}
-            required
             onChange={(value) => setOffice(value)}
           />
           <Select
@@ -281,7 +295,6 @@ export function EscalationCard({
             value={affectedItem}
             placeholder="Выберите объект"
             allowDeselect={false}
-            required
             onChange={(value) => setAffectedItem(value)}
           />
         </Group>
@@ -293,7 +306,6 @@ export function EscalationCard({
                 label="Офис"
                 value={customOffice}
                 maxLength={100}
-                required
                 onChange={(event) => setCustomOffice(event.currentTarget.value)}
               />
             )}
@@ -302,7 +314,6 @@ export function EscalationCard({
                 label="Что затронуто"
                 value={customAffectedItem}
                 maxLength={150}
-                required
                 onChange={(event) =>
                   setCustomAffectedItem(event.currentTarget.value)
                 }
@@ -319,7 +330,7 @@ export function EscalationCard({
             disabled={disabled || !canSubmit}
             onClick={() => onEscalate(context)}
           >
-            Создать запрос
+            Создать черновик
           </Button>
         </Group>
       </Stack>

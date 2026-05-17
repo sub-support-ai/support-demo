@@ -1,6 +1,8 @@
 import pytest
 from httpx import AsyncClient
 
+from app.models.asset import Asset
+
 
 @pytest.mark.asyncio
 async def test_healthcheck(client: AsyncClient):
@@ -215,7 +217,7 @@ async def test_register_duplicate_username_after_trim(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_get_self(client: AsyncClient):
+async def test_get_self(client: AsyncClient, db_session):
     """GET /users/{id} доступен владельцу — /users/<свой_id> возвращает 200."""
     reg = await client.post(
         "/api/v1/auth/register",
@@ -228,11 +230,28 @@ async def test_get_self(client: AsyncClient):
     token = reg.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
+    first_me = await client.get("/api/v1/auth/me", headers=headers)
+    user_id = first_me.json()["id"]
+    db_session.add(
+        Asset(
+            asset_type="laptop",
+            name="ThinkPad T14",
+            serial_number="NB-1001",
+            owner_user_id=user_id,
+            office="Main office",
+            status="active",
+        )
+    )
+    await db_session.flush()
+
     me = await client.get("/api/v1/auth/me", headers=headers)
-    user_id = me.json()["id"]
     request_context = me.json()["request_context"]
     assert request_context["requester_name"] == "getmeuser"
     assert request_context["requester_email"] == "getme@example.com"
+    assert request_context["office"] == "Main office"
+    assert request_context["office_source"] == "asset"
+    assert request_context["primary_asset"]["serial_number"] == "NB-1001"
+    assert "ThinkPad T14 (NB-1001)" in request_context["affected_item_options"]
     assert "Главный офис" in request_context["office_options"]
     assert "VPN" in request_context["affected_item_options"]
 
@@ -803,12 +822,20 @@ async def test_role_change_blocks_demoting_last_admin(client: AsyncClient, db_se
     (self-demotion, idempotent, audit, 403/404) тестируются обычным
     HTTP-флоу выше.
     """
+    from sqlalchemy import update
+
     from app.dependencies import get_current_user
     from app.main import app
     from app.models.user import User as UserModel
 
     target_id, _ = await _register_and_promote(client, db_session, "lastadmin-target")
     caller_id, _ = await _register_regular(client, "lastadmin-caller")
+    await db_session.execute(
+        update(UserModel)
+        .where(UserModel.id != target_id, UserModel.role == "admin")
+        .values(role="user")
+    )
+    await db_session.flush()
     caller_in_db = await db_session.get(UserModel, caller_id)
     assert caller_in_db is not None
 
@@ -1032,11 +1059,19 @@ async def test_cannot_deactivate_last_active_admin(client: AsyncClient, db_sessi
 
     # Phantom admin (не числится в БД как admin) — тот же трюк что в тесте
     # на последнего admin'а в role_change.
+    from sqlalchemy import update
+
     from app.dependencies import get_current_user
     from app.main import app
     from app.models.user import User as UserModel
 
     caller_in_db = await db_session.get(UserModel, caller_id)
+    await db_session.execute(
+        update(UserModel)
+        .where(UserModel.id != target_id, UserModel.role == "admin")
+        .values(is_active=False)
+    )
+    await db_session.flush()
 
     async def fake_admin() -> UserModel:
         return UserModel(

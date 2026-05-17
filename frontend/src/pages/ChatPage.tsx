@@ -17,7 +17,15 @@ import {
   IconPlus,
   IconSend,
 } from "@tabler/icons-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import {
   useConversations,
@@ -109,6 +117,14 @@ const INTAKE_FIELD_LABELS: Record<string, string> = {
   what_user_did: "Что уже сделали",
   time_detected: "Когда обнаружили",
 };
+
+const DEFAULT_SIDE_PANEL_WIDTH = 340;
+const MIN_SIDE_PANEL_WIDTH = 280;
+const MAX_SIDE_PANEL_WIDTH = 760;
+
+function clampSidePanelWidth(width: number) {
+  return Math.min(MAX_SIDE_PANEL_WIDTH, Math.max(MIN_SIDE_PANEL_WIDTH, width));
+}
 
 /** Предупреждение для поля intake — только для заполненных значений. */
 function getFieldWarning(field: string, value: string): string | null {
@@ -280,7 +296,10 @@ export function ChatPage() {
   // Отслеживаем, для какого диалога идёт отправка — чтобы loading не «протекал» в другие чаты
   const [sendingConvId, setSendingConvId] = useState<number | undefined>();
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const pageGridRef = useRef<HTMLDivElement | null>(null);
   const [composerText, setComposerText] = useState("");
+  const [dialogHistoryExpanded, setDialogHistoryExpanded] = useState(false);
+  const [sidePanelWidth, setSidePanelWidth] = useState(DEFAULT_SIDE_PANEL_WIDTH);
 
   const activeConversation = useMemo(() => {
     return conversations.data?.find((item) => item.id === activeConversationId);
@@ -319,6 +338,12 @@ export function ChatPage() {
 
   // draftTickets[activeConversationId] всегда привязан к нужному диалогу
   const activeTicket = draftTicket ?? restoredTicket;
+  const isDraftMode = Boolean(activeTicket);
+  const dialogHistoryCollapsed = isDraftMode && !dialogHistoryExpanded;
+
+  useEffect(() => {
+    setDialogHistoryExpanded(false);
+  }, [activeTicket?.id]);
 
   // Потенциальные дубликаты — открытые тикеты пользователя с тем же
   // affected_item или (department + request_type). Считаем здесь, чтобы
@@ -391,6 +416,12 @@ export function ChatPage() {
   }, [isAwaitingAiResponse, messages.data]);
 
   useEffect(() => {
+    if (activeTicket && awaitingAiConversationId === activeConversationId) {
+      setAwaitingAiConversationId(undefined);
+    }
+  }, [activeConversationId, activeTicket, awaitingAiConversationId]);
+
+  useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.data?.length, shouldPollMessages]);
 
@@ -443,6 +474,8 @@ export function ChatPage() {
       });
       setDraftTickets((prev) => ({ ...prev, [conversationId]: response.ticket }));
       setActiveConversationId(conversationId);
+      setAwaitingAiConversationId(undefined);
+      setSendingConvId(undefined);
     } catch {
       // Ошибка уже хранится в mutation state и показывается в Alert.
     }
@@ -488,6 +521,39 @@ export function ChatPage() {
     }
   }
 
+  function handleSidePanelResizePointerDown(
+    event: ReactPointerEvent<HTMLDivElement>,
+  ) {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+
+    function handlePointerMove(moveEvent: PointerEvent) {
+      const gridRect = pageGridRef.current?.getBoundingClientRect();
+      const rightEdge = gridRect?.right ?? window.innerWidth;
+      setSidePanelWidth(clampSidePanelWidth(rightEdge - moveEvent.clientX));
+    }
+
+    function handlePointerUp() {
+      document.removeEventListener("pointermove", handlePointerMove);
+      document.removeEventListener("pointerup", handlePointerUp);
+    }
+
+    document.addEventListener("pointermove", handlePointerMove);
+    document.addEventListener("pointerup", handlePointerUp, { once: true });
+  }
+
+  function handleSidePanelResizeKeyDown(
+    event: ReactKeyboardEvent<HTMLDivElement>,
+  ) {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
+      return;
+    }
+    event.preventDefault();
+    setSidePanelWidth((width) =>
+      clampSidePanelWidth(width + (event.key === "ArrowLeft" ? 32 : -32)),
+    );
+  }
+
   const error =
     conversations.error ||
     messages.error ||
@@ -502,9 +568,16 @@ export function ChatPage() {
   const requestContext = me.data?.request_context ?? null;
   const showAiConfidence =
     me.data?.role === "agent" || me.data?.role === "admin";
+  const pageGridStyle = {
+    "--chat-side-width": `${sidePanelWidth}px`,
+  } as CSSProperties;
 
   return (
-    <div className="page-grid">
+    <div
+      ref={pageGridRef}
+      className={`page-grid${isDraftMode ? " draft-mode" : ""}`}
+      style={pageGridStyle}
+    >
       <Paper className="chat-panel" withBorder>
         <Group justify="space-between" mb="md">
           <div>
@@ -550,7 +623,9 @@ export function ChatPage() {
                   contextDefaults={requestContext}
                   intakeState={activeConversation?.intake_state}
                   showAiConfidence={showAiConfidence}
-                  showEscalationCard={message.id === latestEscalationMessageId}
+                  showEscalationCard={
+                    message.id === latestEscalationMessageId && !activeTicket
+                  }
                   onEscalate={handleEscalate}
                 />
               ))}
@@ -605,45 +680,93 @@ export function ChatPage() {
         </div>
       </Paper>
 
+      <div
+        className="chat-side-resizer"
+        role="separator"
+        aria-label="Изменить ширину черновика и диалогов"
+        aria-orientation="vertical"
+        tabIndex={0}
+        onPointerDown={handleSidePanelResizePointerDown}
+        onKeyDown={handleSidePanelResizeKeyDown}
+      />
+
       <div className="side-panel">
-        <Paper withBorder p="md" className="quiet-panel conversations-panel">
+        <Paper
+          withBorder
+          p="md"
+          className={`quiet-panel conversations-panel${
+            dialogHistoryCollapsed ? " collapsed" : ""
+          }`}
+        >
           <Group justify="space-between" mb="sm">
             <Title order={4}>Диалоги</Title>
-            <Badge variant="light">{conversations.data?.length ?? 0}</Badge>
-          </Group>
-          <Stack gap="xs" className="conversation-list">
-            {sortedConversations.length ? (
-              sortedConversations.map((conversation) => (
-                <button
-                  key={conversation.id}
-                  type="button"
-                  className={`conversation-item${
-                    conversation.id === activeConversationId ? " active" : ""
-                  }`}
-                  onClick={() => {
-                    setActiveConversationId(conversation.id);
-                  }}
+            <Group gap="xs">
+              <Badge variant="light">{conversations.data?.length ?? 0}</Badge>
+              {isDraftMode && (
+                <Button
+                  size="xs"
+                  variant="subtle"
+                  onClick={() => setDialogHistoryExpanded((value) => !value)}
                 >
-                  <Text className="conversation-item-title" lineClamp={2}>
-                    {getConversationTitle(conversation, tickets.data)}
-                  </Text>
-                  <Group justify="space-between" gap="xs" wrap="nowrap">
-                    <Badge size="sm" variant="light">
-                      {getStatusLabel(conversation.status)}
-                    </Badge>
-                    <Text size="xs" c="dimmed">
-                      {getConversationDate(conversation, tickets.data)}
-                    </Text>
-                  </Group>
-                </button>
-              ))
-            ) : (
-              <Text size="sm" c="dimmed">
-                Диалогов пока нет.
+                  {dialogHistoryCollapsed ? "Развернуть" : "Свернуть"}
+                </Button>
+              )}
+            </Group>
+          </Group>
+          {dialogHistoryCollapsed ? (
+            <div className="conversation-summary">
+              <Text size="sm" fw={600} lineClamp={1}>
+                {activeConversation
+                  ? getConversationTitle(activeConversation, tickets.data)
+                  : "Активный диалог"}
               </Text>
-            )}
-
-          </Stack>
+              <Group justify="space-between" gap="xs" wrap="nowrap">
+                <Badge size="sm" variant="light">
+                  {activeConversation
+                    ? getStatusLabel(activeConversation.status)
+                    : "Новый"}
+                </Badge>
+                {activeConversation && (
+                  <Text size="xs" c="dimmed">
+                    {getConversationDate(activeConversation, tickets.data)}
+                  </Text>
+                )}
+              </Group>
+            </div>
+          ) : (
+            <Stack gap="xs" className="conversation-list">
+              {sortedConversations.length ? (
+                sortedConversations.map((conversation) => (
+                  <button
+                    key={conversation.id}
+                    type="button"
+                    className={`conversation-item${
+                      conversation.id === activeConversationId ? " active" : ""
+                    }`}
+                    onClick={() => {
+                      setActiveConversationId(conversation.id);
+                    }}
+                  >
+                    <Text className="conversation-item-title" lineClamp={2}>
+                      {getConversationTitle(conversation, tickets.data)}
+                    </Text>
+                    <Group justify="space-between" gap="xs" wrap="nowrap">
+                      <Badge size="sm" variant="light">
+                        {getStatusLabel(conversation.status)}
+                      </Badge>
+                      <Text size="xs" c="dimmed">
+                        {getConversationDate(conversation, tickets.data)}
+                      </Text>
+                    </Group>
+                  </button>
+                ))
+              ) : (
+                <Text size="sm" c="dimmed">
+                  Диалогов пока нет.
+                </Text>
+              )}
+            </Stack>
+          )}
         </Paper>
 
         {/* IntakeStatePanel показываем только пока нет черновика — после эскалации

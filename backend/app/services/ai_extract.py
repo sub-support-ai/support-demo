@@ -70,6 +70,10 @@ def _extract_steps_tried_heuristic(messages: Iterable[Message]) -> str | None:
     return "\n".join(found)
 
 
+def extract_steps_tried_heuristic(messages: Iterable[Message]) -> str | None:
+    return _extract_steps_tried_heuristic(messages)
+
+
 def _build_extract_prompt(dialog_text: str) -> str:
     """Промпт для LLM. Просим именно список через `; `, чтобы парсить было проще."""
     return (

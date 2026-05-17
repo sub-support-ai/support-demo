@@ -105,6 +105,17 @@ def _choose_priority(current: object, inferred: str | None) -> str:
     )
 
 
+def classify_ticket_heuristic(title: str, body: str) -> dict:
+    data = dict(_CLASSIFICATION_FALLBACK)
+    data["priority"] = _choose_priority(
+        data.get("priority"),
+        _infer_priority_from_text(title, body),
+    )
+    data["response_time_ms"] = 0
+    data[FALLBACK_REASON_PAYLOAD_KEY] = "fast_local_fallback"
+    return data
+
+
 async def classify_ticket(ticket_id: int | None, title: str, body: str) -> dict:
     """
     Отправляет тикет в AI Service, получает классификацию от Mistral.
