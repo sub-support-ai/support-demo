@@ -2,22 +2,26 @@ import {
   Alert,
   Badge,
   Button,
+  Collapse,
   Group,
+  Loader,
+  Paper,
   Select,
   Stack,
   Text,
   Textarea,
   TextInput,
-  Title,
+  UnstyledButton,
 } from "@mantine/core";
 import {
   IconAlertTriangle,
   IconCheck,
-  IconEdit,
+  IconChevronDown,
+  IconChevronRight,
   IconFileText,
   IconX,
 } from "@tabler/icons-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { IntakeState, Ticket, TicketDraftUpdate } from "../../api/types";
 import {
@@ -26,7 +30,6 @@ import {
   getTicketPriorityLabel,
 } from "../../lib/ticketLabels";
 import { validateEmail } from "../../lib/validation";
-import { type DraftField, DraftFieldChecklist } from "./DraftFieldChecklist";
 
 const DEPARTMENT_OPTIONS = [
   { value: "IT", label: "ИТ" },
@@ -50,6 +53,13 @@ const CRITICAL_PRIORITY_OPTION = {
   disabled: true,
 };
 
+// 1.2s — баланс между «не дёргать сервер на каждый keystroke» и «не терять данные».
+const AUTOSAVE_DEBOUNCE_MS = 1200;
+// «✓ Сохранено» исчезает через 1.8s — достаточно, чтобы заметить, но без визуального мусора.
+const SAVED_INDICATOR_FADE_MS = 1800;
+
+type SaveStatus = "idle" | "pending" | "saved" | "error";
+
 function normalizePriority(value?: string | null) {
   const normalized = value?.toLowerCase();
   if (normalized === CRITICAL_PRIORITY_OPTION.value) {
@@ -60,20 +70,7 @@ function normalizePriority(value?: string | null) {
     : "средний";
 }
 
-/**
- * Предупреждение для поля — возвращает строку если значение вызывает сомнение.
- * Вызывать только если поле не пустое.
- */
-function getFieldWarning(field: string, value: string): string | null {
-  if (!value.trim()) return null;
-  if (field === "requester_email") return validateEmail(value) ?? null;
-  return null;
-}
-
-/**
- * Вернуть значение поля из тикета если заполнено,
- * иначе — из intake_state.fields (фоллбэк пока тикет ещё не обновлён сервером).
- */
+/** Берём значение из тикета или fallback на intake_state.fields. */
 function intakeValue(
   field: string,
   ticketVal: string | null | undefined,
@@ -82,6 +79,39 @@ function intakeValue(
   const v = (ticketVal ?? "").trim();
   if (v) return v;
   return ((intakeFields ?? {})[field] ?? "").trim();
+}
+
+/** Индикатор статуса сохранения справа сверху. */
+function SaveIndicator({ status }: { status: SaveStatus }) {
+  if (status === "idle") return null;
+  if (status === "pending") {
+    return (
+      <Group gap={6} align="center">
+        <Loader size={12} />
+        <Text size="xs" c="dimmed">
+          Сохранение…
+        </Text>
+      </Group>
+    );
+  }
+  if (status === "saved") {
+    return (
+      <Group gap={4} align="center">
+        <IconCheck size={14} color="var(--mantine-color-teal-6)" />
+        <Text size="xs" c="teal">
+          Сохранено
+        </Text>
+      </Group>
+    );
+  }
+  return (
+    <Group gap={4} align="center">
+      <IconAlertTriangle size={14} color="var(--mantine-color-red-6)" />
+      <Text size="xs" c="red">
+        Не удалось сохранить
+      </Text>
+    </Group>
+  );
 }
 
 export function PrefilledTicketPanel({
@@ -96,11 +126,7 @@ export function PrefilledTicketPanel({
   onSave,
 }: {
   ticket: Ticket;
-  /** Состояние intake — для предзаполнения пустых полей и расширенной валидации. */
   intakeState?: IntakeState | null;
-  /** Уже открытые тикеты пользователя, похожие на текущий черновик.
-   *  Если массив непустой и тикет ещё редактируемый — покажем предупреждение
-   *  с предложением проверить, не плодит ли пользователь дубликат. */
   potentialDuplicates?: Ticket[];
   confirmLoading?: boolean;
   declineLoading?: boolean;
@@ -111,7 +137,7 @@ export function PrefilledTicketPanel({
 }) {
   const intakeFields = intakeState?.fields ?? null;
 
-  const [isEditing, setIsEditing] = useState(false);
+  // Состояние полей — всегда редактируемое, отдельные «view»-режимы нет.
   const [title, setTitle] = useState(ticket.title);
   const [body, setBody] = useState(ticket.body);
   const [department, setDepartment] = useState(ticket.department);
@@ -132,6 +158,14 @@ export function PrefilledTicketPanel({
   const [requestDetails, setRequestDetails] = useState(ticket.request_details ?? "");
   const [stepsTried, setStepsTried] = useState(ticket.steps_tried ?? "");
 
+  // Свёрнутая секция «Дополнительно» — раскрыта только если уже что-то заполнено.
+  const [extraOpen, setExtraOpen] = useState(
+    Boolean((ticket.request_type ?? "") || (ticket.request_details ?? "") || (ticket.steps_tried ?? "")),
+  );
+
+  // Статус последнего auto-save — для индикатора в шапке.
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
+
   const canEdit = !ticket.confirmed_by_user && ticket.status === "pending_user";
   const requesterEmailError = validateEmail(requesterEmail);
   const hasRequiredContext =
@@ -140,110 +174,12 @@ export function PrefilledTicketPanel({
     office.trim().length > 0 &&
     affectedItem.trim().length > 0;
   const canSubmit =
-    title.trim().length > 0 &&
-    body.trim().length > 0 &&
-    hasRequiredContext;
+    title.trim().length > 0 && body.trim().length > 0 && hasRequiredContext;
   const isCriticalPriority = priority === CRITICAL_PRIORITY_OPTION.value;
 
-  // Поля для чеклиста — пересчитываются при изменении любого значения.
-  const contextFields: DraftField[] = useMemo(
-    () => [
-      {
-        key: "requester_name",
-        label: "Заявитель",
-        value: requesterName,
-        required: true,
-        warning: getFieldWarning("requester_name", requesterName),
-      },
-      {
-        key: "requester_email",
-        label: "Email",
-        value: requesterEmail,
-        required: true,
-        warning: getFieldWarning("requester_email", requesterEmail),
-      },
-      {
-        key: "office",
-        label: "Офис",
-        value: office,
-        required: true,
-        warning: getFieldWarning("office", office),
-      },
-      {
-        key: "affected_item",
-        label: "Что затронуто",
-        value: affectedItem,
-        required: true,
-        warning: getFieldWarning("affected_item", affectedItem),
-      },
-      ...(requestType
-        ? [
-            {
-              key: "request_type",
-              label: "Тип запроса",
-              value: requestType,
-              required: false,
-              warning: null,
-            },
-          ]
-        : []),
-    ],
-    [requesterName, requesterEmail, office, affectedItem, requestType],
-  );
-
-  function handleClearField(key: string) {
-    switch (key) {
-      case "requester_name":
-        setRequesterName("");
-        break;
-      case "requester_email":
-        setRequesterEmail("");
-        break;
-      case "office":
-        setOffice("");
-        break;
-      case "affected_item":
-        setAffectedItem("");
-        break;
-      case "request_type":
-        setRequestType("");
-        break;
-    }
-  }
-
-  // При смене тикета или обновлении intake_state — пересинхронизировать локальный стейт.
-  useEffect(() => {
-    const fields = intakeState?.fields ?? null;
-    setTitle(ticket.title);
-    setBody(ticket.body);
-    setDepartment(ticket.department);
-    setPriority(normalizePriority(ticket.ai_priority));
-    setRequesterName(intakeValue("requester_name", ticket.requester_name, fields));
-    setRequesterEmail(intakeValue("requester_email", ticket.requester_email, fields));
-    setOffice(intakeValue("office", ticket.office, fields));
-    setAffectedItem(intakeValue("affected_item", ticket.affected_item, fields));
-    setRequestType(ticket.request_type ?? "");
-    setRequestDetails(ticket.request_details ?? "");
-    setStepsTried(ticket.steps_tried ?? "");
-    setIsEditing(false);
-  }, [
-    ticket.id,
-    ticket.title,
-    ticket.body,
-    ticket.department,
-    ticket.ai_priority,
-    ticket.requester_name,
-    ticket.requester_email,
-    ticket.office,
-    ticket.affected_item,
-    ticket.request_type,
-    ticket.request_details,
-    ticket.steps_tried,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    intakeState?.fields,
-  ]);
-
-  async function handleSave() {
+  // Snapshot текущего сохранённого состояния — чтобы не auto-save'ить, если ничего не изменилось.
+  // Сравнение через JSON.stringify нормализованного объекта работает быстро для ~10 полей.
+  const buildPayload = (): TicketDraftUpdate => {
     const payload: TicketDraftUpdate = {
       title: title.trim(),
       body: body.trim(),
@@ -259,189 +195,339 @@ export function PrefilledTicketPanel({
     if (!isCriticalPriority) {
       payload.ai_priority = priority as "низкий" | "средний" | "высокий";
     }
-    await onSave(payload);
-    setIsEditing(false);
+    return payload;
+  };
+
+  // Baseline — последний удачно сохранённый payload. Меняется когда:
+  //   1) тикет приходит с сервера (useEffect ниже)
+  //   2) auto-save успешно завершается
+  const lastSavedRef = useRef<string>("");
+
+  // При смене тикета (новый id или поля изменены сервером) — сброс локального стейта.
+  useEffect(() => {
+    const fields = intakeState?.fields ?? null;
+    setTitle(ticket.title);
+    setBody(ticket.body);
+    setDepartment(ticket.department);
+    setPriority(normalizePriority(ticket.ai_priority));
+    setRequesterName(intakeValue("requester_name", ticket.requester_name, fields));
+    setRequesterEmail(intakeValue("requester_email", ticket.requester_email, fields));
+    setOffice(intakeValue("office", ticket.office, fields));
+    setAffectedItem(intakeValue("affected_item", ticket.affected_item, fields));
+    setRequestType(ticket.request_type ?? "");
+    setRequestDetails(ticket.request_details ?? "");
+    setStepsTried(ticket.steps_tried ?? "");
+    setSaveStatus("idle");
+    // Сбрасываем baseline → следующий auto-save useEffect возьмёт current snapshot
+    // как новую отправную точку и НЕ отправит save (это просто свежие данные с сервера).
+    // Без этого после успешного save сервер мог вернуть нормализованный ticket,
+    // что вызвало бы новое расхождение и бесконечный цикл сохранения.
+    lastSavedRef.current = "";
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    ticket.id,
+    ticket.title,
+    ticket.body,
+    ticket.department,
+    ticket.ai_priority,
+    ticket.requester_name,
+    ticket.requester_email,
+    ticket.office,
+    ticket.affected_item,
+    ticket.request_type,
+    ticket.request_details,
+    ticket.steps_tried,
+    intakeState?.fields,
+  ]);
+
+  // Auto-save с debounce. Срабатывает только если:
+  //   - редактирование разрешено (canEdit)
+  //   - payload отличается от baseline
+  //   - валидация контактных данных пройдена (иначе сохраняем мусор, но это уже backend'у решать)
+  // Сравнение через JSON.stringify нормализованного объекта.
+  useEffect(() => {
+    if (!canEdit) return;
+    const payload = buildPayload();
+    const snapshot = JSON.stringify(payload);
+
+    // Первый раз после mount/смены тикета — записываем baseline без отправки.
+    if (lastSavedRef.current === "") {
+      lastSavedRef.current = snapshot;
+      return;
+    }
+    if (snapshot === lastSavedRef.current) return;
+
+    setSaveStatus("pending");
+    const handle = window.setTimeout(async () => {
+      try {
+        await onSave(payload);
+        lastSavedRef.current = snapshot;
+        setSaveStatus("saved");
+        window.setTimeout(() => {
+          // Если за время fade пользователь снова изменил поля — индикатор «pending» уже стоит,
+          // не сбрасываем.
+          setSaveStatus((curr) => (curr === "saved" ? "idle" : curr));
+        }, SAVED_INDICATOR_FADE_MS);
+      } catch {
+        setSaveStatus("error");
+      }
+    }, AUTOSAVE_DEBOUNCE_MS);
+
+    return () => window.clearTimeout(handle);
+    // Зависим от всех полей, которые попадают в payload.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    title,
+    body,
+    department,
+    priority,
+    requesterName,
+    requesterEmail,
+    office,
+    affectedItem,
+    requestType,
+    requestDetails,
+    stepsTried,
+    canEdit,
+  ]);
+
+  // Перед confirm — если есть несохранённый payload, дофлашим его синхронно.
+  // Иначе backend может подтвердить тикет со старыми данными.
+  async function handleConfirmWithFlush() {
+    const payload = buildPayload();
+    const snapshot = JSON.stringify(payload);
+    if (snapshot !== lastSavedRef.current && canEdit) {
+      try {
+        setSaveStatus("pending");
+        await onSave(payload);
+        lastSavedRef.current = snapshot;
+        setSaveStatus("saved");
+      } catch {
+        setSaveStatus("error");
+        return; // не подтверждаем если не смогли сохранить
+      }
+    }
+    onConfirm();
   }
 
+  const departmentLabel = getDepartmentLabel(department);
+  const departmentDisplayLabel = useMemo(
+    () => DEPARTMENT_OPTIONS.find((opt) => opt.value === department)?.label ?? department,
+    [department],
+  );
+
   return (
-    <Alert color="teal" variant="light" icon={<IconFileText size={18} />}>
-      <Stack gap="sm">
-        <Group justify="space-between" align="start">
-          <div>
-            <Title order={4}>Черновик запроса</Title>
-            <Text size="sm" c="dimmed">
-              Проверьте, что агент увидит правильное описание проблемы.
+    <Paper withBorder p="md" radius="md" className="draft-panel">
+      <Stack gap="md">
+        {/* ── Шапка: статус, отдел/приоритет, индикатор сохранения ── */}
+        <Group justify="space-between" align="center" wrap="nowrap">
+          <Group gap="xs" align="center">
+            <IconFileText size={18} color="var(--mantine-color-teal-6)" />
+            <Text fw={600} size="sm">
+              Черновик запроса
             </Text>
-          </div>
-          <Badge>{getDepartmentLabel(department)}</Badge>
+            <Badge size="sm" variant="light">
+              {getStatusLabel(ticket.status)}
+            </Badge>
+          </Group>
+          {canEdit ? (
+            <SaveIndicator status={saveStatus} />
+          ) : (
+            <Badge size="sm" variant="filled" color="teal">
+              Подтверждено
+            </Badge>
+          )}
         </Group>
 
-        <Group gap="xs">
-          <Badge variant="light">{getStatusLabel(ticket.status)}</Badge>
-          <Badge variant="light">Отдел: {getDepartmentLabel(ticket.department)}</Badge>
-          <Badge variant="light">Приоритет: {getTicketPriorityLabel(ticket)}</Badge>
-        </Group>
-
-        {isEditing ? (
-          <Stack gap="sm">
-            <TextInput
-              label="Тема"
+        {/* ── Title ── */}
+        <div>
+          {canEdit ? (
+            <Textarea
+              variant="unstyled"
+              autosize
+              minRows={1}
+              maxRows={3}
               value={title}
               maxLength={255}
-              required
+              placeholder="Краткий заголовок проблемы"
+              classNames={{ input: "draft-title-input" }}
               onChange={(event) => setTitle(event.currentTarget.value)}
             />
+          ) : (
+            <Text fw={600} size="lg">
+              {title || "—"}
+            </Text>
+          )}
+        </div>
+
+        {/* ── Body ── */}
+        <div>
+          <Text size="xs" c="dimmed" fw={600} mb={4}>
+            ОПИСАНИЕ ДЛЯ АГЕНТА
+          </Text>
+          {canEdit ? (
             <Textarea
-              label="Описание для агента"
-              value={body}
+              variant="unstyled"
               autosize
-              minRows={5}
-              maxRows={10}
-              required
+              minRows={3}
+              maxRows={12}
+              value={body}
+              placeholder="Опишите проблему максимально подробно"
+              classNames={{ input: "draft-body-input" }}
               onChange={(event) => setBody(event.currentTarget.value)}
             />
-            <Group grow align="start">
-              <TextInput
-                label="Заявитель"
-                value={requesterName}
-                maxLength={100}
-                required
-                onChange={(event) => setRequesterName(event.currentTarget.value)}
-              />
-              <TextInput
-                label="Email заявителя"
-                value={requesterEmail}
-                maxLength={255}
-                required
-                error={requesterEmail ? requesterEmailError : undefined}
-                onChange={(event) => setRequesterEmail(event.currentTarget.value)}
-              />
-            </Group>
-            <Group grow align="start">
-              <Select
-                label="Отдел поддержки"
-                data={DEPARTMENT_OPTIONS}
-                value={department}
-                allowDeselect={false}
-                onChange={(value) => value && setDepartment(value)}
-              />
-              {isCriticalPriority ? (
-                <TextInput
-                  label="Приоритет"
-                  value={CRITICAL_PRIORITY_OPTION.label}
-                  disabled
-                />
-              ) : (
-                <Select
-                  label="Приоритет"
-                  data={PRIORITY_OPTIONS}
-                  value={priority}
-                  allowDeselect={false}
-                  onChange={(value) => value && setPriority(value)}
-                />
-              )}
-            </Group>
-            <Group grow align="start">
-              <TextInput
-                label="Офис"
-                value={office}
-                maxLength={100}
-                required
-                onChange={(event) => setOffice(event.currentTarget.value)}
-              />
-              <TextInput
-                label="Что затронуто"
-                value={affectedItem}
-                maxLength={150}
-                required
-                onChange={(event) => setAffectedItem(event.currentTarget.value)}
-              />
-            </Group>
-            <Group grow align="start">
-              <TextInput
-                label="Тип запроса"
-                value={requestType}
-                maxLength={60}
-                onChange={(event) => setRequestType(event.currentTarget.value)}
-              />
-              <TextInput
-                label="Уточнение формы"
-                value={requestDetails}
-                maxLength={2000}
-                onChange={(event) => setRequestDetails(event.currentTarget.value)}
-              />
-            </Group>
-            <Textarea
-              label="Что уже пробовали"
-              value={stepsTried}
-              autosize
-              minRows={2}
-              maxRows={5}
-              placeholder="Например: перезагружал ноутбук, проверял кабель, пробовал другой браузер"
-              onChange={(event) => setStepsTried(event.currentTarget.value)}
-            />
-            <Group gap="xs">
-              <Button
-                color="teal"
-                loading={saveLoading}
-                disabled={!canSubmit}
-                onClick={handleSave}
-              >
-                Сохранить изменения
-              </Button>
-              <Button
-                variant="subtle"
-                color="gray"
-                disabled={saveLoading}
-                onClick={() => setIsEditing(false)}
-              >
-                Отмена
-              </Button>
-            </Group>
-          </Stack>
-        ) : (
-          <Stack gap="sm">
-            {/* Чеклист контактных / контекстных полей */}
-            <DraftFieldChecklist
-              fields={contextFields}
-              onClear={canEdit ? handleClearField : undefined}
-            />
+          ) : (
+            <Text size="sm" className="draft-body-readonly">
+              {body || "—"}
+            </Text>
+          )}
+        </div>
 
+        {/* ── Отдел и приоритет ── */}
+        <Group grow align="start">
+          {canEdit ? (
+            <Select
+              label="Отдел"
+              size="xs"
+              data={DEPARTMENT_OPTIONS}
+              value={department}
+              allowDeselect={false}
+              onChange={(value) => value && setDepartment(value)}
+            />
+          ) : (
             <div>
               <Text size="xs" c="dimmed" fw={600}>
-                Тема
+                ОТДЕЛ
               </Text>
-              <Text size="sm">{title}</Text>
+              <Text size="sm">{departmentLabel}</Text>
             </div>
+          )}
+          {canEdit && !isCriticalPriority ? (
+            <Select
+              label="Приоритет"
+              size="xs"
+              data={PRIORITY_OPTIONS}
+              value={priority}
+              allowDeselect={false}
+              onChange={(value) => value && setPriority(value)}
+            />
+          ) : (
             <div>
               <Text size="xs" c="dimmed" fw={600}>
-                Описание для агента
+                ПРИОРИТЕТ
               </Text>
-              <Text size="sm" className="draft-ticket-body">
-                {body}
-              </Text>
+              <Text size="sm">{getTicketPriorityLabel(ticket)}</Text>
             </div>
-            {requestDetails && (
-              <div>
+          )}
+        </Group>
+
+        {/* ── Контактные данные (compact 2x2) ── */}
+        <div>
+          <Text size="xs" c="dimmed" fw={600} mb={6}>
+            КОНТАКТНЫЕ ДАННЫЕ
+          </Text>
+          {canEdit ? (
+            <Stack gap="xs">
+              <Group grow align="start">
+                <TextInput
+                  size="xs"
+                  placeholder="Заявитель *"
+                  value={requesterName}
+                  maxLength={100}
+                  onChange={(event) => setRequesterName(event.currentTarget.value)}
+                />
+                <TextInput
+                  size="xs"
+                  placeholder="Email *"
+                  value={requesterEmail}
+                  maxLength={255}
+                  error={requesterEmail ? requesterEmailError : undefined}
+                  onChange={(event) => setRequesterEmail(event.currentTarget.value)}
+                />
+              </Group>
+              <Group grow align="start">
+                <TextInput
+                  size="xs"
+                  placeholder="Офис *"
+                  value={office}
+                  maxLength={100}
+                  onChange={(event) => setOffice(event.currentTarget.value)}
+                />
+                <TextInput
+                  size="xs"
+                  placeholder="Что затронуто *"
+                  value={affectedItem}
+                  maxLength={150}
+                  onChange={(event) => setAffectedItem(event.currentTarget.value)}
+                />
+              </Group>
+            </Stack>
+          ) : (
+            <Stack gap={2}>
+              <Text size="sm">
+                {requesterName || "—"}
+                {requesterEmail && (
+                  <Text span c="dimmed" ml={6}>
+                    · {requesterEmail}
+                  </Text>
+                )}
+              </Text>
+              <Text size="sm" c="dimmed">
+                {office || "—"} · {affectedItem || "—"}
+              </Text>
+            </Stack>
+          )}
+        </div>
+
+        {/* ── Дополнительные поля (свёрнуты по умолчанию) ── */}
+        {canEdit && (
+          <div>
+            <UnstyledButton onClick={() => setExtraOpen((v) => !v)}>
+              <Group gap={4} align="center">
+                {extraOpen ? (
+                  <IconChevronDown size={14} />
+                ) : (
+                  <IconChevronRight size={14} />
+                )}
                 <Text size="xs" c="dimmed" fw={600}>
-                  Форма запроса
+                  ДОПОЛНИТЕЛЬНО (необязательно)
                 </Text>
-                <Text size="sm">{requestDetails}</Text>
-              </div>
-            )}
-            {stepsTried && (
-              <div>
-                <Text size="xs" c="dimmed" fw={600}>
-                  Что уже пробовали
-                </Text>
-                <Text size="sm">{stepsTried}</Text>
-              </div>
-            )}
-          </Stack>
+              </Group>
+            </UnstyledButton>
+            <Collapse in={extraOpen}>
+              <Stack gap="xs" mt="xs">
+                <Group grow align="start">
+                  <TextInput
+                    size="xs"
+                    label="Тип запроса"
+                    value={requestType}
+                    maxLength={60}
+                    onChange={(event) => setRequestType(event.currentTarget.value)}
+                  />
+                  <TextInput
+                    size="xs"
+                    label="Уточнение формы"
+                    value={requestDetails}
+                    maxLength={2000}
+                    onChange={(event) => setRequestDetails(event.currentTarget.value)}
+                  />
+                </Group>
+                <Textarea
+                  size="xs"
+                  label="Что уже пробовали"
+                  value={stepsTried}
+                  autosize
+                  minRows={2}
+                  maxRows={5}
+                  placeholder="Например: перезагружал ноутбук, проверял кабель"
+                  onChange={(event) => setStepsTried(event.currentTarget.value)}
+                />
+              </Stack>
+            </Collapse>
+          </div>
         )}
 
-        {/* Предупреждение о потенциальных дубликатах — только пока тикет
-            ещё редактируемый. После подтверждения тикета смысла показывать нет. */}
+        {/* ── Предупреждение о потенциальных дубликатах ── */}
         {canEdit && potentialDuplicates && potentialDuplicates.length > 0 && (
           <Alert
             color="yellow"
@@ -471,38 +557,46 @@ export function PrefilledTicketPanel({
           </Alert>
         )}
 
+        {/* ── Действия ── */}
         {canEdit && (
-          <Group gap="xs">
+          <Stack gap="xs">
             <Button
+              fullWidth
+              size="md"
               color="teal"
-              leftSection={<IconCheck size={16} />}
-              loading={confirmLoading}
-              onClick={onConfirm}
-              disabled={isEditing || !hasRequiredContext}
+              leftSection={<IconCheck size={18} />}
+              loading={confirmLoading || saveLoading}
+              disabled={!canSubmit}
+              onClick={handleConfirmWithFlush}
             >
               Отправить
             </Button>
-            <Button
-              variant="light"
-              leftSection={<IconEdit size={16} />}
-              disabled={confirmLoading || saveLoading}
-              onClick={() => setIsEditing(true)}
-            >
-              Изменить
-            </Button>
-            <Button
-              variant="subtle"
-              color="red"
-              leftSection={<IconX size={16} />}
-              loading={declineLoading}
-              disabled={confirmLoading || saveLoading || isEditing}
-              onClick={onDecline}
-            >
-              Отменить
-            </Button>
-          </Group>
+            <Group justify="space-between" align="center">
+              {!hasRequiredContext && (
+                <Text size="xs" c="orange">
+                  Заполните контактные данные, чтобы отправить
+                </Text>
+              )}
+              <Button
+                variant="subtle"
+                color="red"
+                size="xs"
+                leftSection={<IconX size={14} />}
+                loading={declineLoading}
+                disabled={confirmLoading || saveLoading}
+                onClick={onDecline}
+                ml="auto"
+              >
+                Отменить черновик
+              </Button>
+            </Group>
+            {/* Спрятанное поле — для теста: «Отправить в [Отдел]» в aria, чтобы юзер видел куда уйдёт. */}
+            <Text size="xs" c="dimmed" ta="center">
+              Запрос уйдёт в отдел: <b>{departmentDisplayLabel}</b>
+            </Text>
+          </Stack>
         )}
       </Stack>
-    </Alert>
+    </Paper>
   );
 }

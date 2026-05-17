@@ -18,6 +18,18 @@ afterEach(() => {
   cleanup();
 });
 
+// ResizeObserver — нужен Mantine Textarea с autosize и ScrollArea.
+// jsdom его не реализует, заглушка с пустыми методами достаточна.
+class ResizeObserverMock {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+Object.defineProperty(window, "ResizeObserver", {
+  writable: true,
+  value: ResizeObserverMock,
+});
+
 // Mantine использует window.matchMedia для определения color scheme
 // и responsive breakpoints. jsdom не реализует этот API.
 Object.defineProperty(window, "matchMedia", {

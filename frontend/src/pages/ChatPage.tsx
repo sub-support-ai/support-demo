@@ -560,8 +560,9 @@ export function ChatPage() {
           </Stack>
         </Paper>
 
-        {/* Панель сбора данных — показывается параллельно с черновиком пока intake активен */}
-        {activeConversation?.intake_state?.mode && (
+        {/* IntakeStatePanel показываем только пока нет черновика — после эскалации
+            те же данные уже видны в PrefilledTicketPanel и дублировать смысла нет. */}
+        {activeConversation?.intake_state?.mode && !activeTicket && (
           <IntakeStatePanel state={activeConversation.intake_state} />
         )}
         {activeTicket ? (

@@ -442,6 +442,56 @@ body {
   background: #ffffff;
 }
 
+/* ── Inline-editable draft panel (PrefilledTicketPanel v2) ── */
+.draft-panel {
+  background: #ffffff;
+}
+
+/* Title — большой, выглядит как заголовок, но кликается и редактируется. */
+.draft-title-input {
+  font-size: 17px !important;
+  font-weight: 600 !important;
+  line-height: 1.35 !important;
+  padding: 6px 8px !important;
+  border-radius: 6px !important;
+  transition: background-color 0.15s ease;
+  cursor: text;
+}
+.draft-title-input:hover {
+  background-color: rgba(20, 122, 99, 0.04);
+}
+.draft-title-input:focus {
+  background-color: rgba(20, 122, 99, 0.06);
+  outline: 2px solid var(--mantine-color-teal-3) !important;
+  outline-offset: -1px;
+}
+
+/* Body — обычный текст, инлайн-редактируемый. */
+.draft-body-input {
+  font-size: 14px !important;
+  line-height: 1.55 !important;
+  padding: 8px !important;
+  border-radius: 6px !important;
+  background: #fafbfa !important;
+  border: 1px solid transparent !important;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+  cursor: text;
+}
+.draft-body-input:hover {
+  border-color: #dce5e2 !important;
+}
+.draft-body-input:focus {
+  background-color: #ffffff !important;
+  border-color: var(--mantine-color-teal-4) !important;
+  outline: none !important;
+}
+
+/* Read-only режим — описание показывается с переносами строк. */
+.draft-body-readonly {
+  white-space: pre-wrap;
+  line-height: 1.55;
+}
+
 .empty-state {
   display: grid;
   min-height: 220px;
