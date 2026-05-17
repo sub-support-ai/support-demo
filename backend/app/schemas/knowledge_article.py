@@ -144,6 +144,9 @@ class KnowledgeArticleRead(KnowledgeArticleBase):
     helped_count: int = 0
     not_helped_count: int = 0
     not_relevant_count: int = 0
+    quality_grade: str = "good"
+    weighted_feedback_score: float = 0.0
+    quality_grade_updated_at: datetime | None = None
     created_at: datetime
     updated_at: datetime | None = None
 

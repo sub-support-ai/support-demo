@@ -365,6 +365,9 @@ export interface KnowledgeArticle {
   helped_count: number;
   not_helped_count: number;
   not_relevant_count: number;
+  quality_grade: "good" | "risky" | "bad" | "suppressed";
+  weighted_feedback_score: number;
+  quality_grade_updated_at?: string | null;
   created_at: string;
   updated_at?: string | null;
 }

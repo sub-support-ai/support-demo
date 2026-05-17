@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -327,6 +329,47 @@ async def update_knowledge_article(
     from app.config import get_settings
 
     background_tasks.add_task(notify_knowledge_embedding_jobs_channel, get_settings().DATABASE_URL)
+    return article
+
+
+@router.post("/{article_id}/suppress", response_model=KnowledgeArticleRead)
+async def suppress_knowledge_article(
+    article_id: int,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_role("admin")),
+) -> KnowledgeArticle:
+    """Вручную подавляет статью (grade → suppressed).
+
+    Автоматический пересчёт grade НЕ снимает suppressed — только этот endpoint
+    или /restore могут это сделать.
+    """
+    article = await db.get(KnowledgeArticle, article_id)
+    if article is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    article.quality_grade = "suppressed"
+    article.quality_grade_updated_at = datetime.now(UTC)
+    await db.flush()
+    await db.refresh(article)
+    return article
+
+
+@router.post("/{article_id}/restore", response_model=KnowledgeArticleRead)
+async def restore_knowledge_article(
+    article_id: int,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_role("admin")),
+) -> KnowledgeArticle:
+    """Снимает suppressed и пересчитывает grade по текущему фидбеку."""
+    from app.services.quality_signals import refresh_article_quality_grade
+
+    article = await db.get(KnowledgeArticle, article_id)
+    if article is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    # Сбрасываем suppressed вручную, чтобы refresh_article_quality_grade не пропустил.
+    article.quality_grade = "good"
+    await db.flush()
+    await refresh_article_quality_grade(article_id, db)
+    await db.refresh(article)
     return article
 
 

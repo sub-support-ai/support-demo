@@ -17,7 +17,14 @@ import {
   Title,
   Tooltip,
 } from "@mantine/core";
-import { IconChartBar, IconDatabaseSearch, IconRefresh, IconSettings } from "@tabler/icons-react";
+import {
+  IconChartBar,
+  IconDatabaseSearch,
+  IconLock,
+  IconLockOpen,
+  IconRefresh,
+  IconSettings,
+} from "@tabler/icons-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { getApiError } from "../api/client";
@@ -26,6 +33,8 @@ import {
   useKnowledgeArticles,
   useReindexAllKnowledgeArticles,
   useReindexKnowledgeArticle,
+  useRestoreKnowledgeArticle,
+  useSuppressKnowledgeArticle,
   useUpdateKnowledgeArticle,
 } from "../api/knowledge";
 import type { KnowledgeArticle, KnowledgeArticlePayload } from "../api/types";
@@ -131,12 +140,36 @@ function payloadFromForm(form: KnowledgeFormState): KnowledgeArticlePayload {
   };
 }
 
+const GRADE_META: Record<
+  string,
+  { color: string; label: string; tooltip: string }
+> = {
+  good:       { color: "teal",   label: "OK",         tooltip: "Статья работает хорошо" },
+  risky:      { color: "yellow", label: "⚠ Риск",     tooltip: "Высокая доля негативных оценок — проверьте содержание" },
+  bad:        { color: "red",    label: "✕ Плохая",   tooltip: "Статья регулярно не помогает — скрыта из RAG-поиска" },
+  suppressed: { color: "gray",   label: "🔒 Подавлена", tooltip: "Вручную отключена администратором" },
+};
+
+function GradeBadge({ grade }: { grade: string }) {
+  const meta = GRADE_META[grade] ?? GRADE_META.good;
+  if (grade === "good") return null;
+  return (
+    <Tooltip label={meta.tooltip} withArrow>
+      <Badge size="sm" color={meta.color} variant="light">
+        {meta.label}
+      </Badge>
+    </Tooltip>
+  );
+}
+
 export function KnowledgePage() {
   const articles = useKnowledgeArticles(false);
   const createArticle = useCreateKnowledgeArticle();
   const updateArticle = useUpdateKnowledgeArticle();
   const reindexArticle = useReindexKnowledgeArticle();
   const reindexAllArticles = useReindexAllKnowledgeArticles();
+  const suppressArticle = useSuppressKnowledgeArticle();
+  const restoreArticle = useRestoreKnowledgeArticle();
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [form, setForm] = useState<KnowledgeFormState>(emptyForm);
   const [activeTab, setActiveTab] = useState<string | null>("articles");
@@ -253,6 +286,7 @@ export function KnowledgePage() {
                   <Table.Tr>
                     <Table.Th>Статья</Table.Th>
                     <Table.Th>Статус</Table.Th>
+                    <Table.Th>Grade</Table.Th>
                     <Table.Th>Оценка</Table.Th>
                   </Table.Tr>
                 </Table.Thead>
@@ -283,6 +317,9 @@ export function KnowledgePage() {
                         >
                           {article.is_active ? "Активна" : "Выключена"}
                         </Badge>
+                      </Table.Td>
+                      <Table.Td>
+                        <GradeBadge grade={article.quality_grade} />
                       </Table.Td>
                       <Table.Td>
                         {(() => {
@@ -472,6 +509,53 @@ export function KnowledgePage() {
                     />
                   </Grid.Col>
                 </Grid>
+
+                {selectedArticle && selectedArticle.quality_grade !== "good" && (
+                  <Alert
+                    color={GRADE_META[selectedArticle.quality_grade]?.color ?? "gray"}
+                    variant="light"
+                    title={
+                      <Group gap="xs">
+                        <span>Quality grade:</span>
+                        <GradeBadge grade={selectedArticle.quality_grade} />
+                      </Group>
+                    }
+                  >
+                    <Group justify="space-between" align="center">
+                      <Text size="sm">
+                        {GRADE_META[selectedArticle.quality_grade]?.tooltip}
+                        {selectedArticle.weighted_feedback_score !== 0 && (
+                          <Text span c="dimmed" size="xs" ml={6}>
+                            (score: {selectedArticle.weighted_feedback_score.toFixed(2)})
+                          </Text>
+                        )}
+                      </Text>
+                      {selectedArticle.quality_grade === "suppressed" ? (
+                        <Button
+                          size="xs"
+                          variant="light"
+                          color="teal"
+                          leftSection={<IconLockOpen size={14} />}
+                          loading={restoreArticle.isPending}
+                          onClick={() => restoreArticle.mutate(selectedArticle.id)}
+                        >
+                          Восстановить
+                        </Button>
+                      ) : (
+                        <Button
+                          size="xs"
+                          variant="light"
+                          color="gray"
+                          leftSection={<IconLock size={14} />}
+                          loading={suppressArticle.isPending}
+                          onClick={() => suppressArticle.mutate(selectedArticle.id)}
+                        >
+                          Подавить
+                        </Button>
+                      )}
+                    </Group>
+                  </Alert>
+                )}
 
                 <Group justify="flex-end">
                   {selectedArticle && (

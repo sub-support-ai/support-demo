@@ -83,6 +83,32 @@ export function useReindexAllKnowledgeArticles() {
   });
 }
 
+export function useSuppressKnowledgeArticle() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (articleId: number) => {
+      const { data } = await api.post<KnowledgeArticle>(`/knowledge/${articleId}/suppress`);
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["knowledge", "articles"] });
+    },
+  });
+}
+
+export function useRestoreKnowledgeArticle() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (articleId: number) => {
+      const { data } = await api.post<KnowledgeArticle>(`/knowledge/${articleId}/restore`);
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["knowledge", "articles"] });
+    },
+  });
+}
+
 export function useSubmitKnowledgeFeedback() {
   const queryClient = useQueryClient();
   return useMutation({
