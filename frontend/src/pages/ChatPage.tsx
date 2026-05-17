@@ -1,17 +1,22 @@
 import {
+  ActionIcon,
   Alert,
   Badge,
   Button,
   Group,
-  Loader,
   LoadingOverlay,
   Paper,
   ScrollArea,
   Stack,
   Text,
+  TextInput,
   Title,
 } from "@mantine/core";
-import { IconMessageCircle, IconPlus } from "@tabler/icons-react";
+import {
+  IconMessageCircle,
+  IconPlus,
+  IconSend,
+} from "@tabler/icons-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -175,6 +180,84 @@ function IntakeStatePanel({ state }: { state: IntakeState }) {
         )}
       </Stack>
     </Paper>
+  );
+}
+
+/** Мини-инпуты для незаполненных полей intake.
+ *
+ * Вместо подсказок-кнопок, которые префиксят composer, — отдельный input
+ * на каждое поле с send-action. Пользователь печатает значение, жмёт Enter —
+ * AI получает сообщение "FieldLabel: value" и извлекает из него ответ.
+ */
+function MissingFieldsInputs({
+  fields,
+  labels,
+  onSend,
+  disabled,
+}: {
+  fields: string[];
+  labels: Record<string, string>;
+  onSend: (text: string) => void | Promise<void>;
+  disabled?: boolean;
+}) {
+  const [values, setValues] = useState<Record<string, string>>({});
+
+  function submit(field: string) {
+    const value = (values[field] ?? "").trim();
+    if (!value || disabled) return;
+    const label = labels[field] ?? field;
+    onSend(`${label}: ${value}`);
+    setValues((prev) => ({ ...prev, [field]: "" }));
+  }
+
+  if (fields.length === 0) return null;
+
+  return (
+    <Stack gap={6} px="md" pb="xs">
+      <Text size="xs" c="dimmed" fw={600}>
+        Заполнить быстро:
+      </Text>
+      {fields.slice(0, 3).map((field) => {
+        const label = labels[field] ?? field;
+        const value = values[field] ?? "";
+        return (
+          <Group key={field} gap={6} wrap="nowrap">
+            <Text size="xs" c="dimmed" style={{ minWidth: 110, flexShrink: 0 }}>
+              {label}
+            </Text>
+            <TextInput
+              size="xs"
+              placeholder={`Введите ${label.toLowerCase()}`}
+              value={value}
+              disabled={disabled}
+              style={{ flex: 1 }}
+              onChange={(event) =>
+                setValues((prev) => ({
+                  ...prev,
+                  [field]: event.currentTarget.value,
+                }))
+              }
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  submit(field);
+                }
+              }}
+            />
+            <ActionIcon
+              size="md"
+              color="teal"
+              variant="light"
+              aria-label={`Отправить ${label}`}
+              disabled={!value.trim() || disabled}
+              onClick={() => submit(field)}
+            >
+              <IconSend size={14} stroke={1.5} />
+            </ActionIcon>
+          </Group>
+        );
+      })}
+    </Stack>
   );
 }
 
@@ -472,12 +555,23 @@ export function ChatPage() {
                 />
               ))}
               {shouldPollMessages && (
-                <Group className="ai-processing-indicator" gap="xs">
-                  <Loader size="xs" />
-                  <Text size="sm" c="dimmed">
-                    {aiStageLabel}
-                  </Text>
-                </Group>
+                <div className="message-row ai">
+                  <Paper className="message-bubble ai thinking-bubble" withBorder>
+                    <Group gap="xs" mb={4} align="center">
+                      <Text size="xs" fw={600} c="dimmed">
+                        AI
+                      </Text>
+                    </Group>
+                    <Group gap={8} align="center">
+                      <span className="thinking-dots" aria-hidden>
+                        <span /> <span /> <span />
+                      </span>
+                      <Text size="sm" c="dimmed">
+                        {aiStageLabel}
+                      </Text>
+                    </Group>
+                  </Paper>
+                </div>
               )}
               <div ref={bottomRef} />
             </Stack>
@@ -488,23 +582,15 @@ export function ChatPage() {
               <Text size="sm">{activeConversation.intake_state.last_question}</Text>
             </Alert>
           )}
-          {/* Быстрые подсказки по незаполненным полям */}
+          {/* Inline-инпуты для незаполненных полей — пишешь значение и сразу send,
+              не нужно переключаться в composer и руками вводить "Email: ...". */}
           {missingFields.length > 0 && !composerDisabled && (
-            <Group gap="xs" px="md" pb="xs" wrap="wrap">
-              {missingFields.slice(0, 4).map((field) => (
-                <Button
-                  key={field}
-                  size="compact-xs"
-                  variant="light"
-                  color="blue"
-                  onClick={() =>
-                    setComposerText(`${INTAKE_FIELD_LABELS[field] ?? field}: `)
-                  }
-                >
-                  {INTAKE_FIELD_LABELS[field] ?? field}
-                </Button>
-              ))}
-            </Group>
+            <MissingFieldsInputs
+              fields={missingFields}
+              labels={INTAKE_FIELD_LABELS}
+              disabled={sendMessage.isPending}
+              onSend={handleSend}
+            />
           )}
           <Composer
             loading={

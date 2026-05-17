@@ -319,16 +319,19 @@ export function PrefilledTicketPanel({
   return (
     <Paper withBorder p="md" radius="md" className="draft-panel">
       <Stack gap="md">
-        {/* ── Шапка: статус, отдел/приоритет, индикатор сохранения ── */}
+        {/* ── Шапка: только название и индикатор. Статус-badge показываем только
+            для НЕ-дефолтных состояний (pending_user — это «в процессе», тривиально). ── */}
         <Group justify="space-between" align="center" wrap="nowrap">
           <Group gap="xs" align="center">
             <IconFileText size={18} color="var(--mantine-color-teal-6)" />
             <Text fw={600} size="sm">
               Черновик запроса
             </Text>
-            <Badge size="sm" variant="light">
-              {getStatusLabel(ticket.status)}
-            </Badge>
+            {ticket.status !== "pending_user" && (
+              <Badge size="sm" variant="light">
+                {getStatusLabel(ticket.status)}
+              </Badge>
+            )}
           </Group>
           {canEdit ? (
             <SaveIndicator status={saveStatus} />
@@ -388,7 +391,7 @@ export function PrefilledTicketPanel({
           {canEdit ? (
             <Select
               label="Отдел"
-              size="xs"
+              size="sm"
               data={DEPARTMENT_OPTIONS}
               value={department}
               allowDeselect={false}
@@ -405,7 +408,7 @@ export function PrefilledTicketPanel({
           {canEdit && !isCriticalPriority ? (
             <Select
               label="Приоритет"
-              size="xs"
+              size="sm"
               data={PRIORITY_OPTIONS}
               value={priority}
               allowDeselect={false}
@@ -557,9 +560,14 @@ export function PrefilledTicketPanel({
           </Alert>
         )}
 
-        {/* ── Действия ── */}
+        {/* ── Действия — основное и подсказки ── */}
         {canEdit && (
           <Stack gap="xs">
+            {!hasRequiredContext && (
+              <Text size="xs" c="orange" ta="center">
+                Заполните контактные данные, чтобы отправить
+              </Text>
+            )}
             <Button
               fullWidth
               size="md"
@@ -568,15 +576,12 @@ export function PrefilledTicketPanel({
               loading={confirmLoading || saveLoading}
               disabled={!canSubmit}
               onClick={handleConfirmWithFlush}
+              // aria-name = просто «Отправить» (для тестов), visible label с отделом.
+              aria-label="Отправить"
             >
-              Отправить
+              Отправить в {departmentDisplayLabel}
             </Button>
-            <Group justify="space-between" align="center">
-              {!hasRequiredContext && (
-                <Text size="xs" c="orange">
-                  Заполните контактные данные, чтобы отправить
-                </Text>
-              )}
+            <Group justify="flex-end">
               <Button
                 variant="subtle"
                 color="red"
@@ -585,15 +590,10 @@ export function PrefilledTicketPanel({
                 loading={declineLoading}
                 disabled={confirmLoading || saveLoading}
                 onClick={onDecline}
-                ml="auto"
               >
-                Отменить черновик
+                Отменить
               </Button>
             </Group>
-            {/* Спрятанное поле — для теста: «Отправить в [Отдел]» в aria, чтобы юзер видел куда уйдёт. */}
-            <Text size="xs" c="dimmed" ta="center">
-              Запрос уйдёт в отдел: <b>{departmentDisplayLabel}</b>
-            </Text>
           </Stack>
         )}
       </Stack>
