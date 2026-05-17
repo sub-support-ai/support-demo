@@ -41,8 +41,7 @@ def _validate_type(asset_type: str) -> None:
     if asset_type not in ASSET_TYPES:
         raise HTTPException(
             status_code=422,
-            detail=f"Invalid asset_type '{asset_type}'. "
-            f"Allowed: {sorted(ASSET_TYPES)}",
+            detail=f"Invalid asset_type '{asset_type}'. Allowed: {sorted(ASSET_TYPES)}",
         )
 
 
@@ -50,8 +49,7 @@ def _validate_status(asset_status: str) -> None:
     if asset_status not in ASSET_STATUSES:
         raise HTTPException(
             status_code=422,
-            detail=f"Invalid status '{asset_status}'. "
-            f"Allowed: {sorted(ASSET_STATUSES)}",
+            detail=f"Invalid status '{asset_status}'. Allowed: {sorted(ASSET_STATUSES)}",
         )
 
 

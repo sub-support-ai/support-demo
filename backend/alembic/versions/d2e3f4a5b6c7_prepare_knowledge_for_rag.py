@@ -27,7 +27,9 @@ def upgrade() -> None:
     op.add_column("knowledge_articles", sa.Column("owner", sa.String(length=120), nullable=True))
     op.add_column(
         "knowledge_articles",
-        sa.Column("access_scope", sa.String(length=20), nullable=False, server_default=sa.text("'public'")),
+        sa.Column(
+            "access_scope", sa.String(length=20), nullable=False, server_default=sa.text("'public'")
+        ),
     )
     op.add_column(
         "knowledge_articles",

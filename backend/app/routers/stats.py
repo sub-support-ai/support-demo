@@ -341,7 +341,15 @@ async def get_stats_trends(
         default=30,
         ge=MIN_TREND_PERIOD_DAYS,
         le=MAX_TREND_PERIOD_DAYS,
-        description=f"Окно в днях ({MIN_TREND_PERIOD_DAYS}-{MAX_TREND_PERIOD_DAYS}).",
+        description=f"Окно в днях ({MIN_TREND_PERIOD_DAYS}-{MAX_TREND_PERIOD_DAYS}). Игнорируется если переданы since и until.",
+    ),
+    since: date | None = Query(
+        default=None,
+        description="Начало периода YYYY-MM-DD. Передавать вместе с until.",
+    ),
+    until: date | None = Query(
+        default=None,
+        description="Конец периода YYYY-MM-DD включительно. Передавать вместе с since.",
     ),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -349,9 +357,17 @@ async def get_stats_trends(
     ticket_filters = await _ticket_scope_filters(db, current_user)
 
     now = datetime.now(UTC)
-    since_dt = now - timedelta(days=period_days)
-    since_date = since_dt.date()
-    today_date = now.date()
+    if since is not None and until is not None:
+        since_date = since
+        today_date = until
+        since_dt = datetime(since.year, since.month, since.day, tzinfo=UTC)
+        until_dt = datetime(until.year, until.month, until.day, 23, 59, 59, 999999, tzinfo=UTC)
+        period_days = (until - since).days + 1
+    else:
+        since_dt = now - timedelta(days=period_days)
+        since_date = since_dt.date()
+        today_date = now.date()
+        until_dt = now
 
     # Created: группировка по дате создания.
     created_result = await db.execute(
@@ -359,7 +375,7 @@ async def get_stats_trends(
             func.date(Ticket.created_at).label("day"),
             func.count().label("cnt"),
         )
-        .where(*ticket_filters, Ticket.created_at >= since_dt)
+        .where(*ticket_filters, Ticket.created_at >= since_dt, Ticket.created_at <= until_dt)
         .group_by(func.date(Ticket.created_at))
     )
     created_map: dict[date, int] = {
@@ -376,6 +392,7 @@ async def get_stats_trends(
             *ticket_filters,
             Ticket.resolved_at.is_not(None),
             Ticket.resolved_at >= since_dt,
+            Ticket.resolved_at <= until_dt,
         )
         .group_by(func.date(Ticket.resolved_at))
     )

@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, func, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -39,6 +39,18 @@ class Asset(Base):
     """
 
     __tablename__ = "assets"
+
+    # Partial unique index on serial_number (NULL values allowed).
+    # create_all создаст этот индекс; миграция тоже его создаёт.
+    __table_args__ = (
+        Index(
+            "uq_assets_serial_notnull",
+            "serial_number",
+            unique=True,
+            postgresql_where=text("serial_number IS NOT NULL"),
+            sqlite_where=text("serial_number IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
 

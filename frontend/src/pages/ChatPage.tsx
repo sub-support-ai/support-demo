@@ -1,17 +1,22 @@
 import {
+  ActionIcon,
   Alert,
   Badge,
   Button,
   Group,
-  Loader,
   LoadingOverlay,
   Paper,
   ScrollArea,
   Stack,
   Text,
+  TextInput,
   Title,
 } from "@mantine/core";
-import { IconMessageCircle, IconPlus } from "@tabler/icons-react";
+import {
+  IconMessageCircle,
+  IconPlus,
+  IconSend,
+} from "@tabler/icons-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -178,6 +183,84 @@ function IntakeStatePanel({ state }: { state: IntakeState }) {
   );
 }
 
+/** Мини-инпуты для незаполненных полей intake.
+ *
+ * Вместо подсказок-кнопок, которые префиксят composer, — отдельный input
+ * на каждое поле с send-action. Пользователь печатает значение, жмёт Enter —
+ * AI получает сообщение "FieldLabel: value" и извлекает из него ответ.
+ */
+function MissingFieldsInputs({
+  fields,
+  labels,
+  onSend,
+  disabled,
+}: {
+  fields: string[];
+  labels: Record<string, string>;
+  onSend: (text: string) => void | Promise<void>;
+  disabled?: boolean;
+}) {
+  const [values, setValues] = useState<Record<string, string>>({});
+
+  function submit(field: string) {
+    const value = (values[field] ?? "").trim();
+    if (!value || disabled) return;
+    const label = labels[field] ?? field;
+    onSend(`${label}: ${value}`);
+    setValues((prev) => ({ ...prev, [field]: "" }));
+  }
+
+  if (fields.length === 0) return null;
+
+  return (
+    <Stack gap={6} px="md" pb="xs">
+      <Text size="xs" c="dimmed" fw={600}>
+        Заполнить быстро:
+      </Text>
+      {fields.slice(0, 3).map((field) => {
+        const label = labels[field] ?? field;
+        const value = values[field] ?? "";
+        return (
+          <Group key={field} gap={6} wrap="nowrap">
+            <Text size="xs" c="dimmed" style={{ minWidth: 110, flexShrink: 0 }}>
+              {label}
+            </Text>
+            <TextInput
+              size="xs"
+              placeholder={`Введите ${label.toLowerCase()}`}
+              value={value}
+              disabled={disabled}
+              style={{ flex: 1 }}
+              onChange={(event) =>
+                setValues((prev) => ({
+                  ...prev,
+                  [field]: event.currentTarget.value,
+                }))
+              }
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  submit(field);
+                }
+              }}
+            />
+            <ActionIcon
+              size="md"
+              color="teal"
+              variant="light"
+              aria-label={`Отправить ${label}`}
+              disabled={!value.trim() || disabled}
+              onClick={() => submit(field)}
+            >
+              <IconSend size={14} stroke={1.5} />
+            </ActionIcon>
+          </Group>
+        );
+      })}
+    </Stack>
+  );
+}
+
 export function ChatPage() {
   const { token } = useAuth();
   const me = useMe(Boolean(token));
@@ -190,15 +273,33 @@ export function ChatPage() {
   const updateTicketDraft = useUpdateTicketDraft();
   const tickets = useTickets();
   const [activeConversationId, setActiveConversationId] = useState<number>();
-  const [draftTicket, setDraftTicket] = useState<Ticket | null>(null);
+  // Черновики хранятся per-conversation, чтобы переключение чатов не стирало данные
+  const [draftTickets, setDraftTickets] = useState<Record<number, Ticket>>({});
   const [awaitingAiConversationId, setAwaitingAiConversationId] =
     useState<number>();
+  // Отслеживаем, для какого диалога идёт отправка — чтобы loading не «протекал» в другие чаты
+  const [sendingConvId, setSendingConvId] = useState<number | undefined>();
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const [composerText, setComposerText] = useState("");
 
   const activeConversation = useMemo(() => {
     return conversations.data?.find((item) => item.id === activeConversationId);
   }, [activeConversationId, conversations.data]);
+
+  // Диалоги отсортированы: новые сверху
+  const sortedConversations = useMemo(
+    () =>
+      [...(conversations.data ?? [])].sort(
+        (a, b) =>
+          new Date(b.created_at ?? 0).getTime() -
+          new Date(a.created_at ?? 0).getTime(),
+      ),
+    [conversations.data],
+  );
+
+  // Черновик для текущего активного диалога
+  const draftTicket =
+    activeConversationId != null ? (draftTickets[activeConversationId] ?? null) : null;
 
   const restoredTicket = useMemo(() => {
     if (!activeConversationId) {
@@ -216,10 +317,8 @@ export function ChatPage() {
     );
   }, [activeConversationId, tickets.data]);
 
-  const activeTicket =
-    draftTicket?.conversation_id === activeConversationId
-      ? draftTicket
-      : restoredTicket;
+  // draftTickets[activeConversationId] всегда привязан к нужному диалогу
+  const activeTicket = draftTicket ?? restoredTicket;
 
   // Потенциальные дубликаты — открытые тикеты пользователя с тем же
   // affected_item или (department + request_type). Считаем здесь, чтобы
@@ -256,10 +355,10 @@ export function ChatPage() {
   const missingFields = activeConversation?.intake_state?.missing_fields ?? [];
 
   useEffect(() => {
-    if (!activeConversationId && conversations.data?.length) {
-      setActiveConversationId(conversations.data[0].id);
+    if (!activeConversationId && sortedConversations.length) {
+      setActiveConversationId(sortedConversations[0].id);
     }
-  }, [activeConversationId, conversations.data]);
+  }, [activeConversationId, sortedConversations]);
 
   const messages = useMessages(activeConversationId, shouldPollMessages);
   const latestEscalationMessageId = useMemo(() => {
@@ -313,6 +412,7 @@ export function ChatPage() {
   async function handleSend(content: string) {
     try {
       const conversationId = await ensureConversation();
+      setSendingConvId(conversationId);
       const response = await sendMessage.mutateAsync({ conversationId, content });
       if (response.ai_job_id !== null && response.ai_job_id !== undefined) {
         setAwaitingAiConversationId(conversationId);
@@ -321,13 +421,14 @@ export function ChatPage() {
       }
     } catch {
       // Ошибка уже хранится в mutation/query state и показывается в Alert.
+    } finally {
+      setSendingConvId(undefined);
     }
   }
 
   async function handleNewConversation() {
     try {
       const conversation = await createConversation.mutateAsync();
-      setDraftTicket(null);
       setActiveConversationId(conversation.id);
     } catch {
       // Ошибка уже хранится в mutation state и показывается в Alert.
@@ -340,7 +441,7 @@ export function ChatPage() {
         conversationId,
         context,
       });
-      setDraftTicket(response.ticket);
+      setDraftTickets((prev) => ({ ...prev, [conversationId]: response.ticket }));
       setActiveConversationId(conversationId);
     } catch {
       // Ошибка уже хранится в mutation state и показывается в Alert.
@@ -348,24 +449,24 @@ export function ChatPage() {
   }
 
   async function handleConfirm() {
-    if (!activeTicket) {
+    if (!activeTicket || activeConversationId == null) {
       return;
     }
     try {
       const ticket = await confirmTicket.mutateAsync(activeTicket.id);
-      setDraftTicket(ticket);
+      setDraftTickets((prev) => ({ ...prev, [activeConversationId]: ticket }));
     } catch {
       // Ошибка уже хранится в mutation state и показывается в Alert.
     }
   }
 
   async function handleDecline() {
-    if (!activeTicket) {
+    if (!activeTicket || activeConversationId == null) {
       return;
     }
     try {
       const ticket = await declineTicket.mutateAsync(activeTicket.id);
-      setDraftTicket(ticket);
+      setDraftTickets((prev) => ({ ...prev, [activeConversationId]: ticket }));
       await conversations.refetch();
     } catch {
       // Ошибка уже хранится в mutation state и показывается в Alert.
@@ -373,7 +474,7 @@ export function ChatPage() {
   }
 
   async function handleSaveDraft(payload: TicketDraftUpdate) {
-    if (!activeTicket) {
+    if (!activeTicket || activeConversationId == null) {
       return;
     }
     try {
@@ -381,7 +482,7 @@ export function ChatPage() {
         ticketId: activeTicket.id,
         payload,
       });
-      setDraftTicket(ticket);
+      setDraftTickets((prev) => ({ ...prev, [activeConversationId]: ticket }));
     } catch {
       // Ошибка уже хранится в mutation state и показывается в Alert.
     }
@@ -454,12 +555,23 @@ export function ChatPage() {
                 />
               ))}
               {shouldPollMessages && (
-                <Group className="ai-processing-indicator" gap="xs">
-                  <Loader size="xs" />
-                  <Text size="sm" c="dimmed">
-                    {aiStageLabel}
-                  </Text>
-                </Group>
+                <div className="message-row ai">
+                  <Paper className="message-bubble ai thinking-bubble" withBorder>
+                    <Group gap="xs" mb={4} align="center">
+                      <Text size="xs" fw={600} c="dimmed">
+                        AI
+                      </Text>
+                    </Group>
+                    <Group gap={8} align="center">
+                      <span className="thinking-dots" aria-hidden>
+                        <span /> <span /> <span />
+                      </span>
+                      <Text size="sm" c="dimmed">
+                        {aiStageLabel}
+                      </Text>
+                    </Group>
+                  </Paper>
+                </div>
               )}
               <div ref={bottomRef} />
             </Stack>
@@ -470,26 +582,21 @@ export function ChatPage() {
               <Text size="sm">{activeConversation.intake_state.last_question}</Text>
             </Alert>
           )}
-          {/* Быстрые подсказки по незаполненным полям */}
+          {/* Inline-инпуты для незаполненных полей — пишешь значение и сразу send,
+              не нужно переключаться в composer и руками вводить "Email: ...". */}
           {missingFields.length > 0 && !composerDisabled && (
-            <Group gap="xs" px="md" pb="xs" wrap="wrap">
-              {missingFields.slice(0, 4).map((field) => (
-                <Button
-                  key={field}
-                  size="compact-xs"
-                  variant="light"
-                  color="blue"
-                  onClick={() =>
-                    setComposerText(`${INTAKE_FIELD_LABELS[field] ?? field}: `)
-                  }
-                >
-                  {INTAKE_FIELD_LABELS[field] ?? field}
-                </Button>
-              ))}
-            </Group>
+            <MissingFieldsInputs
+              fields={missingFields}
+              labels={INTAKE_FIELD_LABELS}
+              disabled={sendMessage.isPending}
+              onSend={handleSend}
+            />
           )}
           <Composer
-            loading={sendMessage.isPending || createConversation.isPending}
+            loading={
+              (sendMessage.isPending && sendingConvId === activeConversationId) ||
+              createConversation.isPending
+            }
             disabled={composerDisabled}
             value={composerText}
             onChange={setComposerText}
@@ -505,8 +612,8 @@ export function ChatPage() {
             <Badge variant="light">{conversations.data?.length ?? 0}</Badge>
           </Group>
           <Stack gap="xs" className="conversation-list">
-            {conversations.data?.length ? (
-              conversations.data.map((conversation) => (
+            {sortedConversations.length ? (
+              sortedConversations.map((conversation) => (
                 <button
                   key={conversation.id}
                   type="button"
@@ -514,7 +621,6 @@ export function ChatPage() {
                     conversation.id === activeConversationId ? " active" : ""
                   }`}
                   onClick={() => {
-                    setDraftTicket(null);
                     setActiveConversationId(conversation.id);
                   }}
                 >
@@ -536,11 +642,13 @@ export function ChatPage() {
                 Диалогов пока нет.
               </Text>
             )}
+
           </Stack>
         </Paper>
 
-        {/* Панель сбора данных — показывается параллельно с черновиком пока intake активен */}
-        {activeConversation?.intake_state?.mode && (
+        {/* IntakeStatePanel показываем только пока нет черновика — после эскалации
+            те же данные уже видны в PrefilledTicketPanel и дублировать смысла нет. */}
+        {activeConversation?.intake_state?.mode && !activeTicket && (
           <IntakeStatePanel state={activeConversation.intake_state} />
         )}
         {activeTicket ? (

@@ -2,6 +2,7 @@ import {
   Alert,
   Badge,
   Button,
+  Checkbox,
   Group,
   LoadingOverlay,
   Paper,
@@ -12,12 +13,16 @@ import {
   TextInput,
   Title,
 } from "@mantine/core";
+import { useDebouncedValue } from "@mantine/hooks";
 import { IconDownload } from "@tabler/icons-react";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useMe } from "../api/auth";
 import { getApiError } from "../api/client";
-import { useTickets } from "../api/tickets";
+import { useBulkUpdateTickets, useTickets } from "../api/tickets";
+import type { TicketBulkAction, TicketBulkResponse } from "../api/types";
+import { BulkActionBar } from "../components/tickets/BulkActionBar";
+import { BulkResultModal } from "../components/tickets/BulkResultModal";
 import { TicketCard } from "../components/tickets/TicketCard";
 import { downloadTicketsCsv } from "../lib/csv";
 import { getStatusLabel } from "../lib/ticketLabels";
@@ -213,15 +218,51 @@ function compareTicketsByQueue(left: Parameters<typeof getTicketSortScore>[0], r
 export function TicketsPage() {
   const { token } = useAuth();
   const me = useMe(Boolean(token));
-  const tickets = useTickets();
   const [search, setSearch] = useState("");
+  const [debouncedSearch] = useDebouncedValue(search, 400);
+  const tickets = useTickets({ search: debouncedSearch });
+  const bulkUpdate = useBulkUpdateTickets();
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [departmentFilter, setDepartmentFilter] = useState<string | null>(null);
   const [slaFilter, setSlaFilter] = useState<string | null>(null);
   const [queue, setQueue] = useState<TicketQueue>("active");
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [bulkResult, setBulkResult] = useState<TicketBulkResponse | null>(null);
 
   const role = me.data?.role;
   const isOperator = role === "admin" || role === "agent";
+  const isAdmin = role === "admin";
+
+  // Clear selection when queue changes to avoid stale cross-queue selections
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [queue]);
+
+  const toggleSelect = useCallback((id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
+
+  async function handleBulkAction(action: TicketBulkAction, force?: boolean) {
+    if (selectedIds.size === 0) return;
+    try {
+      const result = await bulkUpdate.mutateAsync({
+        ticket_ids: Array.from(selectedIds),
+        action,
+        ...(force ? { force: true } : {}),
+      });
+      setBulkResult(result);
+      clearSelection();
+    } catch {
+      // errors shown by BulkActionBar loading state; API error visible in console
+    }
+  }
   const queueOptions = isOperator ? OPERATOR_QUEUES : USER_QUEUES;
   const activeQueue =
     queueOptions.some((item) => item.value === queue) ? queue : "active";
@@ -244,23 +285,8 @@ export function TicketsPage() {
   }, [queueOptions, tickets.data]);
 
   const visibleTickets = useMemo(() => {
-    const query = search.trim().toLowerCase();
     return tickets.data?.filter((ticket) => {
       const matchesCurrentQueue = matchesQueue(ticket, activeQueue);
-      const matchesSearch =
-        !query ||
-        [
-          ticket.title,
-          ticket.body,
-          ticket.requester_name,
-          ticket.requester_email,
-          ticket.office,
-          ticket.affected_item,
-          ticket.request_type,
-          ticket.request_details,
-        ]
-          .filter(Boolean)
-          .some((value) => value!.toLowerCase().includes(query));
       const matchesStatus = !statusFilter || ticket.status === statusFilter;
       const matchesDepartment =
         !departmentFilter || ticket.department === departmentFilter;
@@ -268,15 +294,9 @@ export function TicketsPage() {
         !slaFilter ||
         (slaFilter === "overdue" && ticket.is_sla_breached) ||
         (slaFilter === "active" && ticket.sla_deadline_at && !ticket.is_sla_breached);
-      return (
-        matchesCurrentQueue &&
-        matchesSearch &&
-        matchesStatus &&
-        matchesDepartment &&
-        matchesSla
-      );
+      return matchesCurrentQueue && matchesStatus && matchesDepartment && matchesSla;
     }).sort(compareTicketsByQueue);
-  }, [activeQueue, departmentFilter, search, slaFilter, statusFilter, tickets.data]);
+  }, [activeQueue, departmentFilter, slaFilter, statusFilter, tickets.data]);
 
   const activeCount = tickets.data?.filter(isActiveTicket).length ?? 0;
   const overdueCount =
@@ -302,21 +322,23 @@ export function TicketsPage() {
               {description}
             </Text>
           </div>
-          <Button
-            variant="light"
-            size="sm"
-            leftSection={<IconDownload size={16} />}
-            disabled={!visibleTickets || visibleTickets.length === 0}
-            onClick={() => {
-              if (!visibleTickets?.length) return;
-              const today = new Date().toISOString().slice(0, 10);
-              // Имя файла включает текущую очередь — чтобы при экспорте
-              // нескольких срезов файлы не перетирали друг друга в Downloads.
-              downloadTicketsCsv(visibleTickets, `tickets-${activeQueue}-${today}.csv`);
-            }}
-          >
-            Экспорт CSV
-          </Button>
+          {isOperator && (
+            <Button
+              variant="light"
+              size="sm"
+              leftSection={<IconDownload size={16} />}
+              disabled={!visibleTickets || visibleTickets.length === 0}
+              onClick={() => {
+                if (!visibleTickets?.length) return;
+                const today = new Date().toISOString().slice(0, 10);
+                // Имя файла включает текущую очередь — чтобы при экспорте
+                // нескольких срезов файлы не перетирали друг друга в Downloads.
+                downloadTicketsCsv(visibleTickets, `tickets-${activeQueue}-${today}.csv`);
+              }}
+            >
+              Экспорт CSV
+            </Button>
+          )}
         </Group>
 
         {isOperator && (
@@ -406,6 +428,33 @@ export function TicketsPage() {
           </Alert>
         )}
 
+        {isOperator && visibleTickets && visibleTickets.length > 0 && (
+          <Group justify="flex-start" mb="xs">
+            <Checkbox
+              label={
+                selectedIds.size === visibleTickets.length
+                  ? "Снять всё"
+                  : `Выбрать все (${visibleTickets.length})`
+              }
+              checked={
+                visibleTickets.length > 0 &&
+                selectedIds.size === visibleTickets.length
+              }
+              indeterminate={
+                selectedIds.size > 0 &&
+                selectedIds.size < visibleTickets.length
+              }
+              onChange={() => {
+                if (selectedIds.size === visibleTickets.length) {
+                  clearSelection();
+                } else {
+                  setSelectedIds(new Set(visibleTickets.map((t) => t.id)));
+                }
+              }}
+            />
+          </Group>
+        )}
+
         {!visibleTickets?.length && !tickets.isLoading ? (
           <div className="empty-state tickets">
             <Text fw={600}>
@@ -419,11 +468,32 @@ export function TicketsPage() {
                 key={ticket.id}
                 ticket={ticket}
                 currentUserRole={me.data?.role}
+                selectable={isOperator}
+                selected={selectedIds.has(ticket.id)}
+                onSelect={toggleSelect}
               />
             ))}
           </SimpleGrid>
         )}
+
+        {isOperator && (
+          <BulkActionBar
+            selectedCount={selectedIds.size}
+            isAdmin={isAdmin}
+            loading={bulkUpdate.isPending}
+            onAction={handleBulkAction}
+            onClear={clearSelection}
+          />
+        )}
       </Paper>
+
+      <BulkResultModal
+        opened={bulkResult !== null}
+        onClose={() => setBulkResult(null)}
+        applied={bulkResult?.applied_count ?? 0}
+        requested={bulkResult?.requested_count ?? 0}
+        rejected={bulkResult?.rejected ?? []}
+      />
     </div>
   );
 }

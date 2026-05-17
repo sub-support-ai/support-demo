@@ -23,7 +23,9 @@ def upgrade() -> None:
     )
     op.add_column(
         "tickets",
-        sa.Column("sla_escalation_count", sa.Integer(), nullable=False, server_default=sa.text("0")),
+        sa.Column(
+            "sla_escalation_count", sa.Integer(), nullable=False, server_default=sa.text("0")
+        ),
     )
     op.create_index(
         op.f("ix_tickets_sla_escalated_at"), "tickets", ["sla_escalated_at"], unique=False

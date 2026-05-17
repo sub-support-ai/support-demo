@@ -55,9 +55,7 @@ class KnowledgeArticle(Base):
     # Свежий feedback весит больше старого (half-life 30 дней) — статья получает
     # шанс «реабилитироваться» если её исправили. Пересчитывается в
     # refresh_article_quality_grade одновременно с quality_grade.
-    weighted_feedback_score: Mapped[float] = mapped_column(
-        Float, default=0.0, nullable=False
-    )
+    weighted_feedback_score: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

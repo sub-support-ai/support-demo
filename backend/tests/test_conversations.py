@@ -363,8 +363,8 @@ async def test_failed_knowledge_answer_followup_creates_escalation_card(
     assert ai_msg["requires_escalation"] is True
     assert ai_msg["ai_escalate"] is True
     assert ai_msg["sources"] is None
-    assert "инструкция не решила проблему" in ai_msg["content"]
-    assert "соберу данные для заявки" in ai_msg["content"]
+    assert "инструкция из базы знаний не решает" in ai_msg["content"]
+    assert "черновик запроса" in ai_msg["content"]
     assert "Teams" not in ai_msg["content"]
 
 
@@ -437,7 +437,7 @@ async def test_message_after_escalation_prompt_updates_intake_state(
     assert [message["role"] for message in messages] == ["user", "ai", "user", "ai", "user", "ai"]
     assert messages[-2]["content"] == "Офис Южный, кабинет 210, монитор Dell"
     assert "Teams" not in messages[-1]["content"]
-    assert "Уже понял" in messages[-1]["content"]
+    assert "Принял дополнительный контекст" in messages[-1]["content"]
 
     conversations = await client.get("/api/v1/conversations/", headers=headers)
     assert conversations.status_code == 200
@@ -650,10 +650,10 @@ async def test_create_draft_intent_forces_escalation_card(
     )
     assert second_history.status_code == 200
     ai_msg = second_history.json()[-1]
-    assert ai_msg["ai_confidence"] == 0.55
+    assert ai_msg["ai_confidence"] == 0.5  # INTAKE_CONFIDENCE
     assert ai_msg["ai_escalate"] is True
     assert ai_msg["requires_escalation"] is True
-    assert "Соберу данные для заявки" in ai_msg["content"]
+    assert "Соберу данные для черновика обращения" in ai_msg["content"]
 
 
 # ── POST /escalate: 1-click autofill создаёт тикет ──────────────────────────
@@ -1087,20 +1087,6 @@ async def test_ai_log_records_latency_passed_through_payload(
 
     captured_latency_ms = 137  # уникальное число, чтобы исключить совпадение
 
-    async def _stub_kb_answer(db, messages):
-        return {
-            "answer": "stubbed kb answer",
-            "confidence": 0.85,
-            "escalate": False,
-            "sources": [{"title": "stub", "url": None}],
-            "model_version": "knowledge-base-test",
-            "knowledge_article_id": None,  # без записи фидбека (нет статьи в БД)
-            "knowledge_score": 5.0,
-            "knowledge_decision": "answer",
-            "knowledge_query": "stub",
-            LATENCY_PAYLOAD_KEY: captured_latency_ms,
-        }
-
     # knowledge_article_id=None означает, что AILog не запишется (в коде
     # ветка только для KB-source с реальной статьёй). Поэтому подсовываем
     # реальную статью и в payload — её id.
@@ -1116,10 +1102,21 @@ async def test_ai_log_records_latency_passed_through_payload(
     db_session.add(article)
     await db_session.flush()
 
-    async def _stub_kb_with_article(db, messages):
-        payload = await _stub_kb_answer(db, messages)
-        payload["knowledge_article_id"] = article.id
-        return payload
+    async def _stub_kb_with_article(db, messages, **kwargs):
+        # Принимаем **kwargs чтобы совместимо обработать exclude_article_ids и filters,
+        # которые find_knowledge_answer получает как keyword-only аргументы.
+        return {
+            "answer": "stubbed kb answer",
+            "confidence": 0.85,
+            "escalate": False,
+            "sources": [{"title": "stub", "url": None}],
+            "model_version": "knowledge-base-test",
+            "knowledge_article_id": article.id,
+            "knowledge_score": 5.0,
+            "knowledge_decision": "answer",
+            "knowledge_query": "stub",
+            LATENCY_PAYLOAD_KEY: captured_latency_ms,
+        }
 
     monkeypatch.setattr(conversation_ai, "find_knowledge_answer", _stub_kb_with_article)
 

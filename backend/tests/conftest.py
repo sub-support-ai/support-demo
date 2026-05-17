@@ -34,6 +34,37 @@ _ADD_SEARCH_VECTOR_SQL = sa.text(
     """
 )
 
+_ADD_TICKET_SEARCH_VECTOR_SQL = sa.text(
+    """
+    ALTER TABLE tickets
+    ADD COLUMN IF NOT EXISTS search_vector tsvector
+    GENERATED ALWAYS AS (
+        setweight(to_tsvector('russian'::regconfig, coalesce(title, '')), 'A') ||
+        setweight(to_tsvector('simple'::regconfig, coalesce(title, '')), 'A') ||
+        setweight(
+            to_tsvector(
+                'russian'::regconfig,
+                coalesce(body, '') || ' ' ||
+                coalesce(request_type, '') || ' ' ||
+                coalesce(ai_category, '') || ' ' ||
+                coalesce(affected_item, '')
+            ),
+            'B'
+        ) ||
+        setweight(
+            to_tsvector(
+                'russian'::regconfig,
+                coalesce(requester_name, '') || ' ' ||
+                coalesce(office, '') || ' ' ||
+                coalesce(request_details, '') || ' ' ||
+                coalesce(requester_email, '')
+            ),
+            'C'
+        )
+    ) STORED
+    """
+)
+
 # Отдельная база для тестов — не трогает рабочие данные.
 # По умолчанию используем SQLite, чтобы тесты проходили "из коробки"
 # без поднятого Postgres. При необходимости можно переопределить через env:
@@ -72,6 +103,7 @@ async def setup_test_db():
         await conn.run_sync(Base.metadata.create_all)
         if "postgresql" in TEST_DATABASE_URL:
             await conn.execute(_ADD_SEARCH_VECTOR_SQL)
+            await conn.execute(_ADD_TICKET_SEARCH_VECTOR_SQL)
     yield
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)

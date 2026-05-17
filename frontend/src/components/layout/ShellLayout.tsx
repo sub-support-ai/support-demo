@@ -16,6 +16,8 @@ import { useState } from "react";
 import {
   IconBell,
   IconChartBar,
+  IconChevronLeft,
+  IconChevronRight,
   IconDatabaseSearch,
   IconFileText,
   IconListCheck,
@@ -37,6 +39,7 @@ import { useAuth } from "../../stores/auth";
 
 export function ShellLayout() {
   const { token, logout } = useAuth();
+  const [navbarOpened, setNavbarOpened] = useState(true);
   const [notificationsOpened, setNotificationsOpened] = useState(false);
   const { data: me } = useMe(Boolean(token));
   const unreadNotifications = useNotificationUnreadCount(Boolean(token));
@@ -75,8 +78,10 @@ export function ShellLayout() {
   return (
     <AppShell
       className={isChatPage ? "app-shell chat-shell" : "app-shell"}
+      transitionDuration={250}
+      transitionTimingFunction="ease"
       header={{ height: 58 }}
-      navbar={{ width: 240, breakpoint: 0 }}
+      navbar={{ width: navbarOpened ? 240 : 48, breakpoint: 0 }}
     >
       <AppShell.Header className="app-header">
         <Group justify="space-between" h="100%" px="md">
@@ -85,27 +90,28 @@ export function ShellLayout() {
             {me?.role && <Badge variant="light">{me.role}</Badge>}
           </Group>
           <Group gap="sm">
-            <Menu
-              width={360}
-              position="bottom-end"
-              shadow="md"
-              opened={notificationsOpened}
-              onChange={setNotificationsOpened}
-            >
-              <Menu.Target>
-                <Indicator
-                  disabled={unreadNotificationCount === 0}
-                  label={unreadNotificationCount}
-                  size={18}
-                  color="red"
-                  offset={4}
-                >
-                  <ActionIcon variant="subtle" color="gray" aria-label="Уведомления">
-                    <IconBell size={20} />
-                  </ActionIcon>
-                </Indicator>
-              </Menu.Target>
-              <Menu.Dropdown>
+            <Group gap={6} align="center">
+              <Menu
+                width={360}
+                position="bottom-end"
+                shadow="md"
+                opened={notificationsOpened}
+                onChange={setNotificationsOpened}
+              >
+                <Menu.Target>
+                  <Indicator
+                    disabled={unreadNotificationCount === 0}
+                    label={unreadNotificationCount}
+                    size={18}
+                    color="red"
+                    offset={4}
+                  >
+                    <ActionIcon variant="subtle" color="gray" aria-label="Уведомления">
+                      <IconBell size={18} stroke={1.5} />
+                    </ActionIcon>
+                  </Indicator>
+                </Menu.Target>
+                <Menu.Dropdown>
                 <Group justify="space-between" px="sm" py={6}>
                   <Text fw={600} size="sm">
                     Уведомления
@@ -151,13 +157,14 @@ export function ShellLayout() {
                     </Text>
                   )}
                 </ScrollArea>
-              </Menu.Dropdown>
-            </Menu>
-            {me && (
-              <Text size="sm" c="dimmed">
-                {me.username}
-              </Text>
-            )}
+                </Menu.Dropdown>
+              </Menu>
+              {me && (
+                <Text size="sm" c="dimmed">
+                  {me.username}
+                </Text>
+              )}
+            </Group>
             <Button
               variant="subtle"
               color="gray"
@@ -170,61 +177,86 @@ export function ShellLayout() {
         </Group>
       </AppShell.Header>
 
-      <AppShell.Navbar p="sm">
-        <NavLink
-          component={RouterNavLink}
-          to="/dashboard"
-          label="Обзор"
-          leftSection={<IconChartBar size={18} />}
-          active={location.pathname.startsWith("/dashboard")}
-        />
-        <NavLink
-          component={RouterNavLink}
-          to="/chat"
-          label="Чат"
-          leftSection={<IconMessageCircle size={18} />}
-          active={location.pathname.startsWith("/chat")}
-        />
-        <NavLink
-          component={RouterNavLink}
-          to="/tickets"
-          label={requestsLabel}
-          leftSection={<IconFileText size={18} />}
-          rightSection={
-            requestAlertCount > 0 ? (
-              <Badge size="xs" color={requestAlertColor} variant="filled">
-                {requestAlertCount}
-              </Badge>
-            ) : undefined
-          }
-          active={location.pathname.startsWith("/tickets")}
-        />
-        {me?.role === "admin" && (
-          <NavLink
-            component={RouterNavLink}
-            to="/knowledge"
-            label="База знаний"
-            leftSection={<IconDatabaseSearch size={18} />}
-            active={location.pathname.startsWith("/knowledge")}
-          />
-        )}
-        {me?.role === "admin" && (
-          <NavLink
-            component={RouterNavLink}
-            to="/jobs"
-            label="Очереди"
-            leftSection={<IconListCheck size={18} />}
-            active={location.pathname.startsWith("/jobs")}
-          />
-        )}
-        {me?.role === "admin" && (
-          <NavLink
-            component={RouterNavLink}
-            to="/ai-quality"
-            label="Качество AI"
-            leftSection={<IconRobot size={18} />}
-            active={location.pathname.startsWith("/ai-quality")}
-          />
+      <AppShell.Navbar p={navbarOpened ? "sm" : 4} style={{ overflow: "hidden" }}>
+        {navbarOpened ? (
+          <>
+            <AppShell.Section grow>
+              <NavLink
+                component={RouterNavLink}
+                to="/dashboard"
+                label="Обзор"
+                leftSection={<IconChartBar size={18} />}
+                active={location.pathname.startsWith("/dashboard")}
+              />
+              <NavLink
+                component={RouterNavLink}
+                to="/chat"
+                label="Чат"
+                leftSection={<IconMessageCircle size={18} />}
+                active={location.pathname.startsWith("/chat")}
+              />
+              <NavLink
+                component={RouterNavLink}
+                to="/tickets"
+                label={requestsLabel}
+                leftSection={<IconFileText size={18} />}
+                rightSection={
+                  requestAlertCount > 0 ? (
+                    <Badge size="xs" color={requestAlertColor} variant="filled">
+                      {requestAlertCount}
+                    </Badge>
+                  ) : undefined
+                }
+                active={location.pathname.startsWith("/tickets")}
+              />
+              {me?.role === "admin" && (
+                <NavLink
+                  component={RouterNavLink}
+                  to="/knowledge"
+                  label="База знаний"
+                  leftSection={<IconDatabaseSearch size={18} />}
+                  active={location.pathname.startsWith("/knowledge")}
+                />
+              )}
+              {me?.role === "admin" && (
+                <NavLink
+                  component={RouterNavLink}
+                  to="/jobs"
+                  label="Очереди"
+                  leftSection={<IconListCheck size={18} />}
+                  active={location.pathname.startsWith("/jobs")}
+                />
+              )}
+              {me?.role === "admin" && (
+                <NavLink
+                  component={RouterNavLink}
+                  to="/ai-quality"
+                  label="Качество AI"
+                  leftSection={<IconRobot size={18} />}
+                  active={location.pathname.startsWith("/ai-quality")}
+                />
+              )}
+            </AppShell.Section>
+            <AppShell.Section>
+              <Divider mb={4} />
+              <NavLink
+                label="Свернуть"
+                leftSection={<IconChevronLeft size={18} stroke={1.5} />}
+                onClick={() => setNavbarOpened(false)}
+              />
+            </AppShell.Section>
+          </>
+        ) : (
+          <div style={{ display: "flex", justifyContent: "center", paddingTop: 4 }}>
+            <ActionIcon
+              variant="subtle"
+              color="gray"
+              onClick={() => setNavbarOpened(true)}
+              aria-label="Развернуть панель"
+            >
+              <IconChevronRight size={18} stroke={1.5} />
+            </ActionIcon>
+          </div>
         )}
       </AppShell.Navbar>
 

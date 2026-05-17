@@ -113,7 +113,11 @@ class Ticket(Base):
         String(30), default="pending_user", nullable=False, index=True
     )
     ticket_kind: Mapped[str] = mapped_column(
-        String(30), nullable=False, default="incident", server_default=text("'incident'"), index=True
+        String(30),
+        nullable=False,
+        default="incident",
+        server_default=text("'incident'"),
+        index=True,
     )
 
     # Кто и как создал тикет

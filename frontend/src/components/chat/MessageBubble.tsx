@@ -1,4 +1,9 @@
-import { Badge, Button, Group, Paper, Text, Tooltip } from "@mantine/core";
+import { ActionIcon, Badge, Group, Paper, Text, Tooltip } from "@mantine/core";
+import {
+  IconThumbDown,
+  IconThumbUp,
+  IconX,
+} from "@tabler/icons-react";
 import { useState } from "react";
 
 import { useSubmitKnowledgeFeedback } from "../../api/knowledge";
@@ -69,32 +74,58 @@ function KnowledgeFeedbackActions({ message }: { message: Message }) {
     }
   }
 
+  // После выбора фидбека показываем только результат, без других кнопок.
+  if (selected) {
+    return (
+      <Group gap={6} mt="xs" align="center">
+        <Text size="xs" c="dimmed">
+          Спасибо за оценку
+        </Text>
+      </Group>
+    );
+  }
+
   return (
-    <Group gap="xs" mt="sm">
-      <Button
-        size="xs"
-        variant={selected === "helped" ? "filled" : "light"}
-        loading={submitFeedback.isPending && selected === "helped"}
-        onClick={() => handleFeedback("helped")}
-      >
-        Помогло
-      </Button>
-      <Button
-        size="xs"
-        variant={selected === "not_helped" ? "filled" : "subtle"}
-        loading={submitFeedback.isPending && selected === "not_helped"}
-        onClick={() => handleFeedback("not_helped")}
-      >
-        Не помогло
-      </Button>
-      <Button
-        size="xs"
-        variant={selected === "not_relevant" ? "filled" : "subtle"}
-        loading={submitFeedback.isPending && selected === "not_relevant"}
-        onClick={() => handleFeedback("not_relevant")}
-      >
-        Не подходит
-      </Button>
+    <Group gap={4} mt="xs" align="center">
+      <Text size="xs" c="dimmed" mr={4}>
+        Помог ответ?
+      </Text>
+      <Tooltip label="Помогло" withArrow>
+        <ActionIcon
+          variant="subtle"
+          color="teal"
+          size="sm"
+          loading={submitFeedback.isPending && selected === "helped"}
+          onClick={() => handleFeedback("helped")}
+          aria-label="Помогло"
+        >
+          <IconThumbUp size={16} stroke={1.5} />
+        </ActionIcon>
+      </Tooltip>
+      <Tooltip label="Не помогло" withArrow>
+        <ActionIcon
+          variant="subtle"
+          color="gray"
+          size="sm"
+          loading={submitFeedback.isPending && selected === "not_helped"}
+          onClick={() => handleFeedback("not_helped")}
+          aria-label="Не помогло"
+        >
+          <IconThumbDown size={16} stroke={1.5} />
+        </ActionIcon>
+      </Tooltip>
+      <Tooltip label="Не относится к моему вопросу" withArrow>
+        <ActionIcon
+          variant="subtle"
+          color="gray"
+          size="sm"
+          loading={submitFeedback.isPending && selected === "not_relevant"}
+          onClick={() => handleFeedback("not_relevant")}
+          aria-label="Не подходит"
+        >
+          <IconX size={16} stroke={1.5} />
+        </ActionIcon>
+      </Tooltip>
     </Group>
   );
 }

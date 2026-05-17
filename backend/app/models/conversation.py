@@ -54,6 +54,11 @@ class Conversation(Base):
     catalog_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
     intake_fields: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
+    # Агрегированное состояние сбора данных для черновика (офис, тип, поля и т.д.).
+    # Пересчитывается после каждого AI-ответа в generate_ai_message.
+    # Используется фронтом для отображения прогресса заполнения формы запроса.
+    intake_state: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

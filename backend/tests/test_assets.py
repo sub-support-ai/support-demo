@@ -314,9 +314,7 @@ async def test_list_assets_filter_by_type(client: AsyncClient):
 async def test_list_assets_filter_by_status(client: AsyncClient):
     _, token = await _register_admin(client, "list03")
 
-    await _create_asset(
-        client, token, {"status": "in_repair", "serial_number": "SN-REPAIR-001"}
-    )
+    await _create_asset(client, token, {"status": "in_repair", "serial_number": "SN-REPAIR-001"})
     await _create_asset(client, token, {"status": "active", "serial_number": "SN-ACTIVE-001"})
 
     resp = await client.get(
