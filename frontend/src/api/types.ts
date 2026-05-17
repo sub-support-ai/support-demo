@@ -65,6 +65,8 @@ export interface RequestContextDefaults {
   office_source?: string | null;
   office_options: string[];
   affected_item_options: string[];
+  primary_asset?: AssetSummary | null;
+  assets: AssetSummary[];
 }
 
 export interface Conversation {
@@ -277,10 +279,11 @@ export interface ResolveTicketPayload {
 }
 
 export interface EscalationContext {
-  requester_name: string;
-  requester_email: string;
-  office: string;
-  affected_item: string;
+  requester_name?: string | null;
+  requester_email?: string | null;
+  office?: string | null;
+  affected_item?: string | null;
+  asset_id?: number | null;
   request_type?: string | null;
   request_details?: string | null;
 }
@@ -462,6 +465,7 @@ export interface TicketStats {
   avg_ttfr_seconds: number | null;
   /** Среднее время полного решения тикета (секунды). null если данных нет. */
   avg_ttr_seconds: number | null;
+  avg_csat_score: number | null;
 }
 
 export interface AIStats {

@@ -24,6 +24,8 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
 
+from app.models.asset import Asset
+
 
 @pytest.fixture(autouse=True)
 def _stub_ai_services(monkeypatch: pytest.MonkeyPatch):
@@ -130,7 +132,7 @@ def test_dialog_policy_routes_failed_kb_followup_before_rag():
     assert policy.action == ConversationAction.ESCALATE
     assert policy.requires_draft is True
     assert policy.avoid_repeating_kb is False
-    assert "случайную статью" in (policy.answer_override or "")
+    assert "оформим запрос специалисту" in (policy.answer_override or "")
 
 
 def test_dialog_policy_routes_direct_hardware_handoff_before_rag():
@@ -149,7 +151,7 @@ def test_dialog_policy_routes_direct_hardware_handoff_before_rag():
     assert policy.intent == ConversationIntent.DIRECT_HANDOFF
     assert policy.action == ConversationAction.ESCALATE
     assert policy.requires_draft is True
-    assert "Не буду начинать с общей инструкции" in (policy.answer_override or "")
+    assert "нужна проверка или замена оборудования" in (policy.answer_override or "")
 
 
 def test_dialog_policy_keeps_collecting_context_after_handoff_prompt():
@@ -176,7 +178,7 @@ def test_dialog_policy_keeps_collecting_context_after_handoff_prompt():
     assert policy.intent == ConversationIntent.COLLECT_CONTEXT
     assert policy.action == ConversationAction.ESCALATE
     assert policy.requires_draft is True
-    assert "Не буду снова искать статью" in (policy.answer_override or "")
+    assert "оформить понятный запрос специалисту" in (policy.answer_override or "")
 
 
 async def register_user(client: AsyncClient, suffix: str) -> tuple[int, str]:
@@ -743,7 +745,7 @@ async def test_escalate_creates_prefilled_ticket(client: AsyncClient, db_session
 
 
 @pytest.mark.asyncio
-async def test_escalate_blank_requester_name_returns_422(
+async def test_escalate_blank_requester_name_uses_profile_fallback(
     client: AsyncClient,
     db_session,
 ):
@@ -772,11 +774,14 @@ async def test_escalate_blank_requester_name_returns_422(
         headers=headers,
     )
 
-    assert resp.status_code == 422
+    assert resp.status_code == 201
+    ticket = resp.json()["ticket"]
+    assert ticket["requester_name"] == "convuserblankrequester"
+    assert ticket["requester_email"] == "blank.requester@example.com"
 
 
 @pytest.mark.asyncio
-async def test_escalate_without_context_returns_422(client: AsyncClient, db_session):
+async def test_escalate_with_empty_context_creates_partial_draft(client: AsyncClient, db_session):
     _, token = await register_user(client, "nocontext")
     headers = {"Authorization": f"Bearer {token}"}
 
@@ -791,10 +796,54 @@ async def test_escalate_without_context_returns_422(client: AsyncClient, db_sess
 
     resp = await client.post(
         f"/api/v1/conversations/{conv_id}/escalate",
+        json={},
         headers=headers,
     )
 
-    assert resp.status_code == 422
+    assert resp.status_code == 201
+    ticket = resp.json()["ticket"]
+    assert ticket["requester_name"] == "convusernocontext"
+    assert ticket["requester_email"] == "convusernocontext@example.com"
+    assert ticket["affected_item"] == "VPN"
+    assert ticket["confirmed_by_user"] is False
+
+
+@pytest.mark.asyncio
+async def test_escalate_uses_user_asset_context(client: AsyncClient, db_session):
+    user_id, token = await register_user(client, "assetcontext")
+    headers = {"Authorization": f"Bearer {token}"}
+    db_session.add(
+        Asset(
+            asset_type="laptop",
+            name="Latitude 5440",
+            serial_number="PC-5440",
+            owner_user_id=user_id,
+            office="North office",
+            status="active",
+        )
+    )
+    await db_session.flush()
+
+    conv_id = (await client.post("/api/v1/conversations/", headers=headers)).json()["id"]
+    message_resp = await client.post(
+        f"/api/v1/conversations/{conv_id}/messages",
+        json={"content": "РџРѕСЂРІР°Р»СЃСЏ РїСЂРѕРІРѕРґ РЅР° СЂР°Р±РѕС‡РµРј РјРµСЃС‚Рµ"},
+        headers=headers,
+    )
+    assert message_resp.status_code == 201
+    await process_next_ai_job(db_session)
+
+    resp = await client.post(
+        f"/api/v1/conversations/{conv_id}/escalate",
+        json={"context": {"request_details": "РџСЂРѕРІРѕРґ РїРѕРІСЂРµР¶РґРµРЅ"}},
+        headers=headers,
+    )
+
+    assert resp.status_code == 201
+    ticket = resp.json()["ticket"]
+    assert ticket["asset_id"] is not None
+    assert ticket["office"] == "North office"
+    assert ticket["affected_item"] == "Latitude 5440 (PC-5440)"
 
 
 @pytest.mark.asyncio
