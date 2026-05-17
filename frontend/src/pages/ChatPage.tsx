@@ -190,15 +190,33 @@ export function ChatPage() {
   const updateTicketDraft = useUpdateTicketDraft();
   const tickets = useTickets();
   const [activeConversationId, setActiveConversationId] = useState<number>();
-  const [draftTicket, setDraftTicket] = useState<Ticket | null>(null);
+  // Черновики хранятся per-conversation, чтобы переключение чатов не стирало данные
+  const [draftTickets, setDraftTickets] = useState<Record<number, Ticket>>({});
   const [awaitingAiConversationId, setAwaitingAiConversationId] =
     useState<number>();
+  // Отслеживаем, для какого диалога идёт отправка — чтобы loading не «протекал» в другие чаты
+  const [sendingConvId, setSendingConvId] = useState<number | undefined>();
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const [composerText, setComposerText] = useState("");
 
   const activeConversation = useMemo(() => {
     return conversations.data?.find((item) => item.id === activeConversationId);
   }, [activeConversationId, conversations.data]);
+
+  // Диалоги отсортированы: новые сверху
+  const sortedConversations = useMemo(
+    () =>
+      [...(conversations.data ?? [])].sort(
+        (a, b) =>
+          new Date(b.created_at ?? 0).getTime() -
+          new Date(a.created_at ?? 0).getTime(),
+      ),
+    [conversations.data],
+  );
+
+  // Черновик для текущего активного диалога
+  const draftTicket =
+    activeConversationId != null ? (draftTickets[activeConversationId] ?? null) : null;
 
   const restoredTicket = useMemo(() => {
     if (!activeConversationId) {
@@ -216,10 +234,8 @@ export function ChatPage() {
     );
   }, [activeConversationId, tickets.data]);
 
-  const activeTicket =
-    draftTicket?.conversation_id === activeConversationId
-      ? draftTicket
-      : restoredTicket;
+  // draftTickets[activeConversationId] всегда привязан к нужному диалогу
+  const activeTicket = draftTicket ?? restoredTicket;
 
   // Потенциальные дубликаты — открытые тикеты пользователя с тем же
   // affected_item или (department + request_type). Считаем здесь, чтобы
@@ -256,10 +272,10 @@ export function ChatPage() {
   const missingFields = activeConversation?.intake_state?.missing_fields ?? [];
 
   useEffect(() => {
-    if (!activeConversationId && conversations.data?.length) {
-      setActiveConversationId(conversations.data[0].id);
+    if (!activeConversationId && sortedConversations.length) {
+      setActiveConversationId(sortedConversations[0].id);
     }
-  }, [activeConversationId, conversations.data]);
+  }, [activeConversationId, sortedConversations]);
 
   const messages = useMessages(activeConversationId, shouldPollMessages);
   const latestEscalationMessageId = useMemo(() => {
@@ -313,6 +329,7 @@ export function ChatPage() {
   async function handleSend(content: string) {
     try {
       const conversationId = await ensureConversation();
+      setSendingConvId(conversationId);
       const response = await sendMessage.mutateAsync({ conversationId, content });
       if (response.ai_job_id !== null && response.ai_job_id !== undefined) {
         setAwaitingAiConversationId(conversationId);
@@ -321,13 +338,14 @@ export function ChatPage() {
       }
     } catch {
       // Ошибка уже хранится в mutation/query state и показывается в Alert.
+    } finally {
+      setSendingConvId(undefined);
     }
   }
 
   async function handleNewConversation() {
     try {
       const conversation = await createConversation.mutateAsync();
-      setDraftTicket(null);
       setActiveConversationId(conversation.id);
     } catch {
       // Ошибка уже хранится в mutation state и показывается в Alert.
@@ -340,7 +358,7 @@ export function ChatPage() {
         conversationId,
         context,
       });
-      setDraftTicket(response.ticket);
+      setDraftTickets((prev) => ({ ...prev, [conversationId]: response.ticket }));
       setActiveConversationId(conversationId);
     } catch {
       // Ошибка уже хранится в mutation state и показывается в Alert.
@@ -348,24 +366,24 @@ export function ChatPage() {
   }
 
   async function handleConfirm() {
-    if (!activeTicket) {
+    if (!activeTicket || activeConversationId == null) {
       return;
     }
     try {
       const ticket = await confirmTicket.mutateAsync(activeTicket.id);
-      setDraftTicket(ticket);
+      setDraftTickets((prev) => ({ ...prev, [activeConversationId]: ticket }));
     } catch {
       // Ошибка уже хранится в mutation state и показывается в Alert.
     }
   }
 
   async function handleDecline() {
-    if (!activeTicket) {
+    if (!activeTicket || activeConversationId == null) {
       return;
     }
     try {
       const ticket = await declineTicket.mutateAsync(activeTicket.id);
-      setDraftTicket(ticket);
+      setDraftTickets((prev) => ({ ...prev, [activeConversationId]: ticket }));
       await conversations.refetch();
     } catch {
       // Ошибка уже хранится в mutation state и показывается в Alert.
@@ -373,7 +391,7 @@ export function ChatPage() {
   }
 
   async function handleSaveDraft(payload: TicketDraftUpdate) {
-    if (!activeTicket) {
+    if (!activeTicket || activeConversationId == null) {
       return;
     }
     try {
@@ -381,7 +399,7 @@ export function ChatPage() {
         ticketId: activeTicket.id,
         payload,
       });
-      setDraftTicket(ticket);
+      setDraftTickets((prev) => ({ ...prev, [activeConversationId]: ticket }));
     } catch {
       // Ошибка уже хранится в mutation state и показывается в Alert.
     }
@@ -489,7 +507,10 @@ export function ChatPage() {
             </Group>
           )}
           <Composer
-            loading={sendMessage.isPending || createConversation.isPending}
+            loading={
+              (sendMessage.isPending && sendingConvId === activeConversationId) ||
+              createConversation.isPending
+            }
             disabled={composerDisabled}
             value={composerText}
             onChange={setComposerText}
@@ -505,8 +526,8 @@ export function ChatPage() {
             <Badge variant="light">{conversations.data?.length ?? 0}</Badge>
           </Group>
           <Stack gap="xs" className="conversation-list">
-            {conversations.data?.length ? (
-              conversations.data.map((conversation) => (
+            {sortedConversations.length ? (
+              sortedConversations.map((conversation) => (
                 <button
                   key={conversation.id}
                   type="button"
@@ -514,7 +535,6 @@ export function ChatPage() {
                     conversation.id === activeConversationId ? " active" : ""
                   }`}
                   onClick={() => {
-                    setDraftTicket(null);
                     setActiveConversationId(conversation.id);
                   }}
                 >
@@ -536,6 +556,7 @@ export function ChatPage() {
                 Диалогов пока нет.
               </Text>
             )}
+
           </Stack>
         </Paper>
 
