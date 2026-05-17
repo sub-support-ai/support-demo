@@ -15,8 +15,6 @@ Outputs: data/processed/<run_id>/dedup.jsonl
 from __future__ import annotations
 
 import argparse
-import json
-from pathlib import Path
 
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -74,7 +72,9 @@ def run(args: argparse.Namespace) -> None:
 
     print(f"loaded {len(records)} judged samples")
     groups = find_duplicate_groups(records, args.threshold)
-    print(f"found {len(groups)} duplicate clusters covering {sum(len(g) for g in groups)} samples")
+    print(
+        f"found {len(groups)} duplicate clusters covering {sum(len(g) for g in groups)} samples"
+    )
 
     # Resumability vs idempotency: dedup is a one-shot pass over `judged.jsonl`,
     # so on re-run we want a fresh output. Otherwise repeats append.

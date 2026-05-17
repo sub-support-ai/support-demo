@@ -1,7 +1,6 @@
-import os
 import json
 import requests
-#дотенв тут был
+# дотенв тут был
 
 PROMPT = """Ты — система автоматической классификации обращений 
 пользователей в службу поддержки.
@@ -57,14 +56,15 @@ draft_response: "Этот запрос не относится к поддерж
 Текст: {body}
 """
 
+
 def classify(title: str, body: str) -> dict:
     """
     Классифицирует тикет поддержки.
-    
+
     Параметры:
         title: заголовок тикета
         body: текст тикета
-    
+
     Возвращает dict с ключами:
         category, priority, confidence, draft_response
     """
@@ -76,8 +76,8 @@ def classify(title: str, body: str) -> dict:
             "model": "mistral",
             "messages": [{"role": "user", "content": prompt}],
             "stream": False,
-            "options": {"temperature": 0}
-        }
+            "options": {"temperature": 0},
+        },
     )
     r.raise_for_status()
     result = json.loads(r.json()["message"]["content"])
@@ -86,5 +86,5 @@ def classify(title: str, body: str) -> dict:
         "category": result.get("category"),
         "priority": result.get("priority"),
         "confidence": result.get("confidence"),
-        "draft_response": result.get("draft_response")
+        "draft_response": result.get("draft_response"),
     }

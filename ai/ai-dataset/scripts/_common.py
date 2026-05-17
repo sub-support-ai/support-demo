@@ -36,7 +36,11 @@ def render_taxonomy_block(taxonomy: dict[str, Any]) -> str:
 
 def load_seed_examples() -> list[dict[str, Any]]:
     path = ROOT / "data" / "seed" / "examples.jsonl"
-    examples = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    examples = [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     limit = int(os.environ.get("AI_DATASET_SEED_EXAMPLES_LIMIT", "8"))
     if limit <= 0 or len(examples) <= limit:
         return examples
@@ -124,4 +128,8 @@ def append_jsonl(path: Path, record: dict[str, Any]) -> None:
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]

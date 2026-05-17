@@ -15,7 +15,6 @@ import argparse
 import json
 import random
 from collections import Counter, defaultdict
-from pathlib import Path
 
 from scripts._common import ROOT, append_jsonl, read_jsonl
 
@@ -76,7 +75,9 @@ def run(args: argparse.Namespace) -> None:
         print(f"ERROR: no records in {src}")
         return
 
-    train, val, test = split_records(records, args.train, args.val, args.test, args.seed)
+    train, val, test = split_records(
+        records, args.train, args.val, args.test, args.seed
+    )
 
     for name, recs in [("train", train), ("val", val), ("test", test)]:
         path = out_dir / f"{name}.jsonl"
@@ -92,7 +93,9 @@ def run(args: argparse.Namespace) -> None:
         "seed": args.seed,
         "ratios": {"train": args.train, "val": args.val, "test": args.test},
     }
-    (out_dir / "distribution.json").write_text(json.dumps(dist, ensure_ascii=False, indent=2), encoding="utf-8")
+    (out_dir / "distribution.json").write_text(
+        json.dumps(dist, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     print(f"\ndistribution: {out_dir / 'distribution.json'}")
 
 

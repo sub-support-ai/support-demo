@@ -248,9 +248,7 @@ def detect_conversation_policy(messages: list[dict[str, str]]) -> ConversationPo
             reason="critical_or_security_incident",
         )
 
-    if should_handoff_without_kb(messages) or should_specialist_required_without_kb(
-        messages
-    ):
+    if should_handoff_without_kb(messages) or should_specialist_required_without_kb(messages):
         return _draft_policy(
             ConversationIntent.DIRECT_HANDOFF,
             build_direct_handoff_answer(),

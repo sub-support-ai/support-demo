@@ -70,6 +70,7 @@ sys.path.insert(0, str(SERVICE_ROOT))
 
 # ── Минимальный mock requests — такой же, как в test_ai_service.py ──────────
 
+
 class _MockRequestException(Exception):
     pass
 
@@ -99,6 +100,7 @@ answerer = importlib.import_module("answerer")
 # ══════════════════════════════════════════════════════════════════════════════
 # Блок 1: Статические тесты содержимого SYSTEM_PROMPT
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class TestSystemPromptTone:
     """Промпт не должен содержать сочувственно-извиняющийся тон.
@@ -172,7 +174,7 @@ class TestForbiddenPhrases:
         # Если встречается как рекомендация — плохо.
         prompt_lower = answerer.SYSTEM_PROMPT.lower()
         # Ищем «используй ... извини» или «рекомендую ... извини» и т.п.
-        bad_patterns = ["используй «извини", "используй \"извини", "говори «извини"]
+        bad_patterns = ["используй «извини", 'используй "извини', "говори «извини"]
         for pattern in bad_patterns:
             assert pattern not in prompt_lower, (
                 f"Промпт не должен рекомендовать использовать извинения: "
@@ -183,6 +185,7 @@ class TestForbiddenPhrases:
 # ══════════════════════════════════════════════════════════════════════════════
 # Блок 2: Правило одного вопроса
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class TestSingleQuestionRule:
     """SYSTEM_PROMPT должен явно запрещать списки вопросов."""
@@ -206,6 +209,7 @@ class TestSingleQuestionRule:
 # ══════════════════════════════════════════════════════════════════════════════
 # Блок 3: Что НЕ нужно спрашивать (данные из учётки)
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class TestNoRedundantQuestions:
     """Модель не должна спрашивать данные, уже известные из учётной записи."""
@@ -245,6 +249,7 @@ class TestSecurityTerminology:
 # ══════════════════════════════════════════════════════════════════════════════
 # Блок 4: Поведенческие тесты — что отправляется в Ollama
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class TestOllamaCallStructure:
     """Проверяем, что generate_answer правильно формирует запрос к Ollama.
@@ -406,7 +411,9 @@ class TestOllamaCallStructure:
 
         # Создаём историю длиннее лимита
         long_history = [
-            SimpleNamespace(role="user" if i % 2 == 0 else "assistant", content=f"msg {i}")
+            SimpleNamespace(
+                role="user" if i % 2 == 0 else "assistant", content=f"msg {i}"
+            )
             for i in range(answerer.MAX_CONTEXT_MESSAGES + 10)
         ]
 
@@ -443,12 +450,16 @@ class TestOllamaCallStructure:
 # Блок 5: Эскалация и fallback
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestEscalationLogic:
     """Правила эскалации указаны в промпте и работают в answerer."""
 
     def test_prompt_defines_escalation_conditions(self):
         """Промпт содержит секцию с условиями эскалации."""
-        assert "escalate: true" in answerer.SYSTEM_PROMPT or "КОГДА escalate" in answerer.SYSTEM_PROMPT, (
+        assert (
+            "escalate: true" in answerer.SYSTEM_PROMPT
+            or "КОГДА escalate" in answerer.SYSTEM_PROMPT
+        ), (
             "SYSTEM_PROMPT должен явно описывать, когда ставить escalate: true. "
             "Без этого модель ставит escalate произвольно."
         )

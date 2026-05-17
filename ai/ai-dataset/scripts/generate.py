@@ -50,15 +50,29 @@ DEFAULT_MODEL = "qwen2.5-72b-instruct"
 
 CATEGORIES = [
     "it_hardware",
-    "it_software_install", "it_software_error",
-    "it_access_grant", "it_access_reset",
+    "it_software_install",
+    "it_software_error",
+    "it_access_grant",
+    "it_access_reset",
     "it_network",
-    "hr_payroll", "hr_leave", "hr_policy", "hr_onboarding",
-    "finance_invoice", "finance_expense", "finance_report",
+    "hr_payroll",
+    "hr_leave",
+    "hr_policy",
+    "hr_onboarding",
+    "finance_invoice",
+    "finance_expense",
+    "finance_report",
     "other",
 ]
 
-PERSONAS = ["бухгалтер", "инженер", "hr_специалист", "новичок", "удалёнщик", "руководитель"]
+PERSONAS = [
+    "бухгалтер",
+    "инженер",
+    "hr_специалист",
+    "новичок",
+    "удалёнщик",
+    "руководитель",
+]
 TONES = ["спокойный", "раздражённый", "паникующий", "формальный"]
 LENGTHS = ["короткий", "средний", "длинный"]
 
@@ -147,7 +161,9 @@ def validate_batch_shape(batch: GenerationBatch, *, expected_samples: int) -> No
         )
 
 
-def taxonomy_item(taxonomy: dict[str, Any], category_id: str) -> tuple[str, dict[str, Any]]:
+def taxonomy_item(
+    taxonomy: dict[str, Any], category_id: str
+) -> tuple[str, dict[str, Any]]:
     for dept, items in taxonomy["departments"].items():
         for item in items:
             if item["id"] == category_id:
@@ -221,7 +237,9 @@ def parse_generation_batch(
         issues.append(f"trimmed {len(valid) - expected_samples} extra valid sample(s)")
         valid = valid[:expected_samples]
     if len(valid) < expected_samples:
-        issues.append(f"accepted partial batch: expected {expected_samples}, got {len(valid)}")
+        issues.append(
+            f"accepted partial batch: expected {expected_samples}, got {len(valid)}"
+        )
 
     return GenerationBatch(samples=valid), issues
 
@@ -245,8 +263,7 @@ def build_user_message(
     template = load_prompt("generator.md")
     user_part = template.split("# User", 1)[1]
     rendered = (
-        user_part
-        .replace("{N}", str(n))
+        user_part.replace("{N}", str(n))
         .replace("{category}", category)
         .replace("{category_title}", category_title(taxonomy, category))
         .replace("{persona}", persona)
@@ -279,7 +296,9 @@ def limit_combos(
     if strategy == "simple":
         return pending[:limit]
 
-    by_category: dict[str, list[tuple[str, str, str, str]]] = {category: [] for category in CATEGORIES}
+    by_category: dict[str, list[tuple[str, str, str, str]]] = {
+        category: [] for category in CATEGORIES
+    }
     for combo in pending:
         by_category[combo[0]].append(combo)
 
@@ -329,7 +348,12 @@ async def generate_one(
 ) -> tuple[GenerationBatch | None, dict[str, Any]]:
     """Returns (batch, usage_metadata). batch is None on failure."""
     user_message = build_user_message(
-        category=category, persona=persona, tone=tone, length=length, n=n, cleanliness=cleanliness
+        category=category,
+        persona=persona,
+        tone=tone,
+        length=length,
+        n=n,
+        cleanliness=cleanliness,
     )
 
     async with semaphore:
@@ -367,8 +391,12 @@ async def generate_one(
                 )
                 usage_obj = response.usage
                 usage = {
-                    "input_tokens": getattr(usage_obj, "prompt_tokens", 0) if usage_obj else 0,
-                    "output_tokens": getattr(usage_obj, "completion_tokens", 0) if usage_obj else 0,
+                    "input_tokens": getattr(usage_obj, "prompt_tokens", 0)
+                    if usage_obj
+                    else 0,
+                    "output_tokens": getattr(usage_obj, "completion_tokens", 0)
+                    if usage_obj
+                    else 0,
                     "attempts": attempt + 1,
                 }
                 if issues:
@@ -406,7 +434,9 @@ async def run(args: argparse.Namespace) -> None:
     if not args.no_shuffle_grid:
         random.Random(args.grid_seed).shuffle(pending)
     pending = limit_combos(pending, limit=args.limit, strategy=args.limit_strategy)
-    print(f"grid size: {len(grid)} combos | already done: {len(completed_keys)} | pending: {len(pending)}")
+    print(
+        f"grid size: {len(grid)} combos | already done: {len(completed_keys)} | pending: {len(pending)}"
+    )
 
     if args.dry_run:
         for combo in pending[:20]:
@@ -421,7 +451,10 @@ async def run(args: argparse.Namespace) -> None:
         print("ERROR: OPENAI_BASE_URL not set in environment", file=sys.stderr)
         sys.exit(1)
     if not api_key:
-        print("ERROR: OPENAI_API_KEY not set (для Ollama подойдёт любая строка)", file=sys.stderr)
+        print(
+            "ERROR: OPENAI_API_KEY not set (для Ollama подойдёт любая строка)",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     model = args.model or os.environ.get("QWEN_MODEL") or DEFAULT_MODEL
@@ -450,7 +483,9 @@ async def run(args: argparse.Namespace) -> None:
             encoding="utf-8",
         )
 
-    system_prompts = {category: build_system_prompt(category) for category in CATEGORIES}
+    system_prompts = {
+        category: build_system_prompt(category) for category in CATEGORIES
+    }
     client = AsyncOpenAI(base_url=base_url, api_key=api_key)
     semaphore = asyncio.Semaphore(args.concurrency)
 
@@ -545,7 +580,9 @@ async def run(args: argparse.Namespace) -> None:
 
 def main() -> None:
     load_dotenv(ROOT / ".env")
-    parser = argparse.ArgumentParser(description="Generate synthetic helpdesk tickets via Qwen / OpenAI-compatible LLM.")
+    parser = argparse.ArgumentParser(
+        description="Generate synthetic helpdesk tickets via Qwen / OpenAI-compatible LLM."
+    )
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--samples-per-combo", type=int, default=2)
     parser.add_argument("--concurrency", type=int, default=4)
@@ -554,16 +591,35 @@ def main() -> None:
     parser.add_argument("--max-retries", type=int, default=2)
     parser.add_argument("--rate-limit-delay", type=float, default=60.0)
     parser.add_argument("--model", default=None, help="Override QWEN_MODEL env var.")
-    parser.add_argument("--limit", type=int, default=None, help="Generate only the first N pending combos.")
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Generate only the first N pending combos.",
+    )
     parser.add_argument(
         "--limit-strategy",
         choices=["balanced", "simple"],
         default="balanced",
         help="How to choose combos when --limit is set.",
     )
-    parser.add_argument("--progress-every", type=int, default=10, help="Print progress after every N successful combos.")
-    parser.add_argument("--grid-seed", type=int, default=42, help="Seed for deterministic combo shuffling.")
-    parser.add_argument("--no-shuffle-grid", action="store_true", help="Keep the original category/persona/tone/length order.")
+    parser.add_argument(
+        "--progress-every",
+        type=int,
+        default=10,
+        help="Print progress after every N successful combos.",
+    )
+    parser.add_argument(
+        "--grid-seed",
+        type=int,
+        default=42,
+        help="Seed for deterministic combo shuffling.",
+    )
+    parser.add_argument(
+        "--no-shuffle-grid",
+        action="store_true",
+        help="Keep the original category/persona/tone/length order.",
+    )
     parser.add_argument(
         "--cleanliness",
         choices=["mixed", "messy", "normal", "formal"],

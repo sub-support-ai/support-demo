@@ -55,36 +55,36 @@ ContractCategory = Literal[
 
 # Маппинг внутренних категорий в контрактные (схлопывание split'ов).
 INTERNAL_TO_CONTRACT_CATEGORY: dict[Category, ContractCategory] = {
-    "it_hardware":         "it_hardware",
+    "it_hardware": "it_hardware",
     "it_software_install": "it_software",
-    "it_software_error":   "it_software",
-    "it_access_grant":     "it_access",
-    "it_access_reset":     "it_access",
-    "it_network":          "it_network",
-    "hr_payroll":          "hr_payroll",
-    "hr_leave":             "hr_leave",
-    "hr_policy":           "hr_policy",
-    "hr_onboarding":       "hr_onboarding",
-    "finance_invoice":     "finance_invoice",
-    "finance_expense":     "finance_expense",
-    "finance_report":      "finance_report",
-    "other":               "other",
+    "it_software_error": "it_software",
+    "it_access_grant": "it_access",
+    "it_access_reset": "it_access",
+    "it_network": "it_network",
+    "hr_payroll": "hr_payroll",
+    "hr_leave": "hr_leave",
+    "hr_policy": "hr_policy",
+    "hr_onboarding": "hr_onboarding",
+    "finance_invoice": "finance_invoice",
+    "finance_expense": "finance_expense",
+    "finance_report": "finance_report",
+    "other": "other",
 }
 
 # Маппинг контрактных категорий в department — RestAPI/docs/ai-lead-contract.md §3.3.
 CONTRACT_CATEGORY_TO_DEPARTMENT: dict[ContractCategory, Department] = {
-    "it_hardware":     "IT",
-    "it_software":     "IT",
-    "it_access":       "IT",
-    "it_network":      "IT",
-    "hr_payroll":      "HR",
-    "hr_leave":        "HR",
-    "hr_policy":       "HR",
-    "hr_onboarding":   "HR",
+    "it_hardware": "IT",
+    "it_software": "IT",
+    "it_access": "IT",
+    "it_network": "IT",
+    "hr_payroll": "HR",
+    "hr_leave": "HR",
+    "hr_policy": "HR",
+    "hr_onboarding": "HR",
     "finance_invoice": "finance",
     "finance_expense": "finance",
-    "finance_report":  "finance",
-    "other":           "other",
+    "finance_report": "finance",
+    "other": "other",
 }
 
 
@@ -96,6 +96,7 @@ def to_contract_category(internal: Category) -> ContractCategory:
 def category_to_department(category: Category) -> Department:
     """Детерминированный маппинг внутренней категории в department по правилу контракта."""
     return CONTRACT_CATEGORY_TO_DEPARTMENT[INTERNAL_TO_CONTRACT_CATEGORY[category]]
+
 
 Priority = Literal["критический", "высокий", "средний", "низкий"]
 

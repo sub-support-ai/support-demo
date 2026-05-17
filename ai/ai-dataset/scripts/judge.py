@@ -56,14 +56,18 @@ JUDGE_SCHEMA_HINT = """
 def build_system_prompt() -> str:
     template = load_prompt("judge.md")
     taxonomy = load_taxonomy()
-    base = template.split("# User", 1)[0].replace("{TAXONOMY_BLOCK}", render_taxonomy_block(taxonomy))
+    base = template.split("# User", 1)[0].replace(
+        "{TAXONOMY_BLOCK}", render_taxonomy_block(taxonomy)
+    )
     return base.strip() + "\n\n" + JUDGE_SCHEMA_HINT.strip()
 
 
 def build_user_message(sample: dict) -> str:
     template = load_prompt("judge.md")
     user_part = template.split("# User", 1)[1]
-    return user_part.replace("{SAMPLE_JSON}", json.dumps(sample, ensure_ascii=False, indent=2))
+    return user_part.replace(
+        "{SAMPLE_JSON}", json.dumps(sample, ensure_ascii=False, indent=2)
+    )
 
 
 async def judge_one(
@@ -165,7 +169,10 @@ async def run(args: argparse.Namespace) -> None:
             return
 
         if not verdict.valid:
-            append_jsonl(rejected_path, {**record, "verdict": json.loads(verdict.model_dump_json())})
+            append_jsonl(
+                rejected_path,
+                {**record, "verdict": json.loads(verdict.model_dump_json())},
+            )
             rejected += 1
             return
 

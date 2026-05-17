@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-
 COMMON_REQUIRED_FIELDS = [
     "requester_name",
     "requester_email",

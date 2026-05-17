@@ -6,7 +6,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 MODEL_VERSION = os.getenv("AI_MODEL_VERSION", "mistral-7b-instruct-q4_K_M-2026-04")
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", os.getenv("OLLAMA_URL", "http://localhost:11434")).rstrip("/")
+OLLAMA_BASE_URL = os.getenv(
+    "OLLAMA_BASE_URL", os.getenv("OLLAMA_URL", "http://localhost:11434")
+).rstrip("/")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
 OLLAMA_TIMEOUT_SECONDS = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "180"))
 # См. одноимённую переменную в classifier.py — единая стратегия для двух
@@ -36,6 +38,7 @@ def _fallback_response() -> dict:
         "sources": [],
         "model_version": MODEL_VERSION,
     }
+
 
 SYSTEM_PROMPT = """Ты — AI-ассистент службы поддержки сотрудников компании.
 Отвечай прагматично, по-деловому, конкретно, на русском языке.
@@ -161,6 +164,7 @@ def _security_response() -> dict:
         "model_version": MODEL_VERSION,
     }
 
+
 def generate_answer(conversation_id: int, messages: list) -> dict:
     """
     Генерирует ответ на основе истории диалога.
@@ -177,9 +181,7 @@ def generate_answer(conversation_id: int, messages: list) -> dict:
 
     # Строим историю диалога для модели
     # Системный промпт добавляем сами — клиент его не присылает
-    ollama_messages = [
-        {"role": "system", "content": SYSTEM_PROMPT}
-    ]
+    ollama_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
     # Добавляем историю диалога
     for msg in messages[-MAX_CONTEXT_MESSAGES:]:
@@ -187,10 +189,9 @@ def generate_answer(conversation_id: int, messages: list) -> dict:
         # (основная фильтрация в main.py, это страховка)
         if msg.role == "system":
             continue
-        ollama_messages.append({
-            "role": msg.role,
-            "content": msg.content[:MAX_MESSAGE_CHARS]
-        })
+        ollama_messages.append(
+            {"role": msg.role, "content": msg.content[:MAX_MESSAGE_CHARS]}
+        )
 
     try:
         r = requests.post(
@@ -222,7 +223,14 @@ def generate_answer(conversation_id: int, messages: list) -> dict:
                 raw = raw[4:]
 
         result = json.loads(raw)
-    except (requests.RequestException, KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError):
+    except (
+        requests.RequestException,
+        KeyError,
+        IndexError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+    ):
         return _fallback_response()
 
     # Если confidence < 0.6 — принудительно ставим escalate
@@ -236,5 +244,5 @@ def generate_answer(conversation_id: int, messages: list) -> dict:
         "confidence": confidence,
         "escalate": escalate,
         "sources": result.get("sources", []),
-        "model_version": MODEL_VERSION
+        "model_version": MODEL_VERSION,
     }

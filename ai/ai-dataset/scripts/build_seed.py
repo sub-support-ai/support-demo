@@ -23,8 +23,12 @@ from scripts._common import ROOT, read_jsonl
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--from-run", required=True, help="Run id to pick from (e.g. manual_v2).")
-    parser.add_argument("--per-category", type=int, default=2, help="Samples per category.")
+    parser.add_argument(
+        "--from-run", required=True, help="Run id to pick from (e.g. manual_v2)."
+    )
+    parser.add_argument(
+        "--per-category", type=int, default=2, help="Samples per category."
+    )
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 

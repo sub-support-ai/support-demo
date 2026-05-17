@@ -443,6 +443,7 @@ def test_healthcheck_marks_degraded_when_ollama_unavailable(monkeypatch):
     Возвращаем 200 с degraded (а не 5xx) намеренно: оркестратор должен видеть
     factory-pod живым (HTTP-сервер работает), а deg signal — отдельным каналом.
     """
+
     def raise_connection(*_args, **_kwargs):
         raise service_main.requests.RequestException("connection refused")
 
@@ -572,9 +573,7 @@ def test_validate_startup_config_allows_production_when_key_set(monkeypatch):
     service_main._validate_startup_config()
 
 
-def test_validate_startup_config_warns_in_development_without_key(
-    monkeypatch, caplog
-):
+def test_validate_startup_config_warns_in_development_without_key(monkeypatch, caplog):
     """В dev без ключа сервис стартует, но один раз пишет WARNING."""
     monkeypatch.setattr(service_main, "APP_ENV", "development")
     monkeypatch.setattr(service_main, "AI_SERVICE_API_KEY", None)
@@ -583,8 +582,7 @@ def test_validate_startup_config_warns_in_development_without_key(
         service_main._validate_startup_config()
 
     assert any(
-        "AI_SERVICE_API_KEY not set" in record.getMessage()
-        for record in caplog.records
+        "AI_SERVICE_API_KEY not set" in record.getMessage() for record in caplog.records
     )
 
 

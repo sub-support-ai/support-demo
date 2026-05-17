@@ -10,7 +10,9 @@ from answerer import generate_answer
 
 logger = logging.getLogger(__name__)
 
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", os.getenv("OLLAMA_URL", "http://localhost:11434")).rstrip("/")
+OLLAMA_BASE_URL = os.getenv(
+    "OLLAMA_BASE_URL", os.getenv("OLLAMA_URL", "http://localhost:11434")
+).rstrip("/")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
 OLLAMA_EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 OLLAMA_HEALTH_TIMEOUT_SECONDS = float(os.getenv("OLLAMA_HEALTH_TIMEOUT_SECONDS", "3"))
@@ -61,6 +63,7 @@ def require_api_key(x_ai_service_key: str | None = Header(default=None)) -> None
             detail="invalid AI service key",
         )
 
+
 # ========================
 # Схемы для /ai/classify
 # ========================
@@ -69,18 +72,28 @@ class TicketRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=255)
     body: str = Field(..., min_length=1, max_length=20000)
 
+
 class ClassifyResponse(BaseModel):
     category: Literal[
-        "it_hardware", "it_software", "it_access", "it_network",
-        "hr_payroll", "hr_leave", "hr_policy", "hr_onboarding",
-        "finance_invoice", "finance_expense", "finance_report",
-        "other"
+        "it_hardware",
+        "it_software",
+        "it_access",
+        "it_network",
+        "hr_payroll",
+        "hr_leave",
+        "hr_policy",
+        "hr_onboarding",
+        "finance_invoice",
+        "finance_expense",
+        "finance_report",
+        "other",
     ]
     department: Literal["IT", "HR", "finance", "other"]
     priority: Literal["критический", "высокий", "средний", "низкий"]
     confidence: float
     draft_response: str
     model_version: str
+
 
 # ========================
 # Схемы для /ai/answer
@@ -89,13 +102,16 @@ class ChatMessage(BaseModel):
     role: Literal["user", "assistant"]
     content: str = Field(..., min_length=1, max_length=10000)
 
+
 class AnswerRequest(BaseModel):
     conversation_id: int = Field(..., ge=1)
     messages: list[ChatMessage] = Field(..., min_length=1, max_length=20)
 
+
 class Source(BaseModel):
     title: str
     url: str | None = None
+
 
 class AnswerResponse(BaseModel):
     answer: str
@@ -113,41 +129,50 @@ class EmbedResponse(BaseModel):
     model: str
     embeddings: list[list[float]]
 
+
 # ========================
 # Эндпоинты
 # ========================
-@app.post("/ai/classify", response_model=ClassifyResponse, dependencies=[Depends(require_api_key)])
+@app.post(
+    "/ai/classify",
+    response_model=ClassifyResponse,
+    dependencies=[Depends(require_api_key)],
+)
 async def classify(request: TicketRequest):
     try:
         result = classify_ticket(
-            ticket_id=request.ticket_id,
-            title=request.title,
-            body=request.body
+            ticket_id=request.ticket_id, title=request.title, body=request.body
         )
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/ai/answer", response_model=AnswerResponse, dependencies=[Depends(require_api_key)])
+
+@app.post(
+    "/ai/answer", response_model=AnswerResponse, dependencies=[Depends(require_api_key)]
+)
 async def answer(request: AnswerRequest):
     try:
         # Фильтруем system сообщения — защита от prompt injection
         safe_messages = [m for m in request.messages if m.role != "system"]
-        
+
         result = generate_answer(
-            conversation_id=request.conversation_id,
-            messages=safe_messages
+            conversation_id=request.conversation_id, messages=safe_messages
         )
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/ai/embed", response_model=EmbedResponse, dependencies=[Depends(require_api_key)])
+@app.post(
+    "/ai/embed", response_model=EmbedResponse, dependencies=[Depends(require_api_key)]
+)
 async def embed(request: EmbedRequest):
     texts = [text.strip() for text in request.texts if text.strip()]
     if not texts:
-        raise HTTPException(status_code=422, detail="texts must contain at least one non-empty item")
+        raise HTTPException(
+            status_code=422, detail="texts must contain at least one non-empty item"
+        )
 
     try:
         response = requests.post(
@@ -192,6 +217,7 @@ def _embed_with_legacy_api(texts: list[str]) -> dict:
             raise HTTPException(status_code=502, detail="invalid embedding response")
         embeddings.append(embedding)
     return {"embeddings": embeddings}
+
 
 @app.get("/healthcheck")
 def healthcheck():
